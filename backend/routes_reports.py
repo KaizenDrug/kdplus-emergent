@@ -210,6 +210,72 @@ async def inventory_valuation(store_id: Optional[str] = None, principal=Depends(
     return {"total_value": m(total_val), "rows": rows}
 
 
+@router.get("/reorder-suggestions")
+async def reorder_suggestions(days_window: int = 30, lead_time_days: int = 7,
+                              supplier_id: Optional[str] = None, store_id: Optional[str] = None,
+                              principal=Depends(get_current_principal)):
+    from math import ceil
+    start = (datetime.now(MANILA) - timedelta(days=days_window)).strftime("%Y-%m-%d")
+    sq = {"org_id": ORG_ID, "created_at": {"$gte": start}}
+    if store_id:
+        sq["store_id"] = store_id
+    sales = await db.sales.find(sq, {"_id": 0, "items": 1}).to_list(50000)
+    sold = defaultdict(lambda: D(0))
+    for s in sales:
+        for i in s["items"]:
+            net_qty = D(i["qty"]) - D(i.get("refunded_qty", 0))
+            sold[i["product_id"]] += net_qty
+
+    # incoming from open POs
+    open_pos = await db.purchase_orders.find(
+        {"org_id": ORG_ID, "status": {"$in": ["DRAFT", "SENT", "PARTIALLY_RECEIVED"]}}, {"_id": 0}).to_list(2000)
+    incoming = defaultdict(lambda: D(0))
+    for po in open_pos:
+        for it in po["items"]:
+            incoming[it["product_id"]] += D(it["qty_ordered"]) - D(it.get("qty_received", 0))
+
+    # current stock (company-wide or per store)
+    lq = {"org_id": ORG_ID}
+    if store_id:
+        lq["store_id"] = store_id
+    levels = await db.inventory_levels.find(lq, {"_id": 0}).to_list(20000)
+    stock = defaultdict(float)
+    for l in levels:
+        stock[l["product_id"]] += float(l["quantity"])
+
+    products = await db.products.find({"org_id": ORG_ID, "active": True, "track_inventory": True}, {"_id": 0}).to_list(5000)
+    sup_map = {s["id"]: s["company"] for s in await db.suppliers.find({"org_id": ORG_ID}, {"_id": 0}).to_list(500)}
+    rows = []
+    for p in products:
+        sid = p.get("preferred_supplier_id") or p.get("supplier_id")
+        if supplier_id and sid != supplier_id:
+            continue
+        cur = D(stock.get(p["id"], 0))
+        inc = incoming.get(p["id"], D(0))
+        avg_daily = sold.get(p["id"], D(0)) / D(days_window)
+        safety = D(p.get("reorder_level", 0))
+        expected_demand = avg_daily * D(lead_time_days)
+        suggested = expected_demand + safety - cur - inc
+        needs = suggested > 0 or cur <= D(p.get("reorder_level", 0))
+        if not needs:
+            continue
+        if suggested > 0:
+            qty = ceil(float(suggested))
+        else:
+            # low stock but demand-neutral — suggest a standard reorder pack
+            qty = int(p.get("reorder_qty", 0) or 0)
+        days_of_stock = float(cur / avg_daily) if avg_daily > 0 else None
+        rows.append({"product_id": p["id"], "name": p["name"], "sku": p.get("sku"),
+                     "supplier_id": sid, "supplier_name": sup_map.get(sid, "— No supplier —"),
+                     "current_stock": m(cur), "incoming": m(inc), "reorder_level": p.get("reorder_level", 0),
+                     "avg_daily_sales": round(float(avg_daily), 2),
+                     "days_of_stock": (round(days_of_stock, 1) if days_of_stock is not None else None),
+                     "suggested_qty": qty, "unit_cost": p.get("average_cost", 0),
+                     "est_cost": m(D(qty) * D(p.get("average_cost", 0)))})
+    rows.sort(key=lambda r: (r["supplier_name"], -(r["suggested_qty"] or 0)))
+    return {"rows": rows, "params": {"days_window": days_window, "lead_time_days": lead_time_days}}
+
+
 @router.get("/senior-pwd")
 async def senior_pwd_report(period: str = "30d", start: Optional[str] = None, end: Optional[str] = None,
                             principal=Depends(get_current_principal)):

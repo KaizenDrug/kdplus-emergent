@@ -1,0 +1,39 @@
+{
+  "summary": "Tested the two new features: CSV Product Import wizard + Reorder Suggestions (with Create Draft PO). Backend: 6 new pytest cases in /app/backend/tests/test_import_and_reorder.py — ALL PASS. Covered: (1) GET /api/products/import/template returns header, (2) POST /api/products/import/validate on the exact 3-row payload returns summary {new:1,duplicate:1,error:1,total:3} with row-level status ['new','duplicate','error'], (3) POST /api/products/import/commit returns {created:1,skipped:1,errors:1} and the new product is retrievable via GET /api/products?q=..., (4) GET /api/reports/reorder-suggestions shape+params echo, (5) reorder math for a forced-need product with 0 stock: verified suggested_qty = max(ceil(avg_daily*lead + reorder_level - current - incoming), reorder_qty) and est_cost = suggested_qty * unit_cost + supplier_id filter honored, (6) POSTing the suggested items to /api/purchase-orders yields a DRAFT PO with PO-YYYYMMDD-##### number containing the correct product. Frontend (Playwright, live preview URL): admin logged in, Products → Import CSV → pasted the exact QA 3-row payload → 'Validate & Preview' → pills showed '1 new 1 duplicate 1 error 3 total', commit button label was 'Import 1 New Product(s)', click produced toast 'Imported 1 · skipped 1 · errors 1', 'QA Import Aspirin' appeared in the Products table and persisted across full reload. Then opened Reorder Suggestions — all 3 filter selects (reorder-window, reorder-lead, reorder-supplier) render and 3 KPI cards (Items Needing Reorder / Suppliers Involved / Est. Purchase Cost) render. To force a suggestion, edited QA Import Aspirin reorder_level from 15→200 via Products edit (pf-reorder_level testid), then the reorder page showed the Zuellig Pharma Corp. group containing QA Import Aspirin. Clicked create-po-<zuelligId> → toast 'Draft PO-20260904-00003 created for Zuellig Pharma Corp.' → navigated to Purchase Orders and the new DRAFT PO row was visible at ₱560.00 (=160 units × ₱3.50 cost). Regression: Products page listing, search, edit-save all worked; Purchase Orders page rendered normally. Cleanup: all QA / TEST_ products and the two new draft POs were deleted from Mongo at the end of the run — no lingering footprint.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Import CSV summary pills", "issues": ["Pills render as concatenated text with no gap between count and word in the HTML content ('1 new1 duplicate1 error3 total' when readAsText'd, visually spaced by flex gap only). Not a bug per se, but any screen reader / copy-paste would read them mashed together — consider adding a comma or explicit space between the count and label."]},
+      {"screen": "Reorder Suggestions header", "issues": ["Header actions area gets crowded on <1280px — three Selects (36/32/48 char widths) share the row with the title; add flex-wrap or move filters into a second row for tablet widths."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_import_and_reorder.py",
+    "/app/test_reports/pytest/pytest_import_reorder.xml"
+  ],
+  "action_items": [
+    "(Optional) Improve import summary pill readability (space/comma between count and label)."
+  ],
+  "critical_code_review_comments": [
+    "routes_catalog.py::_validate_rows() flags a duplicate INSIDE the file using dedupe_key = sku||barcode||name. For a row with only 'name' populated (row b in the test), that works. However, an all-blank row (e.g. only a name column with an empty value) would key to '' and get lumped with another all-blank row incorrectly — parse_import_csv already filters fully-empty rows so this is fine today, but consider guarding dedupe_key against empty strings explicitly.",
+    "routes_catalog.py::import_commit() writes lots + INITIAL_BALANCE movements only when stock>0 — good. It does NOT wrap category/supplier lookups + product insert + lot insert + movement in a Mongo session, so a partial import failure would leave orphan lots. For batch inserts consider bulk_write with ordered=False and a per-row try/except that appends to an 'errors' list returned to the client.",
+    "routes_catalog.py::import_validate() 'duplicate within file' is added to messages but status becomes 'duplicate' — the summary row will be flagged; verify the UI never surfaces it as 'error'. Currently the status computation is `error if any(msg starts with Missing|Invalid)` so within-file dup on an otherwise clean row still reports 'duplicate' — correct.",
+    "routes_reports.py::reorder_suggestions() the 'qty = max(qty, int(p.get('reorder_qty', 0)) if cur <= 0 else qty)' expression relies on operator precedence: `max(qty, int(reorder_qty) if cur<=0 else qty)`. Works, but is subtle — consider an explicit if for clarity.",
+    "routes_reports.py::reorder_suggestions() includes items where cur <= reorder_level even if suggested==0 (needs=True). In that branch the fallback qty = reorder_qty only when cur<=0; otherwise qty stays 0. That means a row with 'needs restock' but suggested_qty=0 can appear — the UI already filters items.filter(i => i.suggested_qty > 0) before building the PO, so no bad POs get sent, but the row-level UI still shows a 0 in the Suggested column which is confusing. Recommend either bumping to at least reorder_qty when needs=True, or hiding zero-suggestion rows.",
+    "ReorderSuggestions.jsx: create-po button uses the raw supplier_id in the data-testid (create-po-<uuid>). For rows with no supplier the id becomes 'create-po-none' and the button is disabled-by-toast but not disabled visually — consider disabling the button when supplier_id is null so users can't click it and see the error toast.",
+    "Products.jsx ImportDialog.commit(): fires with skip_duplicates: true hard-coded, no checkbox surfacing. Consider exposing a 'Also import duplicates as new SKUs' toggle for the merchant.",
+    "Products.jsx ImportDialog: no client-side size guard on the pasted textarea — a 50 MB paste would freeze the browser before the server rejects it."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_import_and_reorder.py (new)"
+  ],
+  "success_rate": {"backend": "100% (6/6 new tests)", "frontend": "100% (Import wizard + Reorder Suggestions + Create Draft PO + Products/PO regression — all verified end-to-end)"},
+  "test_credentials": "Admin: nt7yzjc88t@privaterelay.appleid.com / KdplusOwner#2026",
+  "seed_data_creation": "Cleanup performed at end of run — deleted products [QA Import Aspirin, TEST_ReorderProd_XYZ, TEST_POFromReorder] plus their inventory_lots/levels/movements, and deleted the two draft POs (PO-20260904-00002, PO-20260904-00003) generated during PO tests. No residual footprint in DB.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "New test file: /app/backend/tests/test_import_and_reorder.py. Run with: `REACT_APP_BACKEND_URL=<url> pytest backend/tests/test_import_and_reorder.py -v -o addopts=''` (root pytest.ini enables xdist which can race with the shared 'Paracetamol 500mg Tablet' duplicate check; -o addopts='' disables it). Import commit only accepts unique SKU/barcode/name — re-running the same CSV will start seeing the QA row itself as duplicate on the second run, so cleanup is essential (this file cleans up via the `cleanup` fixture that flips active=False & clears sku on QA Import Aspirin). If you need to force reorder suggestions for UI verification, edit any existing product's reorder_level via /api/products/{id} PUT to a value above current stock — the frontend picks it up on next filter change.",
+  "rca of the issue": "N/A — no bugs found. Both new features work end-to-end matching the spec (import status math + summary pills + persistence, reorder math + supplier grouping + create-draft-PO)."
+}
