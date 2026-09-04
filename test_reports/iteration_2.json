@@ -1,0 +1,36 @@
+{
+  "summary": "Tested the two new features (Stock Transfers, Inventory Counts) + POS offline mode and online-sale regression. Backend: added /app/backend/tests/test_stock_and_offline.py with 7 pytest cases — all PASS. Covers Transfer DRAFT→IN_TRANSIT→RECEIVED with stock levels checked at every hop (leaves source on send, arrives at dest only on receive; TRANSFER_OUT/IN in ledger), transfer cancel from IN_TRANSIT restores source stock, same-source/dest rejected (400), receive-before-send rejected (400), Inventory Count create→save→approve reconciles product on-hand to counted (COUNT_CORRECTION posted, variance value computed, re-approve blocked), POS client_txn_id idempotency (double POST returns same SALE-... number), and normal online sale persists. Frontend (Playwright + context.set_offline): admin created a transfer through the UI, Sent + Received it (Stock Transfers table shows RECEIVED). Then created an Inventory Count (partial 7 items), entered a counted value, Save Progress + Approve & Post Corrections → toast 'Approved — 1 corrections posted', row shows APPROVED with variance ₱3,729.60. Cashier PIN 4444 → /pos: added 2 tiles → Charge → Exact → set_offline(True) → Complete Sale produced receipt 'OFFLINE-84349029', top-bar badge switched to 'Offline', and '1 queued' pill appeared. set_offline(False) + dispatched 'online' → badge went back to 'Online', queued pill disappeared, and GET /api/pos/sales shows the real SALE-20260904-00020 with the same client_txn_id (dedupe works, no duplicate). Regression online sale produced SALE-20260904-00021 with correct VAT (₱145 × 12% inclusive = ₱15.54).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Global (dev overlay)", "issues": ["webpack-dev-server ResizeObserver overlay iframe intercepts clicks during automated testing; benign in production build. Not user-visible after build, but worth suppressing in dev via `client.overlay = { runtimeErrors: false }` in devServer config so future test runs don't have to remove the iframe manually."]},
+      {"screen": "StockTransfers status badge", "issues": ["IN_TRANSIT is displayed using the PARTIALLY_RECEIVED color, and CANCELLED reuses REFUNDED. Semantics work but a dedicated status color for IN_TRANSIT / CANCELLED would be clearer."]},
+      {"screen": "Dialog a11y", "issues": ["React warning: 'Missing Description or aria-describedby={undefined} for DialogContent' on Stock Transfer + Inventory Count dialogs — add a <DialogDescription/> for a11y compliance."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_stock_and_offline.py",
+    "/app/test_reports/pytest/pytest_stock_offline.xml"
+  ],
+  "action_items": [
+    "(Optional) Add <DialogDescription/> to StockTransfers.jsx and InventoryCounts.jsx dialogs to silence Radix a11y warning.",
+    "(Optional) Add dedicated StatusBadge variants for IN_TRANSIT and CANCELLED so the UI is not visually reusing PARTIALLY_RECEIVED / REFUNDED colors."
+  ],
+  "critical_code_review_comments": [
+    "routes_stock.py: transfer send/receive/cancel are sequential per-line record_movement calls without a Mongo transaction — if the process dies mid-list, the transfer status is unchanged but partial movements are already recorded. For a two-branch pharmacy this is acceptable, but consider wrapping in a session/transaction or making record_movement idempotent per (ref_id, product_id, type).",
+    "routes_stock.py cancel(): a DRAFT->CANCEL path is allowed (skips restore, correct). Good.",
+    "InventoryCounts create() queries products with track_inventory=True — good, but there is no guard preventing two OPEN counts for the same store/scope, which can cause double corrections if both are approved. Consider blocking new counts while an OPEN one exists.",
+    "offline.js syncQueue: on 4xx (non-401) it counts the item as 'synced' and drops it — good for poison-pill payloads, but consider surfacing these to the user (toast 'N sale(s) rejected by server') so silently lost sales are visible.",
+    "POS.jsx CheckoutDialog submit(): checks navigator.onLine before POST — good. Also enqueues on any e.response==undefined (network fail) — good. The generated OFFLINE-xxxx receipt number is client-only and is not what ends up in the database (server assigns real SALE-... on sync). Consider showing both on the synced-toast so the cashier can reconcile."
+  ],
+  "updated_files": ["/app/backend/tests/test_stock_and_offline.py (new)"],
+  "success_rate": {"backend": "100% (7/7 new tests)", "frontend": "100% (Stock Transfer send+receive, Inventory Count approve, Offline sale + sync, Online sale regression — all verified end-to-end)"},
+  "test_credentials": "Admin: nt7yzjc88t@privaterelay.appleid.com / KdplusOwner#2026 ; Cashier PIN 4444 (pin-1..pin-9, pin-enter testids).",
+  "seed_data_creation": "Test run added ~5 TEST_ transfers, 5 counts (TEST_count), and 3 sales (2 online SALE-... + 1 offline-synced) — small footprint. No cleanup required.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "New feature suite lives at /app/backend/tests/test_stock_and_offline.py. Run with: pytest backend/tests/test_stock_and_offline.py -v -o 'addopts=' (root pytest.ini enables xdist which caused a race between two tests operating on the same product — disable xdist or scope fixtures per-worker if adding more tests here). For the offline UI test the pattern is: log in via PIN keypad (pin-1..pin-9, pin-enter data-testids), open Checkout, click exact-btn, call page.context.set_offline(True), then confirm-payment — the receipt number will start with 'OFFLINE-'. Toggle back with set_offline(False) + dispatch 'online' event; queue drains and the backend shows a real SALE-... with the same client_txn_id (dedupe verified).",
+  "rca of the issue": "N/A — no bugs found. All 7 backend tests and all 4 frontend flows passed."
+}

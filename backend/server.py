@@ -9,7 +9,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from core import db, client
 import routes_auth, routes_catalog, routes_inventory, routes_pos
-import routes_purchasing, routes_customers, routes_reports, routes_admin
+import routes_purchasing, routes_customers, routes_reports, routes_admin, routes_stock
 from seed import seed_all
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -24,7 +24,8 @@ async def root():
 
 
 for r in (routes_auth.router, routes_catalog.router, routes_inventory.router, routes_pos.router,
-          routes_purchasing.router, routes_customers.router, routes_reports.router, routes_admin.router):
+          routes_purchasing.router, routes_customers.router, routes_reports.router, routes_admin.router,
+          routes_stock.router):
     app.include_router(r)
 
 frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3000")

@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Search, Plus, Minus, Trash2, X, ShoppingCart, Wifi, WifiOff, ArrowLeft, Printer, UserPlus, Barcode,
+  Search, Plus, Minus, Trash2, X, ShoppingCart, Wifi, ArrowLeft, Printer, UserPlus, Barcode,
+  RefreshCw, CloudOff, AlertCircle,
 } from "lucide-react";
 import api, { peso } from "@/lib/api";
+import { getCache, saveCache, enqueueSale, queueCount, syncQueue } from "@/lib/offline";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -25,15 +27,35 @@ export default function POS() {
   const [q, setQ] = useState("");
   const [cart, setCart] = useState([]);
   const [online, setOnline] = useState(navigator.onLine);
+  const [syncStatus, setSyncStatus] = useState("idle"); // idle | syncing | error
+  const [pending, setPending] = useState(queueCount());
   const [checkout, setCheckout] = useState(false);
   const [lastSale, setLastSale] = useState(null);
   const searchRef = useRef();
 
+  const refreshLevels = () => api.get(`/inventory/levels?store_id=${storeId}`).then((lv) => {
+    const lm = {}; lv.data.forEach((x) => (lm[x.product_id] = x.quantity)); setLevels(lm);
+  }).catch(() => {});
+
+  const doSync = async () => {
+    if (queueCount() === 0) { setPending(0); return; }
+    setSyncStatus("syncing");
+    try {
+      const res = await syncQueue(api);
+      setPending(res.pending);
+      setSyncStatus(res.failed > 0 ? "error" : "idle");
+      if (res.synced > 0) { toast.success(`${res.synced} offline sale(s) synced`); refreshLevels(); }
+      if (res.failed > 0) toast.error(`${res.failed} sale(s) failed to sync — will retry`);
+    } catch { setSyncStatus("error"); }
+  };
+
   useEffect(() => {
-    const on = () => setOnline(true), off = () => setOnline(false);
+    const on = () => { setOnline(true); doSync(); };
+    const off = () => setOnline(false);
     window.addEventListener("online", on); window.addEventListener("offline", off);
+    if (navigator.onLine) doSync();
     return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); };
-  }, []);
+  }, []); // eslint-disable-line
 
   useEffect(() => {
     Promise.all([
@@ -45,7 +67,16 @@ export default function POS() {
     ]).then(([p, c, cu, s, lv]) => {
       setProducts(p.data); setCategories(c.data); setCustomers(cu.data); setSettings(s.data);
       const lm = {}; lv.data.forEach((x) => (lm[x.product_id] = x.quantity)); setLevels(lm);
-    }).catch(() => {});
+      saveCache({ products: p.data, categories: c.data, customers: cu.data, settings: s.data });
+    }).catch(() => {
+      // Offline fallback: load catalog from the local cache so the register keeps working
+      const c = getCache();
+      if (c.products) {
+        setProducts(c.products); setCategories(c.categories || []);
+        setCustomers(c.customers || []); setSettings(c.settings || {});
+        toast.info("Offline — using cached catalog");
+      }
+    });
   }, [storeId]);
 
   const filtered = useMemo(() => {
@@ -94,8 +125,21 @@ export default function POS() {
             <SelectItem value="store_annex">KDPLUS Annex</SelectItem>
           </SelectContent>
         </Select>
-        <div className={`ml-auto flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-full ${online ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`} data-testid="pos-online-status">
-          {online ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}{online ? "Online" : "Offline"}
+        <div className="ml-auto flex items-center gap-2">
+          {pending > 0 && (
+            <button onClick={doSync} data-testid="pos-sync-btn"
+              className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200">
+              <RefreshCw className={`w-3.5 h-3.5 ${syncStatus === "syncing" ? "animate-spin" : ""}`} />{pending} queued
+            </button>
+          )}
+          <div data-testid="pos-online-status" className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-full ${
+            syncStatus === "error" ? "bg-red-100 text-red-700" : syncStatus === "syncing" ? "bg-sky-100 text-sky-700"
+              : online ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+            {syncStatus === "error" ? <><AlertCircle className="w-3.5 h-3.5" />Sync Error</>
+              : syncStatus === "syncing" ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" />Syncing</>
+              : online ? <><Wifi className="w-3.5 h-3.5" />Online</>
+              : <><CloudOff className="w-3.5 h-3.5" />Offline</>}
+          </div>
         </div>
         <div className="text-sm text-slate-600">Cashier: <span className="font-semibold">{user?.name}</span></div>
       </div>
@@ -188,8 +232,9 @@ export default function POS() {
       {checkout && (
         <CheckoutDialog
           open={checkout} onClose={() => setCheckout(false)} cart={cart} storeId={storeId}
-          customers={customers} settings={settings}
-          onComplete={(sale) => { setLastSale(sale); setCart([]); setCheckout(false); toast.success(`Sale ${sale.number} completed`); }}
+          customers={customers} settings={settings} cashierName={user?.name}
+          onOfflineQueued={() => setPending(queueCount())}
+          onComplete={(sale) => { setLastSale(sale); setCart([]); setCheckout(false); toast.success(sale._offline ? `Sale queued offline (${sale.number})` : `Sale ${sale.number} completed`); }}
         />
       )}
       {lastSale && <ReceiptDialog sale={lastSale} settings={settings} onClose={() => setLastSale(null)} />}
@@ -197,7 +242,7 @@ export default function POS() {
   );
 }
 
-function CheckoutDialog({ open, onClose, cart, storeId, customers, settings, onComplete }) {
+function CheckoutDialog({ open, onClose, cart, storeId, customers, settings, cashierName, onComplete, onOfflineQueued }) {
   const [discountType, setDiscountType] = useState("REGULAR");
   const [customerId, setCustomerId] = useState("");
   const [orderDiscount, setOrderDiscount] = useState("");
@@ -211,7 +256,7 @@ function CheckoutDialog({ open, onClose, cart, storeId, customers, settings, onC
   const gross = cart.reduce((s, i) => s + i.unit_price * i.qty, 0);
 
   // preview totals
-  let total = gross, vatExempt = 0, spDisc = 0;
+  let total = gross, vatExempt = 0, spDisc = 0, vatAmt = 0;
   if (discountType === "SENIOR" || discountType === "PWD") {
     let net = 0;
     cart.forEach((i) => {
@@ -220,8 +265,9 @@ function CheckoutDialog({ open, onClose, cart, storeId, customers, settings, onC
       vatExempt += line - n; net += n;
     });
     spDisc = net * spPct; total = net - spDisc;
-  } else if (orderDiscount) {
-    total = Math.max(0, gross - Number(orderDiscount));
+  } else {
+    if (orderDiscount) total = Math.max(0, gross - Number(orderDiscount));
+    cart.forEach((i) => { const line = i.unit_price * i.qty; if (i.tax_mode === "VAT") vatAmt += line - line / (1 + vatRate); });
   }
 
   const paid = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
@@ -235,20 +281,36 @@ function CheckoutDialog({ open, onClose, cart, storeId, customers, settings, onC
   const submit = async () => {
     if (paid + 0.001 < total) { toast.error("Insufficient payment"); return; }
     setBusy(true);
+    const client_txn_id = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
+    const validPayments = payments.filter((p) => Number(p.amount) > 0).map((p) => ({ method: p.method, amount: Number(p.amount), reference: "" }));
+    const body = {
+      store_id: storeId, register_id: "reg_1",
+      items: cart.map((i) => ({ product_id: i.product_id, qty: i.qty })),
+      payments: validPayments,
+      discount_type: discountType, order_discount: Number(orderDiscount) || 0,
+      senior_pwd: (discountType !== "REGULAR") ? { id_number: idNumber, name: spName } : null,
+      client_txn_id, customer_id: customerId || null,
+    };
+    const localSale = {
+      number: "OFFLINE-" + String(Date.now()).slice(-8), cashier_name: cashierName,
+      customer_name: customers.find((c) => c.id === customerId) ? `${customers.find((c) => c.id === customerId).first_name} ${customers.find((c) => c.id === customerId).last_name}` : null,
+      items: cart.map((i) => ({ name: i.name, qty: i.qty, unit_price: i.unit_price, line_gross: i.unit_price * i.qty })),
+      subtotal: gross, vat_exempt_amount: vatExempt, spwd_discount: spDisc, vat_amount: vatAmt,
+      total, payments: validPayments, change: change > 0 ? change : 0, _offline: true,
+    };
     try {
-      const body = {
-        store_id: storeId, register_id: "reg_1",
-        items: cart.map((i) => ({ product_id: i.product_id, qty: i.qty })),
-        payments: payments.filter((p) => Number(p.amount) > 0).map((p) => ({ method: p.method, amount: Number(p.amount), reference: "" })),
-        discount_type: discountType, order_discount: Number(orderDiscount) || 0,
-        senior_pwd: (discountType !== "REGULAR") ? { id_number: idNumber, name: spName } : null,
-        client_txn_id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())),
-        customer_id: customerId || null,
-      };
+      if (!navigator.onLine) throw { __offline: true };
       const { data } = await api.post("/pos/sales", body);
       onComplete(data);
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Sale failed");
+      const networkFail = e.__offline || !e.response; // offline or no server response
+      if (networkFail) {
+        enqueueSale(body, localSale);
+        onOfflineQueued && onOfflineQueued();
+        onComplete(localSale);
+      } else {
+        toast.error(e.response?.data?.detail || "Sale failed");
+      }
     } finally { setBusy(false); }
   };
 

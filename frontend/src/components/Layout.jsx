@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, ShoppingCart, Package, Boxes, Truck, ClipboardList, Users,
   BarChart3, Receipt, Clock, UserCog, ShieldCheck, Settings as SettingsIcon,
-  LogOut, Search, Menu, Cross,
+  LogOut, Search, Menu, Cross, ArrowLeftRight, ClipboardCheck,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import GlobalSearch from "@/components/GlobalSearch";
@@ -13,6 +13,8 @@ const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/products", label: "Products", icon: Package },
   { to: "/inventory", label: "Inventory & Expiry", icon: Boxes },
+  { to: "/transfers", label: "Stock Transfers", icon: ArrowLeftRight },
+  { to: "/counts", label: "Inventory Counts", icon: ClipboardCheck },
   { to: "/purchase-orders", label: "Purchase Orders", icon: ClipboardList },
   { to: "/suppliers", label: "Suppliers", icon: Truck },
   { to: "/customers", label: "Customers", icon: Users },

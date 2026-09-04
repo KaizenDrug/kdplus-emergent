@@ -10,6 +10,8 @@ import Dashboard from "@/pages/Dashboard";
 import POS from "@/pages/POS";
 import Products from "@/pages/Products";
 import Inventory from "@/pages/Inventory";
+import StockTransfers from "@/pages/StockTransfers";
+import InventoryCounts from "@/pages/InventoryCounts";
 import Suppliers from "@/pages/Suppliers";
 import PurchaseOrders from "@/pages/PurchaseOrders";
 import Customers from "@/pages/Customers";
@@ -42,6 +44,8 @@ function App() {
             <Route index element={<Dashboard />} />
             <Route path="products" element={<Products />} />
             <Route path="inventory" element={<Inventory />} />
+            <Route path="transfers" element={<StockTransfers />} />
+            <Route path="counts" element={<InventoryCounts />} />
             <Route path="suppliers" element={<Suppliers />} />
             <Route path="purchase-orders" element={<PurchaseOrders />} />
             <Route path="customers" element={<Customers />} />
