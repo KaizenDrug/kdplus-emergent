@@ -1,0 +1,121 @@
+{
+  "theme": "light",
+  "typography": {
+    "fonts": {
+      "headings": "Manrope",
+      "body": "IBM Plex Sans",
+      "mono": "JetBrains Mono"
+    },
+    "scale": {
+      "h1": "text-4xl font-extrabold tracking-tight text-slate-900",
+      "h2": "text-2xl font-bold tracking-tight text-slate-800",
+      "h3": "text-xl font-semibold text-slate-800",
+      "body": "text-sm text-slate-600 leading-relaxed",
+      "label": "text-xs font-bold uppercase tracking-[0.1em] text-slate-500"
+    }
+  },
+  "colors": {
+    "primary": {
+      "DEFAULT": "#0F766E",
+      "hover": "#0D9488",
+      "light": "#CCFBF1",
+      "description": "Deep Teal for primary actions, branding, and active states."
+    },
+    "accent": {
+      "DEFAULT": "#0EA5E9",
+      "hover": "#0284C7",
+      "light": "#E0F2FE",
+      "description": "Soft Blue for secondary actions and information highlights."
+    },
+    "background": {
+      "default": "#F8FAFC",
+      "surface": "#FFFFFF",
+      "description": "Off-white body background to reduce glare, pure white for content surfaces."
+    },
+    "status": {
+      "success": "#10B981",
+      "warning": "#F59E0B",
+      "critical": "#EF4444",
+      "description": "Status colors for stock levels (Green: In Stock, Amber: Low Stock/Expiring Soon, Red: Out of Stock/Expired)."
+    },
+    "neutral": {
+      "border": "#E2E8F0",
+      "text_main": "#0F172A",
+      "text_muted": "#64748B"
+    }
+  },
+  "visual_enhancers": {
+    "surfaces": {
+      "card": "bg-white border border-slate-200 rounded-lg shadow-sm",
+      "pos_panel": "bg-white border-r border-slate-200 shadow-[2px_0_10px_-4px_rgba(0,0,0,0.05)]",
+      "input": "bg-slate-50 border border-slate-200 rounded-md focus:ring-2 focus:ring-teal-500/20 focus:border-teal-600"
+    },
+    "shadows": {
+      "sm": "shadow-[0_1px_2px_0_rgba(15,23,42,0.05)]",
+      "md": "shadow-[0_4px_6px_-1px_rgba(15,23,42,0.1)]"
+    },
+    "borders": {
+      "radius": "rounded-lg",
+      "width": "border"
+    }
+  },
+  "grids_and_layouts": {
+    "pos_register": "Grid layout: Left Panel (Categories) col-span-2, Center (Products) col-span-6, Right (Cart/Payment) col-span-4. Fixed height h-screen with internal scrolling to prevent page scroll.",
+    "dashboard": "High-density Mode B Grid. grid-cols-1 md:grid-cols-4 gap-4. Top row: KPI summary cards (col-span-1). Middle row: Charts (col-span-2).",
+    "spacing": "Dense layout: use p-4 for cards, gap-4 for grids. Tighter spacing for tables (p-2 cells) to show more data."
+  },
+  "components": {
+    "buttons": "Pill-shaped or rounded-md with crisp hover states. Primary: bg-teal-600 text-white hover:bg-teal-700. Secondary: bg-white border border-slate-300 text-slate-700 hover:bg-slate-50.",
+    "tables": "Shadcn UI Tables. Zebra striping or subtle border-b. Sticky headers. text-sm. Right-align numeric columns (currency).",
+    "forms": "Left-aligned labels, bold tiny uppercase text. Shadcn UI Input, Select. Command Palette (Ctrl+K) for global search.",
+    "badges": "For stock status and roles. Rounded-full px-2.5 py-0.5 text-xs font-semibold."
+  },
+  "motion_and_interactions": {
+    "hover": "Transition transform and colors. Buttons scale slightly active:scale-95.",
+    "entrance": "Fade in and slide up for panels and modals. Staggered list items in POS.",
+    "toast": "Use Sonner for toast notifications, located in top-right or bottom-right."
+  },
+  "accessibility": {
+    "contrast": "Text must meet APCA / WCAG AA standards. Dark text on light backgrounds.",
+    "focus": "Clear focus rings: focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-1.",
+    "testing": "All interactive elements MUST include a data-testid attribute."
+  },
+  "media_and_icons": {
+    "icon_library": "@phosphor-icons/react or lucide-react (dense, readable weights).",
+    "image_urls": [
+      {
+        "category": "login_background",
+        "url": "https://images.unsplash.com/photo-1745455782861-43334c2d036f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA3MDR8MHwxfHNlYXJjaHwzfHxwaGFybWFjeSUyMGludGVyaW9yJTIwbW9kZXJuJTIwYnJpZ2h0fGVufDB8fHx8MTc4ODQ3OTQzOHww&ixlib=rb-4.1.0&q=85",
+        "description": "Bright, modern, clean, white pharmacy interior background."
+      },
+      {
+        "category": "product_placeholder",
+        "url": "https://images.unsplash.com/photo-1704662451911-198af41df592?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA3MDB8MHwxfHNlYXJjaHwzfHxtZWRpY2luZSUyMGJveCUyMGJvdHRsZSUyMHdoaXRlJTIwYmFja2dyb3VuZHxlbnwwfHx8fDE3ODg0Nzk0Mzh8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Medicine bottle on white background, suitable for POS product tiles if images are needed."
+      },
+      {
+        "category": "pharmacy_logo_placeholder",
+        "url": "https://images.unsplash.com/photo-1768327504066-c2d0a44b743e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Nzd8MHwxfHNlYXJjaHwxfHxoZWFsdGhjYXJlJTIwcGhhcm1hY3klMjBsb2dvJTIwY3Jvc3N8ZW58MHx8fHwxNzg4NDc5NDUwfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Green cross pharmacy logo reference."
+      }
+    ]
+  },
+  "instructions_to_main_agent": [
+    "You have .js files not .tsx files, adapt imports and syntax accordingly.",
+    "Implement the UI using a 'Flat Solid' healthcare strategy—avoid glassmorphism and heavy drop shadows to keep the data clear and clinical.",
+    "For the POS Register, optimize for touch: large click targets, clear borders between products, sticky cart summary.",
+    "Use color purposefully: Red/Amber specifically for low stock or expiring lots (FEFO).",
+    "Never use purely transparent backgrounds on overlays/dropdowns.",
+    "Prioritize Recharts for dashboard charts (sales trend, category mix).",
+    "Add data-testid attributes to all form inputs, buttons, and critical UI elements."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "Do not converge toward generic outputs. Use the defined typography (Manrope/IBM Plex) to create a distinct brand feel.",
+    "Create depth with subtle 1px borders and targeted light shadows, not massive blurs.",
+    "Do NOT apply universal transitions (e.g., transition: all). Add specific transitions (opacity, transform, colors).",
+    "Do NOT center-align the main app container. Maintain left-aligned, structured data grids.",
+    "Use modern button styles (rounded-md or pill) with hover animations.",
+    "NEVER use emojis as icons. Use the designated icon library.",
+    "Incorporate Sonner for toasts."
+  ]
+}
