@@ -192,9 +192,13 @@ function ProductDialog({ product, categories, suppliers, onClose, onSaved }) {
     } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); } finally { setBusy(false); }
   };
 
-  const Inp = ({ k, label, type = "text", ph }) => (
+  // NOTE: `inp` is a plain render helper that is CALLED (not used as a JSX
+  // component like <Inp/>). Declaring an inline component and rendering it as
+  // an element remounts its <input> on every keystroke → focus loss. Calling a
+  // function that returns JSX reconciles by position and preserves focus.
+  const inp = (k, label, opts = {}) => (
     <label className="block"><span className="text-[11px] font-bold uppercase text-slate-500">{label}</span>
-      <input type={type} value={f[k] ?? ""} onChange={(e) => set(k, e.target.value)} placeholder={ph} data-testid={`pf-${k}`}
+      <input type={opts.type || "text"} value={f[k] ?? ""} onChange={(e) => set(k, e.target.value)} placeholder={opts.ph} data-testid={`pf-${k}`}
         className="w-full mt-1 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" /></label>
   );
 
@@ -203,26 +207,26 @@ function ProductDialog({ product, categories, suppliers, onClose, onSaved }) {
       <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto">
         <DialogHeader><DialogTitle>{isNew ? "New Product" : "Edit Product"}</DialogTitle></DialogHeader>
         <div className="grid grid-cols-2 gap-3">
-          <div className="col-span-2"><Inp k="name" label="Product Name" /></div>
-          <Inp k="generic_name" label="Generic Name" /><Inp k="brand" label="Brand" />
+          <div className="col-span-2">{inp("name", "Product Name")}</div>
+          {inp("generic_name", "Generic Name")}{inp("brand", "Brand")}
           <label className="block"><span className="text-[11px] font-bold uppercase text-slate-500">Category</span>
             <Select value={f.category_id || ""} onValueChange={(v) => set("category_id", v)}><SelectTrigger className="mt-1" data-testid="pf-category"><SelectValue placeholder="Select" /></SelectTrigger>
               <SelectContent>{categories.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent></Select></label>
           <label className="block"><span className="text-[11px] font-bold uppercase text-slate-500">Supplier</span>
             <Select value={f.supplier_id || ""} onValueChange={(v) => set("supplier_id", v)}><SelectTrigger className="mt-1"><SelectValue placeholder="Select" /></SelectTrigger>
               <SelectContent>{suppliers.map((s) => <SelectItem key={s.id} value={s.id}>{s.company}</SelectItem>)}</SelectContent></Select></label>
-          <Inp k="sku" label="SKU" /><Inp k="barcode" label="Barcode" />
-          <Inp k="strength" label="Strength" ph="500mg" /><Inp k="dosage_form" label="Dosage Form" ph="Tablet" />
+          {inp("sku", "SKU")}{inp("barcode", "Barcode")}
+          {inp("strength", "Strength", { ph: "500mg" })}{inp("dosage_form", "Dosage Form", { ph: "Tablet" })}
           <label className="block"><span className="text-[11px] font-bold uppercase text-slate-500">Rx Class</span>
             <Select value={f.rx_classification} onValueChange={(v) => set("rx_classification", v)}><SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
               <SelectContent><SelectItem value="OTC">OTC</SelectItem><SelectItem value="RX">Prescription (RX)</SelectItem></SelectContent></Select></label>
           <label className="block"><span className="text-[11px] font-bold uppercase text-slate-500">Tax Mode</span>
             <Select value={f.tax_mode} onValueChange={(v) => set("tax_mode", v)}><SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
               <SelectContent><SelectItem value="VAT">VATable (12%)</SelectItem><SelectItem value="EXEMPT">VAT-Exempt</SelectItem><SelectItem value="ZERO">Zero-Rated</SelectItem></SelectContent></Select></label>
-          <Inp k="acquisition_cost" label="Cost (₱)" type="number" /><Inp k="price" label="Selling Price (₱)" type="number" />
+          {inp("acquisition_cost", "Cost (₱)", { type: "number" })}{inp("price", "Selling Price (₱)", { type: "number" })}
           <div className="col-span-2 text-xs text-slate-500 bg-slate-50 rounded-lg p-2.5">Markup: <b className="text-slate-700">{markup}%</b> · Gross Margin: <b className="text-slate-700">{margin}%</b></div>
-          <Inp k="reorder_level" label="Reorder Level" type="number" /><Inp k="reorder_qty" label="Reorder Qty" type="number" />
-          <Inp k="shelf_code" label="Shelf Code" ph="A1" /><Inp k="storage" label="Storage" ph="Store below 30°C" />
+          {inp("reorder_level", "Reorder Level", { type: "number" })}{inp("reorder_qty", "Reorder Qty", { type: "number" })}
+          {inp("shelf_code", "Shelf Code", { ph: "A1" })}{inp("storage", "Storage", { ph: "Store below 30°C" })}
           <div className="col-span-2 flex flex-wrap gap-4 pt-1">
             {[["track_lots", "Track Lots"], ["track_expiry", "Track Expiry"], ["track_inventory", "Track Inventory"], ["refrigerated", "Refrigerated"]].map(([k, l]) => (
               <label key={k} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!f[k]} onChange={(e) => set(k, e.target.checked)} data-testid={`pf-${k}`} className="w-4 h-4 accent-teal-600" />{l}</label>

@@ -31,6 +31,26 @@ function Protected({ children }) {
   return children;
 }
 
+const hasFull = (u) => (u?.permissions || []).includes("*");
+const canBackOffice = (u) => u?.kind === "user" || ["owner", "admin", "manager", "pharmacist", "inventory"].includes(u?.role);
+
+// Back office is off-limits to cashiers (POS-only role)
+function RequireBackOffice({ children }) {
+  const { user } = useAuth();
+  if (user === null)
+    return <div className="h-screen flex items-center justify-center text-slate-400">Loading…</div>;
+  if (!user) return <Navigate to="/login" replace />;
+  if (!canBackOffice(user)) return <Navigate to="/pos" replace />;
+  return children;
+}
+
+// The Executive Dashboard (company financials) is owner/admin/manager only
+function DashboardIndex() {
+  const { user } = useAuth();
+  if (!hasFull(user)) return <Navigate to="/products" replace />;
+  return <Dashboard />;
+}
+
 function App() {
   return (
     <AuthProvider>
@@ -41,8 +61,8 @@ function App() {
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/pos" element={<Protected><POS /></Protected>} />
-          <Route path="/" element={<Protected><Layout /></Protected>}>
-            <Route index element={<Dashboard />} />
+          <Route path="/" element={<RequireBackOffice><Layout /></RequireBackOffice>}>
+            <Route index element={<DashboardIndex />} />
             <Route path="products" element={<Products />} />
             <Route path="inventory" element={<Inventory />} />
             <Route path="transfers" element={<StockTransfers />} />

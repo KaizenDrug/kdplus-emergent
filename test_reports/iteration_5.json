@@ -1,0 +1,31 @@
+{
+  "summary": "Verified the Inp→inp render-helper fix. Continuous typing works with focus retained across ALL fields in ProductDialog (Edit + Add), CustomerDialog (Add), and SupplierDialog (Add). Add Product save persisted to backend. Discovered RBAC PIN-login redirect regression: non-cashier PIN roles (manager, pharmacist, inventory) all still land on /pos instead of / or /products.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "PIN login RBAC redirect",
+        "issue": "Login.jsx line 18 useEffect `React.useEffect(() => { if (user) navigate(tab === 'pin' ? '/pos' : '/'); }, [user])` runs after AuthContext sets `user`, unconditionally navigating any PIN-tab login to /pos. This clobbers the role-aware navigate() in submitPin (lines 32-34). Observed: manager PIN 2222 → /pos (expected /), pharmacist PIN 3333 → /pos (expected /products via RequireBackOffice), inventory PIN 5555 → /pos (expected /products). Cashier PIN 4444 → /pos correctly.",
+        "affected_selectors": ["pin-enter", "tab-pin"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "In /app/frontend/src/pages/Login.jsx, remove or role-gate the auto-navigate useEffect on line 18. Either delete it entirely (submitPin + submitEmail already navigate on success), or change it to: `if (user) { const isCashier = user.role === 'cashier'; navigate(isCashier ? '/pos' : '/'); }` so back-office roles use RequireBackOffice/DashboardIndex to land on /products or dashboard as appropriate."
+  ],
+  "critical_code_review_comments": [
+    "Login.jsx has duplicate navigation logic: a broad useEffect on [user] AND explicit navigate() calls inside submitEmail/submitPin. The useEffect wins on PIN flow because pinLogin awaits then the user state updates asynchronously. Consolidate to a single source of truth to prevent role-based routing regressions in the future.",
+    "Focus retention fix (inline component → render helper) is architecturally correct across Products.jsx, Suppliers.jsx, Customers.jsx. Verified: no remaining `const Inp =` inline components inside render bodies."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (not tested)", "frontend": "Focus fix 100%; RBAC redirect 25% (1/4 PIN roles route correctly)"},
+  "test_credentials": "admin nt7yzjc88t@privaterelay.appleid.com / KdplusOwner#2026; PINs 2222/3333/4444/5555",
+  "seed_data_creation": "Created one product 'FOCUSTEST-<ts>' via Add Product dialog to validate save flow; confirmed persisted in product grid.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "PRIMARY acceptance (focus retention on ProductDialog Generic Name and all other fields) is fully PASSING. Products (12 fields), Customers (7 fields), Suppliers (8 fields) all retain focus during page.keyboard.type() with delay=40; document.activeElement's data-testid stays equal to the field's testid and the value equals the full typed string. Add Product save flow confirmed. Only remaining issue is a redirect regression from a prior iteration where a broad useEffect in Login.jsx overrides the newer role-aware submitPin navigate(). Fix suggested in action_items.",
+  "rca of the issue": "The inline-component focus bug is fixed correctly by replacing `const Inp = (…) => <input/>` (a new component identity every render → React remounts → focus loss) with a plain function `inp(k,label,opts)` that is called and returns JSX inline (same tree position across renders → React reconciles the same DOM node → focus preserved). Verified in Products.jsx (line 199), Suppliers.jsx and Customers.jsx analogous helpers. Verified empirically: typing 12 characters continuously with 40ms delay into Generic Name yields value='AMOXICILLIN' and document.activeElement data-testid still 'pf-generic_name'. Same pattern verified across all listed fields for the three dialogs."
+}

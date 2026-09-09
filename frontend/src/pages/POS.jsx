@@ -15,8 +15,10 @@ import { Button } from "@/components/ui/button";
 const PAY_METHODS = ["Cash", "GCash", "Maya", "Credit Card", "Debit Card", "Bank Transfer"];
 
 export default function POS() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const canBack = user?.kind === "user" || ["owner", "admin", "manager", "pharmacist", "inventory"].includes(user?.role);
+  const goBack = () => { if (canBack) navigate("/"); else logout(); };
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [customers, setCustomers] = useState([]);
@@ -116,7 +118,7 @@ export default function POS() {
     <div className="h-screen flex flex-col bg-slate-100">
       {/* Top bar */}
       <div className="h-14 bg-white border-b border-slate-200 flex items-center px-4 gap-3 shrink-0">
-        <button onClick={() => navigate("/")} data-testid="pos-back" className="p-2 rounded-lg hover:bg-slate-100"><ArrowLeft className="w-5 h-5" /></button>
+        <button onClick={goBack} data-testid="pos-back" title={canBack ? "Back to office" : "Exit / sign out"} className="p-2 rounded-lg hover:bg-slate-100"><ArrowLeft className="w-5 h-5" /></button>
         <span className="font-heading font-extrabold text-slate-900">KDPLUS POS</span>
         <Select value={storeId} onValueChange={setStoreId}>
           <SelectTrigger className="w-44 h-9" data-testid="pos-store"><SelectValue /></SelectTrigger>

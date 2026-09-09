@@ -64,21 +64,21 @@ function CustDialog({ c, onClose, onSaved }) {
     try { if (f.id) await api.put(`/customers/${f.id}`, f); else await api.post("/customers", f); toast.success("Customer saved"); onSaved(); }
     catch (e) { toast.error(e.response?.data?.detail || "Failed"); } finally { setBusy(false); }
   };
-  const Inp = ({ k, label }) => (<label className="block"><span className="text-[11px] font-bold uppercase text-slate-500">{label}</span>
+  const inp = (k, label) => (<label className="block"><span className="text-[11px] font-bold uppercase text-slate-500">{label}</span>
     <input value={f[k] ?? ""} onChange={(e) => set(k, e.target.value)} data-testid={`cf-${k}`} className="w-full mt-1 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-sm" /></label>);
   return (
     <Dialog open={true} onOpenChange={onClose}>
       <DialogContent className="max-w-lg">
         <DialogHeader><DialogTitle>{f.id ? "Edit" : "New"} Customer</DialogTitle></DialogHeader>
         <div className="grid grid-cols-2 gap-3">
-          <Inp k="first_name" label="First Name" /><Inp k="last_name" label="Last Name" />
-          <Inp k="phone" label="Phone" /><Inp k="email" label="Email" />
-          <div className="col-span-2"><Inp k="address" label="Address" /></div>
+          {inp("first_name", "First Name")}{inp("last_name", "Last Name")}
+          {inp("phone", "Phone")}{inp("email", "Email")}
+          <div className="col-span-2">{inp("address", "Address")}</div>
           <label><span className="text-[11px] font-bold uppercase text-slate-500">Classification</span>
             <Select value={f.senior_pwd_type} onValueChange={(v) => set("senior_pwd_type", v)}><SelectTrigger className="mt-1" data-testid="cf-type"><SelectValue /></SelectTrigger>
               <SelectContent><SelectItem value="NONE">Regular</SelectItem><SelectItem value="SENIOR">Senior Citizen</SelectItem><SelectItem value="PWD">PWD</SelectItem></SelectContent></Select></label>
-          <Inp k="id_number" label="OSCA/PWD ID" />
-          <div className="col-span-2"><Inp k="allergies" label="Allergies (optional)" /></div>
+          {inp("id_number", "OSCA/PWD ID")}
+          <div className="col-span-2">{inp("allergies", "Allergies (optional)")}</div>
         </div>
         <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={busy} data-testid="save-customer" className="bg-primary hover:bg-teal-800">Save</Button></DialogFooter>
       </DialogContent>

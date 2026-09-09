@@ -53,18 +53,18 @@ function SupplierDialog({ s, onClose, onSaved }) {
     try { if (f.id) await api.put(`/suppliers/${f.id}`, f); else await api.post("/suppliers", f); toast.success("Supplier saved"); onSaved(); }
     catch (e) { toast.error(e.response?.data?.detail || "Failed"); } finally { setBusy(false); }
   };
-  const Inp = ({ k, label }) => (<label className="block"><span className="text-[11px] font-bold uppercase text-slate-500">{label}</span>
+  const inp = (k, label) => (<label className="block"><span className="text-[11px] font-bold uppercase text-slate-500">{label}</span>
     <input value={f[k] ?? ""} onChange={(e) => set(k, e.target.value)} data-testid={`sf-${k}`} className="w-full mt-1 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-sm" /></label>);
   return (
     <Dialog open={true} onOpenChange={onClose}>
       <DialogContent className="max-w-lg">
         <DialogHeader><DialogTitle>{f.id ? "Edit" : "New"} Supplier</DialogTitle></DialogHeader>
         <div className="grid grid-cols-2 gap-3">
-          <div className="col-span-2"><Inp k="company" label="Company" /></div>
-          <Inp k="contact_person" label="Contact Person" /><Inp k="phone" label="Phone" />
-          <Inp k="email" label="Email" /><Inp k="tin" label="TIN" />
-          <div className="col-span-2"><Inp k="address" label="Address" /></div>
-          <Inp k="payment_terms" label="Payment Terms" /><Inp k="notes" label="Notes" />
+          <div className="col-span-2">{inp("company", "Company")}</div>
+          {inp("contact_person", "Contact Person")}{inp("phone", "Phone")}
+          {inp("email", "Email")}{inp("tin", "TIN")}
+          <div className="col-span-2">{inp("address", "Address")}</div>
+          {inp("payment_terms", "Payment Terms")}{inp("notes", "Notes")}
         </div>
         <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={busy} data-testid="save-supplier" className="bg-primary hover:bg-teal-800">Save</Button></DialogFooter>
       </DialogContent>

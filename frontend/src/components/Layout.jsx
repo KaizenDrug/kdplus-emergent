@@ -10,7 +10,7 @@ import GlobalSearch from "@/components/GlobalSearch";
 import { Button } from "@/components/ui/button";
 
 const NAV = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+  { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true, full: true },
   { to: "/products", label: "Products", icon: Package },
   { to: "/inventory", label: "Inventory & Expiry", icon: Boxes },
   { to: "/transfers", label: "Stock Transfers", icon: ArrowLeftRight },
@@ -20,11 +20,11 @@ const NAV = [
   { to: "/suppliers", label: "Suppliers", icon: Truck },
   { to: "/customers", label: "Customers", icon: Users },
   { to: "/sales", label: "Sales & Refunds", icon: Receipt },
-  { to: "/reports", label: "Reports", icon: BarChart3 },
-  { to: "/shifts", label: "Shifts & Cash", icon: Clock },
-  { to: "/employees", label: "Employees", icon: UserCog },
-  { to: "/audit", label: "Audit Log", icon: ShieldCheck },
-  { to: "/settings", label: "Settings", icon: SettingsIcon },
+  { to: "/reports", label: "Reports", icon: BarChart3, full: true },
+  { to: "/shifts", label: "Shifts & Cash", icon: Clock, full: true },
+  { to: "/employees", label: "Employees", icon: UserCog, full: true },
+  { to: "/audit", label: "Audit Log", icon: ShieldCheck, full: true },
+  { to: "/settings", label: "Settings", icon: SettingsIcon, full: true },
 ];
 
 export default function Layout() {
@@ -32,6 +32,8 @@ export default function Layout() {
   const [open, setOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const navigate = useNavigate();
+  const isFull = (user?.permissions || []).includes("*");
+  const navItems = NAV.filter((n) => !n.full || isFull);
 
   React.useEffect(() => {
     const h = (e) => {
@@ -53,7 +55,7 @@ export default function Layout() {
         </div>
       </div>
       <nav className="flex-1 overflow-y-auto py-3 px-3 space-y-0.5">
-        {NAV.map((n) => (
+        {navItems.map((n) => (
           <NavLink
             key={n.to}
             to={n.to}

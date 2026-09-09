@@ -1,0 +1,34 @@
+{
+  "summary": "Frontend RBAC routing fix verified. Cashier bug is FIXED: cashier PIN 4444 → /pos, back arrow logs out & lands on /login, and direct URL access to /, /reports, /employees, /settings all redirect to /pos. Admin (email/password) unchanged: lands on Executive Dashboard, full sidebar visible, POS back arrow returns to /. Pharmacist direct visit to / correctly redirects to /products and full-only nav items are hidden. Two issues surfaced (see below).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/auth/pin-login (PIN 5555)", "issue": "Returns 401 'Invalid PIN' because employee 'Joy Ramos' (inventory role) has active:false in DB. Hash verifies correctly against 5555 when isolated, so this is a data-state issue (someone deactivated her via employees CRUD or the seed didn't re-activate). Blocks verification of inventory role RBAC via UI. Suggest fixing seed to force active:true on re-run, or reactivating Joy Ramos."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Login.jsx (submitPin)", "issue": "Post-PIN login always navigates to /pos regardless of role. Pharmacist PIN 3333 and Manager PIN 2222 (and presumably inventory PIN 5555) are supposed to land in the back office after PIN login per the spec ('PIN 3333 (pharmacist) — EXPECTED: reaches the back office'). Currently they all land on /pos. The RBAC guards themselves work: navigating manually to / from a pharmacist session correctly redirects to /products, and the sidebar hides full-only items. Only the immediate post-login destination is wrong.", "selector": "[data-testid=pin-enter]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "In /app/frontend/src/pages/Login.jsx, route the post-PIN redirect by role: e.g. after pinLogin, if user.role === 'cashier' (or !canBackOffice(user)) navigate('/pos') else navigate('/'). Currently line 30 is hardcoded navigate('/pos').",
+    "Reactivate seed employee 'Joy Ramos' (inventory PIN 5555) — currently active:false in DB, so pin-login 401s. Consider making seed.py force active:true on existing records, or re-run seed after resetting employees."
+  ],
+  "critical_code_review_comments": [
+    "App.js Protected/RequireBackOffice/DashboardIndex guards are clean and correctly composed. canBackOffice check duplicates a small role list also present in POS.jsx goBack — consider extracting to a shared helper (src/lib/rbac.js) to avoid drift.",
+    "Layout.jsx filters nav by permissions.includes('*') which is aligned with backend require_perm('*'); good.",
+    "Login.jsx submitPin hardcodes '/pos' after PIN login — should be role-aware so pharmacist/inventory/manager land on back office (see action item)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only request)", "frontend": "7/9 checks pass (78%). Cashier fix 100% pass. Admin flow 100% pass. Pharmacist guard partial: manual /→/products works & full nav hidden, but post-PIN-login lands on /pos instead of back office. Inventory unverified via UI due to active:false data state."},
+  "test_credentials": "Admin nt7yzjc88t@privaterelay.appleid.com / KdplusOwner#2026 (verified); PIN 4444 cashier OK, 3333 pharmacist OK, 2222 manager OK, 5555 inventory FAILS (active:false).",
+  "seed_data_creation": "None.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Cashier back-arrow bug fix (pos-back) is confirmed working. Guards RequireBackOffice + DashboardIndex work correctly on manual navigation. Remaining verification is post-PIN redirect for non-cashier roles once Login.jsx is patched, and inventory PIN 5555 UI once Joy Ramos is reactivated. Use tab-pin then pin-<digit> keypad.",
+  "rca of the issue": "Cashier reaching Executive Dashboard was caused by (a) POS back arrow always navigating to '/', and (b) '/' being unguarded for cashiers. Fix in App.js adds RequireBackOffice around the Layout route (redirects cashiers to /pos) and DashboardIndex redirects non-full-perm users to /products; POS.jsx pos-back now calls logout() for cashiers. All verified working. Remaining minor issue is Login.jsx post-PIN redirect being hardcoded to /pos — orthogonal to the reported bug but relevant to the fourth spec item."
+}

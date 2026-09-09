@@ -15,20 +15,24 @@ export default function Login() {
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
 
-  React.useEffect(() => { if (user) navigate(tab === "pin" ? "/pos" : "/"); }, [user]); // eslint-disable-line
+  React.useEffect(() => {
+    if (user) navigate(user.role === "cashier" ? "/pos" : "/");
+  }, [user]); // eslint-disable-line
 
   const doEmail = async (e) => {
     e.preventDefault();
     setBusy(true);
-    try { await login(email, password); toast.success("Welcome back!"); navigate("/"); }
+    try { await login(email, password); toast.success("Welcome back!"); }
     catch (e) { toast.error(apiError(e.response?.data?.detail) || "Login failed"); }
     finally { setBusy(false); }
   };
 
   const submitPin = async (value) => {
     setBusy(true);
-    try { await pinLogin(value); toast.success("POS session started"); navigate("/pos"); }
-    catch (e) { toast.error(apiError(e.response?.data?.detail) || "Invalid PIN"); setPin(""); }
+    try {
+      const u = await pinLogin(value);
+      toast.success(u.role === "cashier" ? "POS session started" : "Signed in");
+    } catch (e) { toast.error(apiError(e.response?.data?.detail) || "Invalid PIN"); setPin(""); }
     finally { setBusy(false); }
   };
 
