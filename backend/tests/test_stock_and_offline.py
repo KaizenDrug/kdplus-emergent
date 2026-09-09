@@ -15,8 +15,7 @@ if not BASE:
                 break
 BASE = BASE.rstrip("/")
 
-ADMIN_EMAIL = "nt7yzjc88t@privaterelay.appleid.com"
-ADMIN_PASSWORD = "KdplusOwner#2026"
+from creds import ADMIN_EMAIL, ADMIN_PASSWORD
 CASHIER_PIN = "4444"
 
 

@@ -397,8 +397,14 @@ function ReceiptDialog({ sale, settings, onClose }) {
   const print = () => {
     const w = window.open("", "_blank", "width=380,height=640");
     if (!w) return;
-    w.document.write(`<pre style="font-family:monospace;font-size:12px;width:280px">${document.getElementById("receipt-body").innerText}</pre>`);
-    w.document.close(); w.focus(); w.print(); w.close();
+    const body = document.getElementById("receipt-body");
+    const pre = w.document.createElement("pre");
+    pre.style.fontFamily = "monospace";
+    pre.style.fontSize = "12px";
+    pre.style.width = "280px";
+    pre.textContent = body ? body.innerText : "";
+    w.document.body.appendChild(pre);
+    w.focus(); w.print(); w.close();
   };
   return (
     <Dialog open={true} onOpenChange={onClose}>

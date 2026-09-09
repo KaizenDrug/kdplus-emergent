@@ -7,8 +7,7 @@ import requests
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 assert BASE_URL, "REACT_APP_BACKEND_URL not set"
 
-ADMIN_EMAIL = "nt7yzjc88t@privaterelay.appleid.com"
-ADMIN_PASS = "KdplusOwner#2026"
+from creds import ADMIN_EMAIL, ADMIN_PASSWORD as ADMIN_PASS
 
 
 @pytest.fixture(scope="module")
