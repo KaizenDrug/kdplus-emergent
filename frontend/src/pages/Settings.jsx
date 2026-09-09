@@ -1,12 +1,16 @@
 import React, { useEffect, useState } from "react";
-import api from "@/lib/api";
+import api, { apiError } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 import { PageHeader, Card } from "@/components/kit";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Settings() {
+  const { user } = useAuth();
+  const isAdmin = user && user.kind === "user" && ["owner", "admin"].includes(user.role);
   const [s, setS] = useState(null);
   useEffect(() => { api.get("/settings").then((r) => setS(r.data)); }, []);
   if (!s) return <div className="text-slate-400">Loading…</div>;
@@ -24,11 +28,13 @@ export default function Settings() {
           <TabsTrigger value="business" data-testid="stab-business">Business</TabsTrigger>
           <TabsTrigger value="tax" data-testid="stab-tax">Tax & Senior/PWD</TabsTrigger>
           <TabsTrigger value="loyalty" data-testid="stab-loyalty">Loyalty & Inventory</TabsTrigger>
+          {isAdmin && <TabsTrigger value="danger" data-testid="stab-danger" className="data-[state=active]:text-red-600">Danger Zone</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="business"><BusinessTab s={s} save={save} /></TabsContent>
         <TabsContent value="tax"><TaxTab s={s} save={save} /></TabsContent>
         <TabsContent value="loyalty"><LoyaltyTab s={s} save={save} /></TabsContent>
+        {isAdmin && <TabsContent value="danger"><DangerZoneTab /></TabsContent>}
       </Tabs>
     </div>
   );
@@ -88,6 +94,64 @@ function LoyaltyTab({ s, save }) {
         <Select value={neg} onValueChange={setNeg}><SelectTrigger className={inputCls} data-testid="set-neg-policy"><SelectValue /></SelectTrigger>
           <SelectContent><SelectItem value="PROHIBIT">Prohibit selling below zero</SelectItem><SelectItem value="WARN">Warn but allow</SelectItem><SelectItem value="ALLOW">Allow</SelectItem></SelectContent></Select></Row>
       <div className="mt-4"><Button onClick={() => save({ loyalty: loy, negative_stock_policy: neg })} data-testid="save-loyalty" className="bg-primary hover:bg-teal-800">Save</Button></div>
+    </Card>
+  );
+}
+
+function DangerZoneTab() {
+  const [confirm, setConfirm] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const phraseOk = confirm.trim() === "RESET DATABASE";
+  const canReset = phraseOk && password.length > 0 && !busy;
+
+  const reset = async () => {
+    if (!canReset) return;
+    setBusy(true);
+    try {
+      const { data } = await api.post("/admin/reset-database", { confirm, password });
+      toast.success(data.message || "Database reset");
+      setConfirm(""); setPassword("");
+      setTimeout(() => window.location.reload(), 1200);
+    } catch (e) {
+      toast.error(apiError(e.response?.data?.detail) || "Reset failed");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <Card className="p-5 max-w-2xl border-red-200 bg-red-50/40" data-testid="danger-zone-card">
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 text-red-600"><AlertTriangle className="w-6 h-6" /></div>
+        <div className="flex-1">
+          <h3 className="font-heading font-bold text-red-700 text-lg">Reset Test Database</h3>
+          <p className="text-sm text-slate-600 mt-1">
+            Permanently deletes <strong>all transactional and master data</strong> — sales, inventory, products,
+            customers, suppliers, purchase orders, transfers, counts and staff PIN accounts — then reseeds the default
+            KDPLUS demo dataset. Your <strong>Super Admin account</strong> and <strong>business / tax settings</strong> are preserved.
+          </p>
+          <p className="text-sm font-semibold text-red-600 mt-2">This action cannot be undone.</p>
+
+          <div className="mt-5 space-y-3">
+            <div>
+              <label className="text-sm font-medium text-slate-600">Type <code className="px-1.5 py-0.5 rounded bg-slate-200 text-red-700 font-mono text-xs">RESET DATABASE</code> to continue</label>
+              <input className={inputCls + " mt-1"} value={confirm} onChange={(e) => setConfirm(e.target.value)}
+                     placeholder="RESET DATABASE" data-testid="reset-confirm-phrase" />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-slate-600">Confirm your admin password</label>
+              <input type="password" className={inputCls + " mt-1"} value={password} onChange={(e) => setPassword(e.target.value)}
+                     placeholder="Admin password" data-testid="reset-password" autoComplete="current-password" />
+            </div>
+          </div>
+
+          <div className="mt-5">
+            <Button onClick={reset} disabled={!canReset} data-testid="reset-database-btn"
+                    className="bg-red-600 hover:bg-red-700 text-white disabled:opacity-40 disabled:cursor-not-allowed">
+              {busy ? "Resetting…" : "Reset Test Database"}
+            </Button>
+          </div>
+        </div>
+      </div>
     </Card>
   );
 }

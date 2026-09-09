@@ -49,3 +49,10 @@ Decimal-safe money · immutable inventory ledger · atomic sale (sale+items+paym
 2. Manager override PIN workflow for restricted POS actions
 3. Offline PWA (service worker + IndexedDB sync)
 4. CSV product import wizard + barcode label printing
+
+# [2026-06] Admin-only Reset Test Database
+- Settings -> "Danger Zone" tab (visible only to Owner/Admin email accounts).
+- Backend POST /api/admin/reset-database: Super Admin only (kind=user, role owner/admin); staff PIN logins get 403. Requires confirm phrase "RESET DATABASE" (400 if wrong) + admin password (401 if wrong).
+- Wipes all transactional/master collections and reseeds full KDPLUS demo dataset via seed._seed_master_and_txn(). Preserves users (Super Admin) and settings (business/tax/lookup).
+- seed.py refactored: seed_all -> _seed_settings + _seed_master_and_txn; reset_database() reuses the latter.
+- Verified: curl (403/401/400/200, reseeded, settings preserved) + frontend screenshot (button gated on phrase+password).

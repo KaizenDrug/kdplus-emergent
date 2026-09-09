@@ -3,10 +3,32 @@ from pydantic import BaseModel
 from typing import Optional, List
 import re
 
-from core import (db, ORG_ID, uid, now_iso, hash_secret, get_current_principal,
+from core import (db, ORG_ID, uid, now_iso, hash_secret, verify_secret, get_current_principal,
                   require_perm, audit, ROLE_PERMISSIONS)
+from seed import reset_database
 
 router = APIRouter(prefix="/api", tags=["admin"])
+
+
+# ---------------- Danger Zone: reset test database ----------------
+class ResetDbIn(BaseModel):
+    confirm: str
+    password: str
+
+@router.post("/admin/reset-database")
+async def reset_test_database(body: ResetDbIn, principal=Depends(get_current_principal)):
+    # Super Admin only: email/password Owner or Admin accounts. Staff PIN logins blocked.
+    if principal.get("kind") != "user" or principal.get("role") not in ("owner", "admin"):
+        raise HTTPException(status_code=403, detail="Only a Super Admin can reset the database")
+    if body.confirm.strip() != "RESET DATABASE":
+        raise HTTPException(status_code=400, detail="Confirmation phrase does not match. Type RESET DATABASE exactly.")
+    user = await db.users.find_one({"id": principal["id"]})
+    if not user or not verify_secret(body.password, user.get("password_hash", "")):
+        raise HTTPException(status_code=401, detail="Incorrect password")
+    await reset_database()
+    await audit(principal, "database.reset", "system", ORG_ID,
+                after={"by": principal.get("email"), "role": principal.get("role")})
+    return {"ok": True, "message": "Test database reset and reseeded with default demo data."}
 
 
 # ---------------- Employees ----------------

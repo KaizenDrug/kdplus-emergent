@@ -103,20 +103,11 @@ async def seed_all():
     await seed_admin()
     if await db.settings.find_one({"org_id": ORG_ID}):
         return  # already seeded
+    await _seed_settings()
+    await _seed_master_and_txn()
 
-    store = {"id": "store_main", "org_id": ORG_ID, "name": "KDPLUS Main Branch",
-             "address": "123 Rizal Ave, Manila", "phone": "02-8123-4567", "tin": "123-456-789-000",
-             "active": True, "created_at": now_iso()}
-    store2 = {"id": "store_annex", "org_id": ORG_ID, "name": "KDPLUS Annex",
-              "address": "45 Mabini St, Manila", "phone": "02-8123-9999", "tin": "123-456-789-001",
-              "active": True, "created_at": now_iso()}
-    await db.stores.insert_many([store, store2])
-    await db.registers.insert_many([
-        {"id": "reg_1", "org_id": ORG_ID, "store_id": "store_main", "name": "Register 1", "active": True},
-        {"id": "reg_2", "org_id": ORG_ID, "store_id": "store_main", "name": "Register 2", "active": True},
-        {"id": "reg_3", "org_id": ORG_ID, "store_id": "store_annex", "name": "Annex Register", "active": True},
-    ])
 
+async def _seed_settings():
     await db.settings.insert_one({
         "org_id": ORG_ID, "currency": "PHP", "timezone": "Asia/Manila",
         "business": {"name": "KDPLUS Pharmacy", "address": "123 Rizal Ave, Manila",
@@ -133,6 +124,21 @@ async def seed_all():
                                "supplier return", "correction", "promotional use", "internal use", "other"],
         "shelf_locations": [{"code": c, "name": n} for c, n in CATEGORIES],
     })
+
+
+async def _seed_master_and_txn():
+    store = {"id": "store_main", "org_id": ORG_ID, "name": "KDPLUS Main Branch",
+             "address": "123 Rizal Ave, Manila", "phone": "02-8123-4567", "tin": "123-456-789-000",
+             "active": True, "created_at": now_iso()}
+    store2 = {"id": "store_annex", "org_id": ORG_ID, "name": "KDPLUS Annex",
+              "address": "45 Mabini St, Manila", "phone": "02-8123-9999", "tin": "123-456-789-001",
+              "active": True, "created_at": now_iso()}
+    await db.stores.insert_many([store, store2])
+    await db.registers.insert_many([
+        {"id": "reg_1", "org_id": ORG_ID, "store_id": "store_main", "name": "Register 1", "active": True},
+        {"id": "reg_2", "org_id": ORG_ID, "store_id": "store_main", "name": "Register 2", "active": True},
+        {"id": "reg_3", "org_id": ORG_ID, "store_id": "store_annex", "name": "Annex Register", "active": True},
+    ])
 
     # employees
     emps = []
@@ -298,3 +304,24 @@ async def seed_all():
     await db.notifications.insert_one({"id": uid(), "org_id": ORG_ID, "kind": "expiry",
         "title": "Medicines expiring soon", "message": "Several batches expire within 90 days. Review the Expiry Monitor.",
         "severity": "warning", "store_id": "store_main", "ref": None, "read": False, "created_at": now_iso()})
+
+
+# Collections wiped on a test-database reset. Preserves `users` (Super Admin) and
+# `settings` (business/tax config); everything else is cleared and reseeded.
+RESET_COLLECTIONS = [
+    "products", "categories", "customers", "suppliers", "purchase_orders", "sales",
+    "shifts", "inventory_lots", "inventory_levels", "inventory_movements",
+    "stock_transfers", "inventory_counts", "prescriptions", "notifications",
+    "audit_logs", "counters", "cash_movements", "login_attempts",
+    "loyalty_transactions", "price_history", "refunds", "senior_pwd_transactions",
+    "password_reset_requests", "password_reset_tokens", "employees", "stores", "registers",
+]
+
+
+async def reset_database():
+    """Wipe all transactional & master test data (preserving the Super Admin account
+    and business/tax settings) and reseed the default KDPLUS demo dataset."""
+    random.seed(42)
+    for c in RESET_COLLECTIONS:
+        await db[c].delete_many({})
+    await _seed_master_and_txn()
