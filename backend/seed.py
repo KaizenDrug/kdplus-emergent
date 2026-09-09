@@ -126,7 +126,7 @@ async def _seed_settings():
     })
 
 
-async def _seed_master_and_txn():
+async def _seed_stores_registers():
     store = {"id": "store_main", "org_id": ORG_ID, "name": "KDPLUS Main Branch",
              "address": "123 Rizal Ave, Manila", "phone": "02-8123-4567", "tin": "123-456-789-000",
              "active": True, "created_at": now_iso()}
@@ -139,6 +139,10 @@ async def _seed_master_and_txn():
         {"id": "reg_2", "org_id": ORG_ID, "store_id": "store_main", "name": "Register 2", "active": True},
         {"id": "reg_3", "org_id": ORG_ID, "store_id": "store_annex", "name": "Annex Register", "active": True},
     ])
+
+
+async def _seed_master_and_txn():
+    await _seed_stores_registers()
 
     # employees
     emps = []
@@ -318,10 +322,26 @@ RESET_COLLECTIONS = [
 ]
 
 
-async def reset_database():
-    """Wipe all transactional & master test data (preserving the Super Admin account
-    and business/tax settings) and reseed the default KDPLUS demo dataset."""
+async def reset_database(mode="demo"):
+    """Wipe all transactional & master test data and reseed.
+
+    mode="demo"  -> reseed the full KDPLUS demo dataset (products, sales, staff, etc.).
+    mode="clean" -> empty production start: keep ONLY the primary Owner user + settings,
+                    recreate default stores/registers, everything else empty.
+
+    Always preserves the `settings` document (recreated with defaults only if missing).
+    """
     random.seed(42)
     for c in RESET_COLLECTIONS:
         await db[c].delete_many({})
-    await _seed_master_and_txn()
+
+    if mode == "clean":
+        # keep only the primary Owner account; drop any other user accounts
+        owner_email = os.environ["ADMIN_EMAIL"].lower()
+        await db.users.delete_many({"email": {"$ne": owner_email}})
+        await seed_admin()  # guarantee the Owner exists
+        if not await db.settings.find_one({"org_id": ORG_ID}):
+            await _seed_settings()
+        await _seed_stores_registers()
+    else:
+        await _seed_master_and_txn()

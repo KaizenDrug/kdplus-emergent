@@ -14,6 +14,7 @@ router = APIRouter(prefix="/api", tags=["admin"])
 class ResetDbIn(BaseModel):
     confirm: str
     password: str
+    mode: str = "demo"  # "demo" = full KDPLUS demo reseed | "clean" = empty production start
 
 @router.post("/admin/reset-database")
 async def reset_test_database(body: ResetDbIn, principal=Depends(get_current_principal)):
@@ -22,13 +23,16 @@ async def reset_test_database(body: ResetDbIn, principal=Depends(get_current_pri
         raise HTTPException(status_code=403, detail="Only a Super Admin can reset the database")
     if body.confirm.strip() != "RESET DATABASE":
         raise HTTPException(status_code=400, detail="Confirmation phrase does not match. Type RESET DATABASE exactly.")
+    if body.mode not in ("demo", "clean"):
+        raise HTTPException(status_code=400, detail="Invalid reset mode")
     user = await db.users.find_one({"id": principal["id"]})
     if not user or not verify_secret(body.password, user.get("password_hash", "")):
         raise HTTPException(status_code=401, detail="Incorrect password")
-    await reset_database()
+    await reset_database(mode=body.mode)
     await audit(principal, "database.reset", "system", ORG_ID,
-                after={"by": principal.get("email"), "role": principal.get("role")})
-    return {"ok": True, "message": "Test database reset and reseeded with default demo data."}
+                after={"by": principal.get("email"), "role": principal.get("role"), "mode": body.mode})
+    label = "empty (clean start)" if body.mode == "clean" else "default demo data"
+    return {"ok": True, "mode": body.mode, "message": f"Database reset to {label}."}
 
 
 # ---------------- Employees ----------------

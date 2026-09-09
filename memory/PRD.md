@@ -56,3 +56,11 @@ Decimal-safe money · immutable inventory ledger · atomic sale (sale+items+paym
 - Wipes all transactional/master collections and reseeds full KDPLUS demo dataset via seed._seed_master_and_txn(). Preserves users (Super Admin) and settings (business/tax/lookup).
 - seed.py refactored: seed_all -> _seed_settings + _seed_master_and_txn; reset_database() reuses the latter.
 - Verified: curl (403/401/400/200, reseeded, settings preserved) + frontend screenshot (button gated on phrase+password).
+
+# [2026-06] Reset Database — Clean/Empty mode added
+- POST /api/admin/reset-database now takes mode: "demo" (full KDPLUS demo reseed) | "clean" (empty production start). Owner/Admin user only + password + "RESET DATABASE" phrase; invalid mode -> 400.
+- clean mode: wipes all RESET_COLLECTIONS incl counters; deletes all users except primary Owner (ADMIN_EMAIL); ensures Owner via seed_admin; preserves/creates settings; recreates default stores+registers. No products/sales/customers/suppliers/employees.
+- seed.py: extracted _seed_stores_registers(); reset_database(mode) branches clean vs demo.
+- Frontend Danger Zone (Settings) has a mode radio (demo/clean); button label adapts.
+- Verified on PREVIEW DB: clean -> products/sales/POs/customers/suppliers/categories/employees=0, users=1, stores=2, registers=3, counters=0, dashboard totals 0, login works, new product+sale works (SALE-...-00001), then restored demo (44 products).
+- NOTE: workspace MONGO_URL=localhost test_database (PREVIEW ONLY). Production reset must be run from the DEPLOYED app Settings->Danger Zone (uses prod MONGO_URL). Agent cannot touch production DB from workspace.

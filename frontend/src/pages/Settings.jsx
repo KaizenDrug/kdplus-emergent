@@ -99,6 +99,7 @@ function LoyaltyTab({ s, save }) {
 }
 
 function DangerZoneTab() {
+  const [mode, setMode] = useState("demo");
   const [confirm, setConfirm] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -109,7 +110,7 @@ function DangerZoneTab() {
     if (!canReset) return;
     setBusy(true);
     try {
-      const { data } = await api.post("/admin/reset-database", { confirm, password });
+      const { data } = await api.post("/admin/reset-database", { confirm, password, mode });
       toast.success(data.message || "Database reset");
       setConfirm(""); setPassword("");
       setTimeout(() => window.location.reload(), 1200);
@@ -118,18 +119,34 @@ function DangerZoneTab() {
     } finally { setBusy(false); }
   };
 
+  const opt = (val, title, desc) => (
+    <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${mode === val ? "border-red-400 bg-red-100/50" : "border-slate-200 bg-white hover:border-red-200"}`} data-testid={`reset-mode-${val}`}>
+      <input type="radio" name="reset-mode" value={val} checked={mode === val} onChange={() => setMode(val)} className="mt-1 accent-red-600" />
+      <div>
+        <div className="text-sm font-semibold text-slate-800">{title}</div>
+        <div className="text-xs text-slate-500 mt-0.5">{desc}</div>
+      </div>
+    </label>
+  );
+
   return (
     <Card className="p-5 max-w-2xl border-red-200 bg-red-50/40" data-testid="danger-zone-card">
       <div className="flex items-start gap-3">
         <div className="mt-0.5 text-red-600"><AlertTriangle className="w-6 h-6" /></div>
         <div className="flex-1">
-          <h3 className="font-heading font-bold text-red-700 text-lg">Reset Test Database</h3>
+          <h3 className="font-heading font-bold text-red-700 text-lg">Reset Database</h3>
           <p className="text-sm text-slate-600 mt-1">
             Permanently deletes <strong>all transactional and master data</strong> — sales, inventory, products,
-            customers, suppliers, purchase orders, transfers, counts and staff PIN accounts — then reseeds the default
-            KDPLUS demo dataset. Your <strong>Super Admin account</strong> and <strong>business / tax settings</strong> are preserved.
+            customers, suppliers, purchase orders, transfers, counts and all numbering counters. Your
+            <strong> Owner account</strong> and <strong>business / tax settings</strong> are always preserved.
           </p>
           <p className="text-sm font-semibold text-red-600 mt-2">This action cannot be undone.</p>
+
+          <div className="mt-5 space-y-2">
+            <div className="text-sm font-medium text-slate-600">What to reseed after wiping:</div>
+            {opt("demo", "Default demo data", "Reseed the full KDPLUS demo catalog, sample sales, suppliers and staff PINs. Good for testing.")}
+            {opt("clean", "Empty / clean start (production)", "Keep ONLY your Owner account + settings + default stores/registers. Everything else starts empty. Other user accounts are removed.")}
+          </div>
 
           <div className="mt-5 space-y-3">
             <div>
@@ -147,7 +164,7 @@ function DangerZoneTab() {
           <div className="mt-5">
             <Button onClick={reset} disabled={!canReset} data-testid="reset-database-btn"
                     className="bg-red-600 hover:bg-red-700 text-white disabled:opacity-40 disabled:cursor-not-allowed">
-              {busy ? "Resetting…" : "Reset Test Database"}
+              {busy ? "Resetting…" : (mode === "clean" ? "Reset to Empty State" : "Reset with Demo Data")}
             </Button>
           </div>
         </div>
