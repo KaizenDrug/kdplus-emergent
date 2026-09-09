@@ -64,3 +64,10 @@ Decimal-safe money · immutable inventory ledger · atomic sale (sale+items+paym
 - Frontend Danger Zone (Settings) has a mode radio (demo/clean); button label adapts.
 - Verified on PREVIEW DB: clean -> products/sales/POs/customers/suppliers/categories/employees=0, users=1, stores=2, registers=3, counters=0, dashboard totals 0, login works, new product+sale works (SALE-...-00001), then restored demo (44 products).
 - NOTE: workspace MONGO_URL=localhost test_database (PREVIEW ONLY). Production reset must be run from the DEPLOYED app Settings->Danger Zone (uses prod MONGO_URL). Agent cannot touch production DB from workspace.
+
+# [2026-06] Reset UX: backup, recap, audit + deploy fix
+- GET /api/admin/backup (Owner/Admin only, 403 otherwise): exports all wiped collections + users + settings as JSON, strips password_hash/pin_hash. Frontend Danger Zone "Download backup" button saves kdplus-backup-*.json.
+- reset_database(mode) now returns per-collection delete counts; endpoint returns {deleted, deleted_total}. Danger Zone shows a post-reset recap card (total + breakdown + Reload).
+- Audit: database.reset entry records by/role/mode/deleted_total; already visible in Audit Log page.
+- Deploy fix: removed no-op TTL index db.password_reset_tokens.create_index("expires_at", expireAfterSeconds=0) in server.py (expires_at is ISO string; expiry enforced at query time). deployment_agent re-check: PASS (destructive_db_startup_confirmed=false).
+- Verified on PREVIEW: backup counts (products44/sales70/users1, no hash leak), cashier backup=403, demo reset deleted_total=368 with breakdown, audit entry present. UI screenshot shows backup btn + demo/clean radios.

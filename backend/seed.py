@@ -332,12 +332,19 @@ async def reset_database(mode="demo"):
     Always preserves the `settings` document (recreated with defaults only if missing).
     """
     random.seed(42)
+    deleted = {}
     for c in RESET_COLLECTIONS:
+        n = await db[c].count_documents({})
+        if n:
+            deleted[c] = n
         await db[c].delete_many({})
 
     if mode == "clean":
         # keep only the primary Owner account; drop any other user accounts
         owner_email = os.environ["ADMIN_EMAIL"].lower()
+        others = await db.users.count_documents({"email": {"$ne": owner_email}})
+        if others:
+            deleted["users (non-owner)"] = others
         await db.users.delete_many({"email": {"$ne": owner_email}})
         await seed_admin()  # guarantee the Owner exists
         if not await db.settings.find_one({"org_id": ORG_ID}):
@@ -345,3 +352,20 @@ async def reset_database(mode="demo"):
         await _seed_stores_registers()
     else:
         await _seed_master_and_txn()
+    return deleted
+
+
+# Collections included in a downloadable pre-reset backup (sensitive hashes stripped).
+BACKUP_COLLECTIONS = RESET_COLLECTIONS + ["users", "settings"]
+
+
+async def export_backup():
+    """Return every backup-eligible collection as JSON-safe lists (no _id, no secrets)."""
+    proj = {"_id": 0, "password_hash": 0, "pin_hash": 0}
+    out, counts = {}, {}
+    for c in BACKUP_COLLECTIONS:
+        rows = await db[c].find({}, proj).to_list(100000)
+        out[c] = rows
+        counts[c] = len(rows)
+    return {"exported_at": now_iso(), "db_name": os.environ["DB_NAME"],
+            "counts": counts, "collections": out}

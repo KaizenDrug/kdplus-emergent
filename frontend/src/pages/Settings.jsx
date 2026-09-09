@@ -5,7 +5,7 @@ import { PageHeader, Card } from "@/components/kit";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Download, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Settings() {
@@ -103,17 +103,37 @@ function DangerZoneTab() {
   const [confirm, setConfirm] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [bk, setBk] = useState(false);
+  const [result, setResult] = useState(null);
   const phraseOk = confirm.trim() === "RESET DATABASE";
   const canReset = phraseOk && password.length > 0 && !busy;
+
+  const downloadBackup = async () => {
+    setBk(true);
+    try {
+      const { data } = await api.get("/admin/backup");
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `kdplus-backup-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.json`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      const total = Object.values(data.counts || {}).reduce((s, n) => s + n, 0);
+      toast.success(`Backup downloaded (${total} records)`);
+    } catch (e) {
+      toast.error(apiError(e.response?.data?.detail) || "Backup failed");
+    } finally { setBk(false); }
+  };
 
   const reset = async () => {
     if (!canReset) return;
     setBusy(true);
     try {
       const { data } = await api.post("/admin/reset-database", { confirm, password, mode });
-      toast.success(data.message || "Database reset");
+      setResult(data);
       setConfirm(""); setPassword("");
-      setTimeout(() => window.location.reload(), 1200);
+      toast.success(data.message || "Database reset");
     } catch (e) {
       toast.error(apiError(e.response?.data?.detail) || "Reset failed");
     } finally { setBusy(false); }
@@ -129,6 +149,36 @@ function DangerZoneTab() {
     </label>
   );
 
+  if (result) {
+    const entries = Object.entries(result.deleted || {}).sort((a, b) => b[1] - a[1]);
+    return (
+      <Card className="p-5 max-w-2xl border-emerald-200 bg-emerald-50/40" data-testid="reset-recap-card">
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 text-emerald-600"><CheckCircle2 className="w-6 h-6" /></div>
+          <div className="flex-1">
+            <h3 className="font-heading font-bold text-emerald-700 text-lg">Reset complete</h3>
+            <p className="text-sm text-slate-600 mt-1">
+              Mode: <strong>{result.mode === "clean" ? "Empty / clean start" : "Default demo data"}</strong> ·
+              &nbsp;<strong data-testid="recap-total">{result.deleted_total}</strong> records deleted.
+            </p>
+            <div className="mt-4 rounded-lg border border-slate-200 bg-white divide-y divide-slate-100 max-h-72 overflow-auto" data-testid="recap-breakdown">
+              {entries.length === 0 && <div className="px-4 py-3 text-sm text-slate-500">Nothing to delete — database was already empty.</div>}
+              {entries.map(([k, n]) => (
+                <div key={k} className="flex justify-between px-4 py-2 text-sm">
+                  <span className="text-slate-600 font-mono text-xs">{k}</span>
+                  <span className="font-semibold text-slate-800">{n.toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-5">
+              <Button onClick={() => window.location.reload()} data-testid="recap-reload-btn" className="bg-primary hover:bg-teal-800">Reload app</Button>
+            </div>
+          </div>
+        </div>
+      </Card>
+    );
+  }
+
   return (
     <Card className="p-5 max-w-2xl border-red-200 bg-red-50/40" data-testid="danger-zone-card">
       <div className="flex items-start gap-3">
@@ -141,6 +191,16 @@ function DangerZoneTab() {
             <strong> Owner account</strong> and <strong>business / tax settings</strong> are always preserved.
           </p>
           <p className="text-sm font-semibold text-red-600 mt-2">This action cannot be undone.</p>
+
+          <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3 flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold text-slate-800">Download a backup first</div>
+              <div className="text-xs text-slate-500 mt-0.5">Export all current data as JSON before you wipe anything.</div>
+            </div>
+            <Button variant="outline" onClick={downloadBackup} disabled={bk} data-testid="download-backup-btn" className="shrink-0 border-slate-300">
+              <Download className="w-4 h-4 mr-1.5" />{bk ? "Exporting…" : "Download backup"}
+            </Button>
+          </div>
 
           <div className="mt-5 space-y-2">
             <div className="text-sm font-medium text-slate-600">What to reseed after wiping:</div>

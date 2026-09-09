@@ -5,12 +5,19 @@ import re
 
 from core import (db, ORG_ID, uid, now_iso, hash_secret, verify_secret, get_current_principal,
                   require_perm, audit, ROLE_PERMISSIONS)
-from seed import reset_database
+from seed import reset_database, export_backup
 
 router = APIRouter(prefix="/api", tags=["admin"])
 
 
-# ---------------- Danger Zone: reset test database ----------------
+# ---------------- Danger Zone: backup + reset ----------------
+@router.get("/admin/backup")
+async def backup_database(principal=Depends(get_current_principal)):
+    if principal.get("kind") != "user" or principal.get("role") not in ("owner", "admin"):
+        raise HTTPException(status_code=403, detail="Only a Super Admin can export a backup")
+    return await export_backup()
+
+
 class ResetDbIn(BaseModel):
     confirm: str
     password: str
@@ -28,11 +35,14 @@ async def reset_test_database(body: ResetDbIn, principal=Depends(get_current_pri
     user = await db.users.find_one({"id": principal["id"]})
     if not user or not verify_secret(body.password, user.get("password_hash", "")):
         raise HTTPException(status_code=401, detail="Incorrect password")
-    await reset_database(mode=body.mode)
+    deleted = await reset_database(mode=body.mode)
     await audit(principal, "database.reset", "system", ORG_ID,
-                after={"by": principal.get("email"), "role": principal.get("role"), "mode": body.mode})
+                after={"by": principal.get("email"), "role": principal.get("role"),
+                       "mode": body.mode, "deleted_total": sum(deleted.values())})
     label = "empty (clean start)" if body.mode == "clean" else "default demo data"
-    return {"ok": True, "mode": body.mode, "message": f"Database reset to {label}."}
+    return {"ok": True, "mode": body.mode, "deleted": deleted,
+            "deleted_total": sum(deleted.values()),
+            "message": f"Database reset to {label}."}
 
 
 # ---------------- Employees ----------------
