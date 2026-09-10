@@ -1,10 +1,10 @@
 import React, { useEffect, useState, useMemo } from "react";
-import api, { peso } from "@/lib/api";
+import api, { peso, apiError } from "@/lib/api";
 import { PageHeader, Card, StatusBadge, Empty } from "@/components/kit";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Plus, Search, Pencil, Upload, FileDown } from "lucide-react";
+import { Plus, Search, Pencil, Upload, FileDown, Tags, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 const empty = {
@@ -23,11 +23,13 @@ export default function Products() {
   const [cat, setCat] = useState("all");
   const [editing, setEditing] = useState(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [catOpen, setCatOpen] = useState(false);
 
   const load = () => api.get("/products?limit=1000").then((r) => setProducts(r.data));
+  const loadCats = () => api.get("/categories").then((r) => setCategories(r.data));
   useEffect(() => {
     load();
-    api.get("/categories").then((r) => setCategories(r.data));
+    loadCats();
     api.get("/suppliers").then((r) => setSuppliers(r.data));
   }, []);
 
@@ -42,6 +44,7 @@ export default function Products() {
   return (
     <div>
       <PageHeader title="Products" subtitle={`${products.length} items in catalog`}>
+        <Button variant="outline" onClick={() => setCatOpen(true)} data-testid="manage-categories-btn"><Tags className="w-4 h-4 mr-1" />Categories</Button>
         <Button variant="outline" onClick={() => setImportOpen(true)} data-testid="import-csv-btn"><Upload className="w-4 h-4 mr-1" />Import CSV</Button>
         <Button onClick={() => setEditing({ ...empty })} data-testid="add-product-btn" className="bg-primary hover:bg-teal-800"><Plus className="w-4 h-4 mr-1" />New Product</Button>
       </PageHeader>
@@ -87,7 +90,79 @@ export default function Products() {
 
       {editing && <ProductDialog product={editing} categories={categories} suppliers={suppliers} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
       {importOpen && <ImportDialog onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); load(); }} />}
+      {catOpen && <CategoryDialog products={products} onClose={() => setCatOpen(false)} onChanged={loadCats} />}
     </div>
+  );
+}
+
+function CategoryDialog({ products, onClose, onChanged }) {
+  const [items, setItems] = useState([]);
+  const [name, setName] = useState("");
+  const [shelf, setShelf] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = () => api.get("/categories").then((r) => setItems(r.data));
+  useEffect(() => { load(); }, []);
+
+  const usage = (cid) => products.filter((p) => p.category_id === cid).length;
+
+  const add = async () => {
+    if (!name.trim()) { toast.error("Category name is required"); return; }
+    setBusy(true);
+    try {
+      await api.post("/categories", { name: name.trim(), shelf_code: shelf.trim(), display_order: items.length });
+      setName(""); setShelf("");
+      toast.success("Category added");
+      await load(); onChanged();
+    } catch (e) { toast.error(apiError(e.response?.data?.detail) || "Failed to add"); }
+    finally { setBusy(false); }
+  };
+
+  const del = async (c) => {
+    try {
+      await api.delete(`/categories/${c.id}`);
+      toast.success("Category deleted");
+      await load(); onChanged();
+    } catch (e) { toast.error(apiError(e.response?.data?.detail) || "Failed to delete"); }
+  };
+
+  return (
+    <Dialog open={true} onOpenChange={onClose}>
+      <DialogContent className="max-w-lg max-h-[88vh] overflow-y-auto" data-testid="category-dialog">
+        <DialogHeader><DialogTitle>Manage Categories</DialogTitle></DialogHeader>
+
+        <div className="flex items-end gap-2">
+          <label className="block flex-1"><span className="text-[11px] font-bold uppercase text-slate-500">New Category</span>
+            <input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="e.g. Ophthalmic" data-testid="new-category-name"
+              className="w-full mt-1 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" /></label>
+          <label className="block w-28"><span className="text-[11px] font-bold uppercase text-slate-500">Shelf</span>
+            <input value={shelf} onChange={(e) => setShelf(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="H1" data-testid="new-category-shelf"
+              className="w-full mt-1 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" /></label>
+          <Button onClick={add} disabled={busy} data-testid="add-category-btn" className="bg-primary hover:bg-teal-800"><Plus className="w-4 h-4 mr-1" />Add</Button>
+        </div>
+
+        <div className="mt-4 border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-[50vh] overflow-y-auto">
+          {items.map((c) => {
+            const n = usage(c.id);
+            return (
+              <div key={c.id} className="flex items-center justify-between px-3 py-2.5" data-testid={`category-row-${c.id}`}>
+                <div>
+                  <div className="text-sm font-semibold text-slate-800">{c.name}</div>
+                  <div className="text-xs text-slate-400">{c.shelf_code ? `Shelf ${c.shelf_code} · ` : ""}{n} product{n === 1 ? "" : "s"}</div>
+                </div>
+                <button onClick={() => del(c)} data-testid={`delete-category-${c.id}`} title={n ? "Reassign products before deleting" : "Delete"}
+                  className="text-red-500 hover:bg-red-50 p-1.5 rounded disabled:opacity-30 disabled:cursor-not-allowed" disabled={n > 0}>
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            );
+          })}
+          {!items.length && <div className="px-3 py-6 text-center text-sm text-slate-400">No categories yet. Add one above.</div>}
+        </div>
+
+        <DialogFooter><Button variant="outline" onClick={onClose}>Done</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

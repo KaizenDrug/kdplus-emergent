@@ -35,6 +35,19 @@ async def update_category(cid: str, body: CategoryIn, principal=Depends(require_
     await audit(principal, "category.updated", "category", cid, after=body.model_dump())
     return await db.categories.find_one({"id": cid}, {"_id": 0})
 
+@router.delete("/categories/{cid}")
+async def delete_category(cid: str, principal=Depends(require_perm("*"))):
+    cat = await db.categories.find_one({"id": cid, "org_id": ORG_ID}, {"_id": 0})
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+    in_use = await db.products.count_documents({"org_id": ORG_ID, "category_id": cid})
+    if in_use:
+        raise HTTPException(status_code=400,
+                            detail=f"Cannot delete — {in_use} product(s) use this category. Reassign them first.")
+    await db.categories.delete_one({"id": cid, "org_id": ORG_ID})
+    await audit(principal, "category.deleted", "category", cid, before={"name": cat.get("name")})
+    return {"ok": True}
+
 
 # ---------------- Suppliers ----------------
 class SupplierIn(BaseModel):
