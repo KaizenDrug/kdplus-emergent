@@ -102,6 +102,7 @@ class SettingsIn(BaseModel):
     tax: Optional[dict] = None
     senior_pwd: Optional[dict] = None
     loyalty: Optional[dict] = None
+    purchasing: Optional[dict] = None
     negative_stock_policy: Optional[str] = None
     expiry_thresholds: Optional[list] = None
     shelf_locations: Optional[list] = None

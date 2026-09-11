@@ -285,3 +285,34 @@ async def senior_pwd_report(period: str = "30d", start: Optional[str] = None, en
     total_disc = m(sum(D(r["discount"]) for r in rows))
     total_exempt = m(sum(D(r["vat_exempt"]) for r in rows))
     return {"rows": rows, "total_discount": total_disc, "total_vat_exempt": total_exempt, "count": len(rows)}
+
+
+
+@router.get("/cost-variance")
+async def cost_variance_report(period: str = "30d", start: Optional[str] = None, end: Optional[str] = None,
+                               variance_only: bool = False, principal=Depends(get_current_principal)):
+    """PO receipt cost variance: actual received cost vs ordered PO cost, by supplier/product."""
+    s, e = parse_range(period, start, end)
+    rows = await db.po_receipts.find(
+        {"org_id": ORG_ID, "received_at": {"$gte": s, "$lte": e}}, {"_id": 0}).sort("received_at", -1).to_list(10000)
+    suppliers = {x["id"]: x for x in await db.suppliers.find({"org_id": ORG_ID}, {"_id": 0, "id": 1, "company": 1}).to_list(1000)}
+    out, sup_totals = [], defaultdict(lambda: {"variance_total": D(0), "qty": D(0), "receipts": 0})
+    for r in rows:
+        qty = D(r.get("qty_received", 0))
+        var_amt = D(r.get("variance_amount", 0))
+        total_diff = m(var_amt * qty)
+        if variance_only and var_amt == 0:
+            continue
+        sup_id = r.get("supplier_id")
+        out.append({**r, "supplier_name": suppliers.get(sup_id, {}).get("company", "—"),
+                    "total_cost_difference": total_diff})
+        st = sup_totals[sup_id]
+        st["variance_total"] += var_amt * qty
+        st["qty"] += qty
+        st["receipts"] += 1
+    supplier_summary = [{"supplier_id": k, "supplier_name": suppliers.get(k, {}).get("company", "—"),
+                         "total_cost_difference": m(v["variance_total"]), "qty_received": m(v["qty"]),
+                         "receipts": v["receipts"]} for k, v in sup_totals.items()]
+    supplier_summary.sort(key=lambda x: abs(x["total_cost_difference"]), reverse=True)
+    return {"rows": out, "supplier_summary": supplier_summary,
+            "total_cost_difference": m(sum(D(r["total_cost_difference"]) for r in out)), "count": len(out)}

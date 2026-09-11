@@ -117,6 +117,7 @@ async def _seed_settings():
         "tax": {"vat_rate": 12, "pricing_mode": "inclusive"},
         "senior_pwd": {"enabled": True, "discount_pct": 20, "vat_exempt": True},
         "loyalty": {"enabled": True, "peso_per_point": 100, "points_per": 1},
+        "purchasing": {"cost_variance_threshold_pct": 5},
         "negative_stock_policy": "WARN",
         "expiry_thresholds": [30, 60, 90, 180],
         "payment_methods": ["Cash", "GCash", "Maya", "Credit Card", "Debit Card", "Bank Transfer"],
