@@ -33,7 +33,19 @@ export default function POS() {
   const [pending, setPending] = useState(queueCount());
   const [checkout, setCheckout] = useState(false);
   const [lastSale, setLastSale] = useState(null);
+  const [shift, setShift] = useState(null);
+  const [shiftLoading, setShiftLoading] = useState(true);
+  const [showClose, setShowClose] = useState(false);
   const searchRef = useRef();
+
+  const loadShift = () => {
+    setShiftLoading(true);
+    return api.get(`/pos/shifts/current?store_id=${storeId}&register_id=reg_1`)
+      .then((r) => setShift(r.data || null))
+      .catch(() => setShift(null))
+      .finally(() => setShiftLoading(false));
+  };
+  useEffect(() => { loadShift(); }, [storeId]); // eslint-disable-line
 
   const refreshLevels = () => api.get(`/inventory/levels?store_id=${storeId}`).then((lv) => {
     const lm = {}; lv.data.forEach((x) => (lm[x.product_id] = x.quantity)); setLevels(lm);
@@ -144,6 +156,15 @@ export default function POS() {
           </div>
         </div>
         <div className="text-sm text-slate-600">Cashier: <span className="font-semibold">{user?.name}</span></div>
+        {shift && (
+          <div className="flex items-center gap-2 pl-3 ml-1 border-l border-slate-200">
+            <span data-testid="shift-banner" className="text-xs font-semibold px-2.5 py-1.5 rounded-full bg-emerald-100 text-emerald-700">
+              Shift open · Opening {peso(shift.opening_cash)}
+            </span>
+            <button onClick={() => setShowClose(true)} data-testid="close-shift-btn"
+              className="text-xs font-semibold px-2.5 py-1.5 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200">Close Shift</button>
+          </div>
+        )}
       </div>
 
       <div className="flex-1 flex min-h-0">
@@ -233,18 +254,100 @@ export default function POS() {
 
       {checkout && (
         <CheckoutDialog
-          open={checkout} onClose={() => setCheckout(false)} cart={cart} storeId={storeId}
+          open={checkout} onClose={() => setCheckout(false)} cart={cart} storeId={storeId} shiftId={shift?.id}
           customers={customers} settings={settings} cashierName={user?.name}
           onOfflineQueued={() => setPending(queueCount())}
           onComplete={(sale) => { setLastSale(sale); setCart([]); setCheckout(false); toast.success(sale._offline ? `Sale queued offline (${sale.number})` : `Sale ${sale.number} completed`); }}
         />
       )}
       {lastSale && <ReceiptDialog sale={lastSale} settings={settings} onClose={() => setLastSale(null)} />}
+      {!shiftLoading && !shift && <ShiftStartOverlay online={online} storeId={storeId} onOpened={(sh) => setShift(sh)} />}
+      {showClose && shift && <ShiftCloseDialog shift={shift} onClose={() => setShowClose(false)} onClosed={() => { setShowClose(false); setShift(null); }} />}
     </div>
   );
 }
 
-function CheckoutDialog({ open, onClose, cart, storeId, customers, settings, cashierName, onComplete, onOfflineQueued }) {
+function ShiftStartOverlay({ online, storeId, onOpened }) {
+  const [cash, setCash] = useState("0");
+  const [busy, setBusy] = useState(false);
+  const start = async () => {
+    const oc = Number(cash);
+    if (cash === "" || !isFinite(oc) || oc < 0) { toast.error("Opening cash must be 0 or a positive amount"); return; }
+    setBusy(true);
+    try {
+      const { data } = await api.post("/pos/shifts/open", { store_id: storeId, register_id: "reg_1", opening_cash: oc });
+      toast.success("Shift opened"); onOpened(data);
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not open shift"); } finally { setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" data-testid="shift-start-overlay">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+        <h2 className="font-heading font-extrabold text-xl text-slate-900">Start Shift</h2>
+        <p className="text-sm text-slate-500 mt-1">Enter your opening cash float to begin selling. Enter 0 if you have no cash float.</p>
+        {!online ? (
+          <div className="mt-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-700" data-testid="shift-offline-msg">
+            You're offline. Connect to the internet to start your shift.
+          </div>
+        ) : (
+          <>
+            <label className="block mt-4"><span className="text-[11px] font-bold uppercase text-slate-500">Opening Cash (₱)</span>
+              <input type="number" min={0} step="0.01" value={cash} onChange={(e) => setCash(e.target.value)} data-testid="opening-cash-input" autoFocus
+                className="w-full mt-1 px-3 py-2.5 rounded-lg bg-slate-50 border border-slate-200 text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-primary/30" /></label>
+            <button onClick={start} disabled={busy} data-testid="start-shift-btn"
+              className="w-full mt-5 py-3 rounded-xl bg-primary text-white font-bold hover:bg-teal-800 disabled:opacity-50">{busy ? "Opening…" : "Start Shift"}</button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ShiftCloseDialog({ shift, onClose, onClosed }) {
+  const [counted, setCounted] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const close = async () => {
+    const cc = Number(counted);
+    if (counted === "" || !isFinite(cc) || cc < 0) { toast.error("Enter the counted cash amount"); return; }
+    setBusy(true);
+    try {
+      const { data } = await api.post("/pos/shifts/close", { shift_id: shift.id, counted_cash: cc });
+      setResult(data);
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not close shift"); } finally { setBusy(false); }
+  };
+  return (
+    <Dialog open={true} onOpenChange={result ? onClosed : onClose}>
+      <DialogContent className="max-w-md" data-testid="shift-close-dialog">
+        <DialogHeader><DialogTitle>{result ? "Shift Closed" : "Close Shift"}</DialogTitle></DialogHeader>
+        {!result ? (
+          <>
+            <div className="text-sm text-slate-500">Opening cash: <b className="text-slate-700">{peso(shift.opening_cash)}</b></div>
+            <label className="block mt-3"><span className="text-[11px] font-bold uppercase text-slate-500">Counted Cash in Drawer (₱)</span>
+              <input type="number" min={0} step="0.01" value={counted} onChange={(e) => setCounted(e.target.value)} data-testid="counted-cash-input" autoFocus
+                className="w-full mt-1 px-3 py-2.5 rounded-lg bg-slate-50 border border-slate-200 text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-primary/30" /></label>
+            <DialogFooter className="mt-4"><Button variant="outline" onClick={onClose}>Cancel</Button>
+              <Button onClick={close} disabled={busy} data-testid="confirm-close-shift" className="bg-primary hover:bg-teal-800">{busy ? "Closing…" : "Close & Reconcile"}</Button></DialogFooter>
+          </>
+        ) : (
+          <div className="space-y-1.5 text-sm" data-testid="shift-recon">
+            {[["Opening Cash", result.opening_cash, false], ["Cash Sales", result.cash_sales, false], ["Cash In", result.cash_in, false],
+              ["Cash Out", result.cash_out, true], ["Cash Refunds", result.refunds_total, true], ["Expected Cash", result.expected_cash, false],
+              ["Counted Cash", result.counted_cash, false]].map(([k, v, neg]) => (
+              <div key={k} className="flex justify-between"><span className="text-slate-500">{k}</span><span className="font-semibold">{neg && v ? "-" : ""}{peso(v)}</span></div>
+            ))}
+            <div className={`flex justify-between pt-2 mt-1 border-t font-bold ${result.difference === 0 ? "text-slate-800" : result.difference > 0 ? "text-emerald-600" : "text-red-600"}`}>
+              <span>{result.difference === 0 ? "Balanced" : result.difference > 0 ? "Overage" : "Shortage"}</span>
+              <span data-testid="shift-difference">{peso(Math.abs(result.difference))}</span>
+            </div>
+            <Button onClick={onClosed} className="w-full mt-4 bg-primary hover:bg-teal-800" data-testid="shift-done-btn">Done</Button>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, settings, cashierName, onComplete, onOfflineQueued }) {
   const [discountType, setDiscountType] = useState("REGULAR");
   const [customerId, setCustomerId] = useState("");
   const [orderDiscount, setOrderDiscount] = useState("");
@@ -286,7 +389,7 @@ function CheckoutDialog({ open, onClose, cart, storeId, customers, settings, cas
     const client_txn_id = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
     const validPayments = payments.filter((p) => Number(p.amount) > 0).map((p) => ({ method: p.method, amount: Number(p.amount), reference: "" }));
     const body = {
-      store_id: storeId, register_id: "reg_1",
+      store_id: storeId, register_id: "reg_1", shift_id: shiftId || null,
       items: cart.map((i) => ({ product_id: i.product_id, qty: i.qty })),
       payments: validPayments,
       discount_type: discountType, order_discount: Number(orderDiscount) || 0,

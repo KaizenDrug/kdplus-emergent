@@ -54,6 +54,14 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
         if existing:
             return existing
 
+    # ---- Shift enforcement: staff must sell under their own open shift ----
+    if body.shift_id:
+        sh = await db.shifts.find_one({"id": body.shift_id, "org_id": ORG_ID, "status": "OPEN"}, {"_id": 0})
+        if not sh:
+            raise HTTPException(status_code=400, detail="Your shift is no longer open. Please start a shift.")
+    elif principal.get("kind") == "employee":
+        raise HTTPException(status_code=400, detail="You need to start a shift before processing sales.")
+
     settings = await get_settings()
     vat_rate = D(settings.get("tax", {}).get("vat_rate", 12)) / D(100)
     spwd = settings.get("senior_pwd", {})
@@ -296,16 +304,24 @@ class OpenShiftIn(BaseModel):
 
 @router.post("/shifts/open")
 async def open_shift(body: OpenShiftIn, principal=Depends(require_perm("pos.sell"))):
+    oc = body.opening_cash
+    # Opening cash: 0 is valid; reject negative / NaN / non-numeric
+    if oc is None or not isinstance(oc, (int, float)) or oc != oc or oc < 0:
+        raise HTTPException(status_code=400, detail="Opening cash must be zero or a positive amount")
+    if not body.store_id:
+        raise HTTPException(status_code=400, detail="No store assigned — cannot open a shift")
+    # Resume an existing OPEN shift for this store + register instead of duplicating
     existing = await db.shifts.find_one({"org_id": ORG_ID, "store_id": body.store_id,
                                          "register_id": body.register_id, "status": "OPEN"}, {"_id": 0})
     if existing:
         return existing
+    now = now_iso()
     shift = {"id": uid(), "org_id": ORG_ID, "store_id": body.store_id, "register_id": body.register_id,
              "employee_id": principal.get("id"), "employee_name": principal.get("name"),
-             "opening_cash": m(body.opening_cash), "status": "OPEN",
-             "opened_at": now_iso(), "closed_at": None}
+             "opening_cash": m(oc), "status": "OPEN", "opened_at": now, "closed_at": None,
+             "created_at": now, "created_by": principal.get("name")}
     await db.shifts.insert_one(dict(shift))
-    await audit(principal, "shift.opened", "shift", shift["id"], after={"opening_cash": m(body.opening_cash)}, store_id=body.store_id)
+    await audit(principal, "shift.opened", "shift", shift["id"], after={"opening_cash": m(oc)}, store_id=body.store_id)
     shift.pop("_id", None)
     return shift
 
