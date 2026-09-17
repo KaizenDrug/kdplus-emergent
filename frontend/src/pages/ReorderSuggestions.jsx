@@ -16,7 +16,9 @@ export default function ReorderSuggestions() {
 
   const load = () => {
     const sp = supplier === "all" ? "" : `&supplier_id=${supplier}`;
-    api.get(`/reports/reorder-suggestions?days_window=${window}&lead_time_days=${lead}${sp}`).then((r) => setRows(r.data.rows));
+    api.get(`/reports/reorder-suggestions?days_window=${window}&lead_time_days=${lead}${sp}`).then((r) => setRows(
+      r.data.rows.map((row) => ({ ...row, calculated_qty: row.suggested_qty }))
+    ));
   };
   useEffect(() => { api.get("/suppliers").then((r) => setSuppliers(r.data)); }, []);
   useEffect(() => { load(); }, [window, lead, supplier]); // eslint-disable-line
@@ -25,11 +27,26 @@ export default function ReorderSuggestions() {
   const groups = {};
   rows.forEach((r) => { (groups[r.supplier_id || "none"] = groups[r.supplier_id || "none"] || { name: r.supplier_name, supplier_id: r.supplier_id, items: [] }).items.push(r); });
   const groupList = Object.values(groups);
-  const totalCost = rows.reduce((s, r) => s + r.est_cost, 0);
+  const estimatedCost = (row) => {
+    const qty = Number(row.suggested_qty);
+    return Number.isFinite(qty) && qty > 0 ? qty * Number(row.unit_cost || 0) : 0;
+  };
+  const totalCost = rows.reduce((s, r) => s + estimatedCost(r), 0);
+
+  const updateQuantity = (productId, value) => {
+    setRows((current) => current.map((row) => (
+      row.product_id === productId ? { ...row, suggested_qty: value } : row
+    )));
+  };
 
   const createPO = async (g) => {
     if (!g.supplier_id) { toast.error("These items have no supplier — set a preferred supplier first"); return; }
-    const items = g.items.filter((i) => i.suggested_qty > 0).map((i) => ({ product_id: i.product_id, name: i.name, qty_ordered: i.suggested_qty, unit_cost: i.unit_cost }));
+    const invalid = g.items.some((i) => i.suggested_qty === "" || !Number.isFinite(Number(i.suggested_qty)) || Number(i.suggested_qty) < 0);
+    if (invalid) { toast.error("Enter a valid quantity of 0 or greater for every item"); return; }
+    const items = g.items.filter((i) => Number(i.suggested_qty) > 0).map((i) => ({
+      product_id: i.product_id, name: i.name,
+      qty_ordered: Number(i.suggested_qty), unit_cost: i.unit_cost,
+    }));
     if (!items.length) { toast.error("Nothing to order for this supplier"); return; }
     setBusy(true);
     try { const { data } = await api.post("/purchase-orders", { supplier_id: g.supplier_id, store_id: "store_main", items }); toast.success(`Draft ${data.number} created for ${g.name}`); }
@@ -61,7 +78,7 @@ export default function ReorderSuggestions() {
           </div>
           <table className="w-full text-sm">
             <thead className="text-left text-xs uppercase text-slate-500"><tr>
-              <th className="px-4 py-2.5">Product</th><th className="px-4 py-2.5 text-right">On Hand</th><th className="px-4 py-2.5 text-right">Incoming</th><th className="px-4 py-2.5 text-right">Avg/Day</th><th className="px-4 py-2.5 text-right">Days Left</th><th className="px-4 py-2.5 text-right">Suggested</th><th className="px-4 py-2.5 text-right">Est. Cost</th></tr></thead>
+              <th className="px-4 py-2.5">Product</th><th className="px-4 py-2.5 text-right">On Hand</th><th className="px-4 py-2.5 text-right">Incoming</th><th className="px-4 py-2.5 text-right">Avg/Day</th><th className="px-4 py-2.5 text-right">Days Left</th><th className="px-4 py-2.5 text-right">Order Qty</th><th className="px-4 py-2.5 text-right">Est. Cost</th></tr></thead>
             <tbody>
               {g.items.map((r) => (
                 <tr key={r.product_id} className="border-t border-slate-100 hover:bg-slate-50">
@@ -70,8 +87,14 @@ export default function ReorderSuggestions() {
                   <td className="px-4 py-2.5 text-right text-slate-500">{r.incoming || "—"}</td>
                   <td className="px-4 py-2.5 text-right">{r.avg_daily_sales}</td>
                   <td className={`px-4 py-2.5 text-right font-semibold ${r.days_of_stock != null && r.days_of_stock < 7 ? "text-red-600" : "text-slate-600"}`}>{r.days_of_stock != null ? r.days_of_stock : "∞"}</td>
-                  <td className="px-4 py-2.5 text-right"><span className="font-bold text-primary">{r.suggested_qty}</span></td>
-                  <td className="px-4 py-2.5 text-right">{peso(r.est_cost)}</td>
+                  <td className="px-4 py-2.5 text-right">
+                    <input type="number" min="0" step="any" value={r.suggested_qty}
+                      onChange={(e) => updateQuantity(r.product_id, e.target.value)}
+                      className="w-24 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right font-bold text-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      aria-label={`Order quantity for ${r.name}`} data-testid={`reorder-qty-${r.product_id}`} />
+                    <div className="mt-0.5 text-[10px] text-slate-400">Suggested: {r.calculated_qty}</div>
+                  </td>
+                  <td className="px-4 py-2.5 text-right">{peso(estimatedCost(r))}</td>
                 </tr>
               ))}
             </tbody>

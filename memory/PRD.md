@@ -102,3 +102,4 @@ Decimal-safe money · immutable inventory ledger · atomic sale (sale+items+paym
 - Local HTTP authentication cookies now work in Safari when `FRONTEND_URL` explicitly points to localhost; non-local/default deployments retain secure cross-site cookie settings.
 - Verification: focused async backend suite 10/10 passed; Python compilation and diff checks passed; optimized React production build completed successfully. Broader live-API suites require a running seeded backend.
 - After a successful POS shift close, the reconciliation and sales summary remains visible with a print option. Selecting “Done” clears the cached active shift, logs out the current cashier, and returns to login.
+- Reorder Suggestions keeps the system-calculated quantity visible but allows the user to edit the actual order quantity before creating a draft PO. Estimated line and total costs update immediately, and a quantity of zero excludes the item.
