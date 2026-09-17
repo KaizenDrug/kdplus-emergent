@@ -5,7 +5,7 @@ import re
 
 from core import (db, ORG_ID, uid, now_iso, hash_secret, verify_secret, get_current_principal,
                   require_perm, audit, ROLE_PERMISSIONS)
-from seed import reset_database, export_backup
+from seed import reset_database, reset_selected_data, RESET_CATEGORY_COLLECTIONS, export_backup
 
 router = APIRouter(prefix="/api", tags=["admin"])
 
@@ -22,6 +22,7 @@ class ResetDbIn(BaseModel):
     confirm: str
     password: str
     mode: str = "demo"  # "demo" = full KDPLUS demo reseed | "clean" = empty production start
+    categories: Optional[List[str]] = None
 
 @router.post("/admin/reset-database")
 async def reset_test_database(body: ResetDbIn, principal=Depends(get_current_principal)):
@@ -30,16 +31,26 @@ async def reset_test_database(body: ResetDbIn, principal=Depends(get_current_pri
         raise HTTPException(status_code=403, detail="Only a Super Admin can reset the database")
     if body.confirm.strip() != "RESET DATABASE":
         raise HTTPException(status_code=400, detail="Confirmation phrase does not match. Type RESET DATABASE exactly.")
-    if body.mode not in ("demo", "clean"):
+    if body.mode not in ("demo", "clean", "selected"):
         raise HTTPException(status_code=400, detail="Invalid reset mode")
     user = await db.users.find_one({"id": principal["id"]})
     if not user or not verify_secret(body.password, user.get("password_hash", "")):
         raise HTTPException(status_code=401, detail="Incorrect password")
-    deleted = await reset_database(mode=body.mode)
+    if body.mode == "selected":
+        if not body.categories:
+            raise HTTPException(status_code=400, detail="Select at least one data category to reset")
+        invalid = [name for name in body.categories if name not in RESET_CATEGORY_COLLECTIONS]
+        if invalid:
+            raise HTTPException(status_code=400, detail=f"Invalid reset categories: {', '.join(invalid)}")
+        deleted = await reset_selected_data(body.categories)
+    else:
+        deleted = await reset_database(mode=body.mode)
     await audit(principal, "database.reset", "system", ORG_ID,
                 after={"by": principal.get("email"), "role": principal.get("role"),
-                       "mode": body.mode, "deleted_total": sum(deleted.values())})
-    label = "empty (clean start)" if body.mode == "clean" else "default demo data"
+                       "mode": body.mode, "categories": body.categories or [],
+                       "deleted_total": sum(deleted.values())})
+    label = ("selected categories" if body.mode == "selected" else
+             "empty (clean start)" if body.mode == "clean" else "default demo data")
     return {"ok": True, "mode": body.mode, "deleted": deleted,
             "deleted_total": sum(deleted.values()),
             "message": f"Database reset to {label}."}
