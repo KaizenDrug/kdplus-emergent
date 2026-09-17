@@ -322,6 +322,20 @@ RESET_COLLECTIONS = [
     "password_reset_requests", "password_reset_tokens", "employees", "stores", "registers",
 ]
 
+# Admin-facing reset groups. Infrastructure required to keep the app usable
+# (users, settings, stores and registers) is intentionally not selectable.
+RESET_CATEGORY_COLLECTIONS = {
+    "catalog": ["products", "categories", "price_history"],
+    "inventory": ["inventory_lots", "inventory_levels", "inventory_movements",
+                  "stock_transfers", "inventory_counts"],
+    "sales": ["sales", "refunds", "senior_pwd_transactions", "cash_movements"],
+    "purchasing": ["suppliers", "purchase_orders"],
+    "customers": ["customers", "loyalty_transactions", "prescriptions"],
+    "employees": ["employees", "shifts"],
+    "activity": ["notifications", "audit_logs", "login_attempts",
+                 "password_reset_requests", "password_reset_tokens"],
+}
+
 
 async def reset_database(mode="demo"):
     """Wipe all transactional & master test data and reseed.
@@ -353,6 +367,33 @@ async def reset_database(mode="demo"):
         await _seed_stores_registers()
     else:
         await _seed_master_and_txn()
+    return deleted
+
+
+async def reset_selected_data(categories):
+    """Delete only the admin-selected data groups without reseeding.
+
+    Collection names are resolved server-side from the allowlist above. This
+    keeps authentication, business settings, stores/registers and numbering
+    counters intact and prevents arbitrary collection deletion.
+    """
+    selected = list(dict.fromkeys(categories or []))
+    invalid = [name for name in selected if name not in RESET_CATEGORY_COLLECTIONS]
+    if invalid:
+        raise ValueError(f"Invalid reset categories: {', '.join(invalid)}")
+    # Inventory rows cannot remain usable without their referenced products.
+    if "catalog" in selected and "inventory" not in selected:
+        selected.append("inventory")
+
+    deleted = {}
+    global_collections = {"login_attempts", "password_reset_requests", "password_reset_tokens"}
+    for category in selected:
+        for collection in RESET_CATEGORY_COLLECTIONS[category]:
+            query = {} if collection in global_collections else {"org_id": ORG_ID}
+            n = await db[collection].count_documents(query)
+            if n:
+                deleted[collection] = n
+            await db[collection].delete_many(query)
     return deleted
 
 
