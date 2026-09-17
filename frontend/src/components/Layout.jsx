@@ -19,7 +19,7 @@ const NAV = [
   { to: "/purchase-orders", label: "Purchase Orders", icon: ClipboardList },
   { to: "/suppliers", label: "Suppliers", icon: Truck },
   { to: "/customers", label: "Customers", icon: Users },
-  { to: "/sales", label: "Sales & Refunds", icon: Receipt },
+  { to: "/sales", label: "Sales & Refunds", icon: Receipt, permission: "pos.view_receipts" },
   { to: "/reports", label: "Reports", icon: BarChart3, full: true },
   { to: "/shifts", label: "Shifts & Cash", icon: Clock, full: true },
   { to: "/employees", label: "Employees", icon: UserCog, full: true },
@@ -33,7 +33,7 @@ export default function Layout() {
   const [searchOpen, setSearchOpen] = useState(false);
   const navigate = useNavigate();
   const isFull = (user?.permissions || []).includes("*");
-  const navItems = NAV.filter((n) => !n.full || isFull);
+  const navItems = NAV.filter((n) => (!n.full || isFull) && (!n.permission || isFull || (user?.permissions || []).includes(n.permission)));
 
   React.useEffect(() => {
     const h = (e) => {

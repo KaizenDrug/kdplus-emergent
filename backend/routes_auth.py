@@ -12,7 +12,7 @@ from pydantic import BaseModel, EmailStr
 
 from core import (db, ORG_ID, uid, now_iso, hash_secret, verify_secret,
                   create_access_token, create_refresh_token, set_auth_cookies,
-                  get_current_principal, jwt_secret, JWT_ALG)
+                  get_current_principal, jwt_secret, JWT_ALG, auth_cookie_options)
 import jwt as pyjwt
 
 logger = logging.getLogger(__name__)
@@ -120,8 +120,9 @@ async def pin_login(body: PinLoginIn, response: Response):
 
 @router.post("/logout")
 async def logout(response: Response):
-    response.delete_cookie("access_token", path="/", samesite="none", secure=True)
-    response.delete_cookie("refresh_token", path="/", samesite="none", secure=True)
+    opts = auth_cookie_options()
+    response.delete_cookie("access_token", path="/", **opts)
+    response.delete_cookie("refresh_token", path="/", **opts)
     return {"message": "Logged out"}
 
 

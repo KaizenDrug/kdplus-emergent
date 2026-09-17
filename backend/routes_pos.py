@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
+import math
+import re
 
 from core import (db, ORG_ID, uid, now_iso, m, D, MANILA,
                   get_current_principal, require_perm, audit, next_number, notify)
@@ -17,6 +19,7 @@ class SaleLine(BaseModel):
     unit_price: Optional[float] = None      # override if authorized
     line_discount: float = 0                 # peso amount off the line
     discount_eligible: Optional[bool] = None # per-sale Senior/PWD eligibility
+    discount_eligible_qty: Optional[float] = None  # supports part of a multi-qty line
 
 class PaymentIn(BaseModel):
     method: str
@@ -139,15 +142,23 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
         line_vat = D(0)
         line_exempt = D(0)
         line_spwd_disc = D(0)
-        discount_eligible = it.discount_eligible if it.discount_eligible is not None else p.get("discount_eligible", True)
-        if is_spwd and discount_eligible:
+        default_eligible = it.discount_eligible if it.discount_eligible is not None else p.get("discount_eligible", True)
+        eligible_qty = (D(it.discount_eligible_qty) if it.discount_eligible_qty is not None
+                        else (qty if default_eligible else D(0)))
+        if eligible_qty < 0 or eligible_qty > qty:
+            raise HTTPException(status_code=400, detail=f"Eligible quantity for {p['name']} must be between 0 and {m(qty)}")
+        if is_spwd and eligible_qty > 0:
+            eligible_gross = line_gross * eligible_qty / qty
+            regular_gross = line_gross - eligible_gross
             if vatable and spwd_vat_exempt:
-                net = line_gross / (D(1) + vat_rate)
-                line_exempt = line_gross - net
+                eligible_net = eligible_gross / (D(1) + vat_rate)
+                line_exempt = eligible_gross - eligible_net
             else:
-                net = line_gross
-            line_spwd_disc = net * spwd_pct
-            line_net = net - line_spwd_disc
+                eligible_net = eligible_gross
+            line_spwd_disc = eligible_net * spwd_pct
+            line_net = eligible_net - line_spwd_disc + regular_gross
+            if vatable and regular_gross > 0:
+                line_vat = regular_gross - regular_gross / (D(1) + vat_rate)
         else:
             if vatable:
                 net = line_gross / (D(1) + vat_rate)
@@ -167,8 +178,8 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
             "line_gross": m(line_gross), "line_net": m(line_net), "vat": m(line_vat),
             "vat_exempt": m(line_exempt), "spwd_discount": m(line_spwd_disc),
             "unit_cost": m(wcost), "line_cost": m(line_cost),
-            "lot_allocations": allocations, "refunded_qty": 0,
-            "discount_eligible": bool(discount_eligible),
+            "sale_line_id": uid(), "lot_allocations": allocations, "refunded_qty": 0,
+            "discount_eligible": bool(eligible_qty > 0), "discount_eligible_qty": m(eligible_qty),
             "track_lots": p.get("track_lots", False), "track_inventory": p.get("track_inventory", True),
         })
 
@@ -209,7 +220,8 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
         "gross_margin": m((gross_profit / total * 100) if total > 0 else 0),
         "payments": [pmt.model_dump() for pmt in body.payments],
         "amount_paid": m(amount_paid), "change": m(change if change > 0 else 0),
-        "notes": body.notes, "client_txn_id": body.client_txn_id, "created_at": now_iso(),
+        "notes": body.notes, "client_txn_id": body.client_txn_id, "refund_version": 0,
+        "created_at": now_iso(),
     }
     await db.sales.insert_one(dict(sale))
 
@@ -255,26 +267,68 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
     return sale
 
 
+def normalize_sale_lines(sale):
+    """Give legacy sales stable line IDs without requiring a destructive migration."""
+    if not sale:
+        return sale
+    for index, line in enumerate(sale.get("items", [])):
+        line.setdefault("sale_line_id", f"{sale['id']}-line-{index + 1}")
+        line.setdefault("discount_eligible_qty", line.get("qty", 0) if line.get("discount_eligible", True) else 0)
+        line.setdefault("refunded_qty", 0)
+    sale.setdefault("refund_version", 0)
+    return sale
+
+
+def ensure_receipt_access(principal):
+    perms = principal.get("permissions", [])
+    if "*" not in perms and "pos.view_receipts" not in perms:
+        raise HTTPException(status_code=403, detail="You don't have permission to view receipts")
+
+
 @router.get("/sales")
 async def list_sales(store_id: Optional[str] = None, limit: int = 100,
-                     principal=Depends(get_current_principal)):
-    q = {"org_id": ORG_ID}
+                     page: int = 1, page_size: int = 25, q: Optional[str] = None,
+                     paginated: bool = False, principal=Depends(get_current_principal)):
+    ensure_receipt_access(principal)
+    query = {"org_id": ORG_ID}
     if store_id:
-        q["store_id"] = store_id
-    return await db.sales.find(q, {"_id": 0}).sort("created_at", -1).to_list(limit)
+        query["store_id"] = store_id
+    # Cashiers may reprint/refund their own receipts without gaining back-office visibility.
+    if principal.get("kind") == "employee" and principal.get("role") == "cashier":
+        query["cashier_id"] = principal.get("id")
+    if q and q.strip():
+        pattern = re.escape(q.strip())
+        query["$or"] = [
+            {"number": {"$regex": pattern, "$options": "i"}},
+            {"customer_name": {"$regex": pattern, "$options": "i"}},
+            {"cashier_name": {"$regex": pattern, "$options": "i"}},
+        ]
+    if not paginated:
+        rows = await db.sales.find(query, {"_id": 0}).sort("created_at", -1).to_list(min(max(limit, 1), 1000))
+        return [normalize_sale_lines(row) for row in rows]
+    page = max(page, 1)
+    page_size = min(max(page_size, 1), 100)
+    total = await db.sales.count_documents(query)
+    rows = await db.sales.find(query, {"_id": 0}).sort("created_at", -1).skip((page - 1) * page_size).limit(page_size).to_list(page_size)
+    return {"items": [normalize_sale_lines(row) for row in rows], "total": total,
+            "page": page, "page_size": page_size, "pages": max(1, math.ceil(total / page_size))}
 
 
 @router.get("/sales/{sid}")
 async def get_sale(sid: str, principal=Depends(get_current_principal)):
+    ensure_receipt_access(principal)
     s = await db.sales.find_one({"id": sid, "org_id": ORG_ID}, {"_id": 0})
     if not s:
         raise HTTPException(status_code=404, detail="Sale not found")
-    return s
+    if principal.get("kind") == "employee" and principal.get("role") == "cashier" and s.get("cashier_id") != principal.get("id"):
+        raise HTTPException(status_code=403, detail="Cashiers can only view their own receipts")
+    return normalize_sale_lines(s)
 
 
 # ---------------- Refunds ----------------
 class RefundLine(BaseModel):
-    product_id: str
+    sale_line_id: Optional[str] = None
+    product_id: Optional[str] = None  # legacy clients
     qty: float
     restore_stock: bool = True
 
@@ -283,9 +337,16 @@ class RefundIn(BaseModel):
     reason: str
     lines: List[RefundLine]
     refund_method: Optional[str] = None
+    client_txn_id: Optional[str] = None
 
 
-async def restore_refunded_lots(sale, sline, qty, already_refunded, number, principal, reason):
+class CancelSaleIn(BaseModel):
+    reason: str
+    refund_method: Optional[str] = None
+    client_txn_id: Optional[str] = None
+
+
+async def restore_refunded_lots(sale, sline, qty, already_refunded, number, principal, reason, movement_type="REFUND"):
     """Restore the exact originally sold lots before falling back to unallocated stock."""
     remaining = D(qty)
     skip = D(already_refunded)
@@ -304,7 +365,7 @@ async def restore_refunded_lots(sale, sline, qty, already_refunded, number, prin
             {"$inc": {"quantity": float(restore_qty)}, "$set": {"status": "ACTIVE"}},
         )
         await record_movement(
-            sale["store_id"], sline["product_id"], "REFUND", float(restore_qty),
+            sale["store_id"], sline["product_id"], movement_type, float(restore_qty),
             unit_cost=allocation.get("unit_cost", sline.get("unit_cost", 0)),
             lot_id=allocation.get("lot_id"), reference=number, ref_id=sale["id"],
             principal=principal, note=reason,
@@ -314,40 +375,59 @@ async def restore_refunded_lots(sale, sline, qty, already_refunded, number, prin
             break
     if remaining > 0:
         await record_movement(
-            sale["store_id"], sline["product_id"], "REFUND", float(remaining),
+            sale["store_id"], sline["product_id"], movement_type, float(remaining),
             unit_cost=sline.get("unit_cost", 0), reference=number,
             ref_id=sale["id"], principal=principal, note=reason,
         )
 
-@router.post("/refunds")
-async def create_refund(body: RefundIn, principal=Depends(require_perm("pos.refund"))):
+async def _create_refund(body: RefundIn, principal, kind="REFUND", final_status=None):
     sale = await db.sales.find_one({"id": body.sale_id, "org_id": ORG_ID})
     if not sale:
         raise HTTPException(status_code=404, detail="Sale not found")
+    if (principal.get("kind") == "employee" and principal.get("role") == "cashier"
+            and sale.get("cashier_id") != principal.get("id")):
+        raise HTTPException(status_code=403, detail="Cashiers can only refund their own receipts")
+    if body.client_txn_id:
+        existing = await db.refunds.find_one(
+            {"org_id": ORG_ID, "client_txn_id": body.client_txn_id}, {"_id": 0})
+        if existing:
+            if existing.get("sale_id") != body.sale_id:
+                raise HTTPException(status_code=409, detail="This transaction ID was already used for another receipt")
+            return existing
+    if sale.get("status") == "CANCELLED":
+        raise HTTPException(status_code=400, detail="Cancelled receipts cannot be refunded")
     if not body.reason.strip():
         raise HTTPException(status_code=400, detail="Refund reason is required")
     if not body.lines:
         raise HTTPException(status_code=400, detail="Select at least one item to refund")
-    number = await next_number("RFND")
+    sale = normalize_sale_lines(sale)
+    # Persist normalized legacy lines and establish the optimistic-lock version.
+    await db.sales.update_one({"id": sale["id"], "org_id": ORG_ID},
+                              {"$set": {"items": sale["items"], "refund_version": sale["refund_version"]}})
     refund_total = D(0)
     refund_cost = D(0)
     refund_vat = D(0)
     refund_items = []
-    sale_line_total = sum(D(x.get("line_net", 0)) for x in sale.get("items", []))
+    prepared = []
+    sale_line_total = sum(D(x.get("line_net", x.get("line_gross", 0))) for x in sale.get("items", []))
     for rl in body.lines:
-        sline = next((x for x in sale["items"] if x["product_id"] == rl.product_id), None)
+        if not rl.sale_line_id and not rl.product_id:
+            raise HTTPException(status_code=400, detail="Each refund line needs a sale line ID")
+        sline = next((x for x in sale["items"] if
+                      (rl.sale_line_id and x.get("sale_line_id") == rl.sale_line_id) or
+                      (not rl.sale_line_id and rl.product_id and x.get("product_id") == rl.product_id)), None)
         if not sline:
-            continue
+            raise HTTPException(status_code=400, detail="A selected sale line no longer exists")
         if D(rl.qty) <= 0:
             raise HTTPException(status_code=400, detail="Refund quantities must be greater than zero")
         already_refunded = D(sline.get("refunded_qty", 0))
         remaining = D(sline["qty"]) - already_refunded
-        qty = min(D(rl.qty), remaining)
-        if qty <= 0:
-            continue
+        qty = D(rl.qty)
+        if qty > remaining:
+            raise HTTPException(status_code=409, detail=f"Only {m(remaining)} of {sline['name']} remains refundable")
         # Allocate any order-level discount proportionally so partial refunds never
         # reimburse more than the amount actually paid for the line.
-        line_paid = (D(sale.get("total", 0)) * D(sline.get("line_net", 0)) / sale_line_total
+        line_paid = (D(sale.get("total", 0)) * D(sline.get("line_net", sline.get("line_gross", 0))) / sale_line_total
                      if sale_line_total > 0 else D(0))
         unit_net = line_paid / D(sline["qty"]) if D(sline["qty"]) > 0 else D(0)
         amount = unit_net * qty
@@ -359,25 +439,39 @@ async def create_refund(body: RefundIn, principal=Depends(require_perm("pos.refu
         if rl.restore_stock:
             refund_cost += cost_amount
         sline["refunded_qty"] = m(D(sline.get("refunded_qty", 0)) + qty)
-        refund_items.append({"product_id": rl.product_id, "name": sline["name"], "qty": m(qty),
+        refund_items.append({"sale_line_id": sline["sale_line_id"], "product_id": sline["product_id"],
+                             "name": sline["name"], "qty": m(qty),
                              "amount": m(amount), "unit_cost": m(sline.get("unit_cost", 0)),
                              "vat_refunded": m(vat_amount),
                              "cost_restored": m(cost_amount if rl.restore_stock else 0),
                              "restore_stock": rl.restore_stock})
-        if rl.restore_stock and sline.get("track_inventory", True):
-            if sline.get("track_lots") and sline.get("lot_allocations"):
-                await restore_refunded_lots(sale, sline, qty, already_refunded, number, principal, body.reason.strip())
-            else:
-                await record_movement(sale["store_id"], rl.product_id, "REFUND", float(qty),
-                                       unit_cost=sline.get("unit_cost", 0), reference=number,
-                                       ref_id=sale["id"], principal=principal, note=body.reason.strip())
+        prepared.append((sline, qty, already_refunded, rl.restore_stock))
 
     if not refund_items:
         raise HTTPException(status_code=400, detail="None of the selected items can be refunded")
 
     all_refunded = all(D(x["qty"]) <= D(x.get("refunded_qty", 0)) for x in sale["items"])
-    new_status = "REFUNDED" if all_refunded else "PARTIAL_REFUND"
-    await db.sales.update_one({"id": sale["id"]}, {"$set": {"items": sale["items"], "status": new_status}})
+    new_status = (final_status or "REFUNDED") if all_refunded else "PARTIAL_REFUND"
+    version = sale.get("refund_version", 0)
+    claimed = await db.sales.update_one(
+        {"id": sale["id"], "org_id": ORG_ID, "refund_version": version, "status": {"$ne": "CANCELLED"}},
+        {"$set": {"items": sale["items"], "status": new_status}, "$inc": {"refund_version": 1}},
+    )
+    if claimed.modified_count != 1:
+        raise HTTPException(status_code=409, detail="This receipt changed while the refund was being processed. Review it and try again.")
+
+    number = await next_number("VOID" if kind == "VOID" else "RFND")
+    for sline, qty, already_refunded, restore_stock in prepared:
+        if restore_stock and sline.get("track_inventory", True):
+            if sline.get("track_lots") and sline.get("lot_allocations"):
+                await restore_refunded_lots(
+                    sale, sline, qty, already_refunded, number, principal,
+                    body.reason.strip(), "VOID" if kind == "VOID" else "REFUND",
+                )
+            else:
+                await record_movement(sale["store_id"], sline["product_id"], "VOID" if kind == "VOID" else "REFUND", float(qty),
+                                       unit_cost=sline.get("unit_cost", 0), reference=number,
+                                       ref_id=sale["id"], principal=principal, note=body.reason.strip())
 
     refund_method = (body.refund_method or (sale.get("payments") or [{}])[0].get("method") or "Cash").strip()
     refund = {"id": uid(), "number": number, "org_id": ORG_ID, "sale_id": sale["id"],
@@ -385,20 +479,66 @@ async def create_refund(body: RefundIn, principal=Depends(require_perm("pos.refu
               "shift_id": sale.get("shift_id"),
               "cashier_id": principal.get("id"), "cashier_name": principal.get("name"),
               "reason": body.reason.strip(), "items": refund_items, "total": m(refund_total),
+              "type": kind, "client_txn_id": body.client_txn_id,
               "cost_restored": m(refund_cost),
               "vat_refunded": m(refund_vat),
               "payments": [{"method": refund_method, "amount": m(refund_total)}],
               "created_at": now_iso()}
     await db.refunds.insert_one(dict(refund))
-    await audit(principal, "sale.refunded", "refund", refund["id"],
+    await audit(principal, "sale.cancelled" if kind == "VOID" else "sale.refunded", "refund", refund["id"],
                 after={"number": number, "total": m(refund_total), "sale": sale["number"]}, store_id=sale["store_id"])
     refund.pop("_id", None)
     return refund
 
 
+@router.post("/refunds")
+async def create_refund(body: RefundIn, principal=Depends(require_perm("pos.refund"))):
+    return await _create_refund(body, principal)
+
+
+@router.post("/sales/{sid}/cancel")
+async def cancel_sale(sid: str, body: CancelSaleIn, principal=Depends(require_perm("pos.void"))):
+    sale = await db.sales.find_one({"id": sid, "org_id": ORG_ID}, {"_id": 0})
+    if not sale:
+        raise HTTPException(status_code=404, detail="Sale not found")
+    if body.client_txn_id:
+        existing = await db.refunds.find_one(
+            {"org_id": ORG_ID, "client_txn_id": body.client_txn_id}, {"_id": 0})
+        if existing:
+            if existing.get("sale_id") != sid:
+                raise HTTPException(status_code=409, detail="This transaction ID was already used for another receipt")
+            return existing
+    if sale.get("status") != "COMPLETED":
+        raise HTTPException(status_code=400, detail="Only an untouched completed receipt can be cancelled")
+    sale = normalize_sale_lines(sale)
+    lines = [RefundLine(sale_line_id=line["sale_line_id"], product_id=line.get("product_id"),
+                        qty=line.get("qty", 0), restore_stock=True) for line in sale.get("items", [])]
+    refund = await _create_refund(RefundIn(
+        sale_id=sid, reason=body.reason, refund_method=body.refund_method,
+        client_txn_id=body.client_txn_id, lines=lines,
+    ), principal, kind="VOID", final_status="CANCELLED")
+    return refund
+
+
 @router.get("/refunds")
-async def list_refunds(limit: int = 100, principal=Depends(get_current_principal)):
-    return await db.refunds.find({"org_id": ORG_ID}, {"_id": 0}).sort("created_at", -1).to_list(limit)
+async def list_refunds(sale_id: Optional[str] = None, limit: int = 100,
+                       principal=Depends(get_current_principal)):
+    ensure_receipt_access(principal)
+    query = {"org_id": ORG_ID}
+    if sale_id:
+        sale = await db.sales.find_one({"id": sale_id, "org_id": ORG_ID}, {"_id": 0})
+        if not sale:
+            raise HTTPException(status_code=404, detail="Sale not found")
+        if (principal.get("kind") == "employee" and principal.get("role") == "cashier"
+                and sale.get("cashier_id") != principal.get("id")):
+            raise HTTPException(status_code=403, detail="Cashiers can only view their own receipts")
+        query["sale_id"] = sale_id
+    elif principal.get("kind") == "employee" and principal.get("role") == "cashier":
+        own_sales = await db.sales.find(
+            {"org_id": ORG_ID, "cashier_id": principal.get("id")}, {"id": 1, "_id": 0}
+        ).to_list(10000)
+        query["sale_id"] = {"$in": [sale["id"] for sale in own_sales]}
+    return await db.refunds.find(query, {"_id": 0}).sort("created_at", -1).to_list(min(max(limit, 1), 1000))
 
 
 # ---------------- Shifts & cash management ----------------

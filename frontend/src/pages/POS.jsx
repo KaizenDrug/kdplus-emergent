@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Search, Plus, Minus, Trash2, X, ShoppingCart, Wifi, ArrowLeft, Printer, UserPlus, Barcode,
-  RefreshCw, CloudOff, AlertCircle,
+  RefreshCw, CloudOff, AlertCircle, Receipt,
 } from "lucide-react";
 import api, { peso } from "@/lib/api";
 import { getCache, saveCache, enqueueSale, queueCount, syncQueue } from "@/lib/offline";
@@ -148,6 +148,10 @@ export default function POS() {
           </SelectContent>
         </Select>
         <div className="ml-auto flex items-center gap-2">
+          <button onClick={() => navigate("/receipts")} data-testid="pos-receipts"
+            className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200">
+            <Receipt className="w-3.5 h-3.5" />Receipts
+          </button>
           {pending > 0 && (
             <button onClick={doSync} data-testid="pos-sync-btn"
               className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200">
@@ -364,7 +368,8 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
   const [idNumber, setIdNumber] = useState("");
   const [spName, setSpName] = useState("");
   const [payments, setPayments] = useState([{ method: "Cash", amount: "" }]);
-  const [eligible, setEligible] = useState(() => Object.fromEntries(cart.map((i) => [i.product_id, i.discount_eligible !== false])));
+  const [eligibleQty, setEligibleQty] = useState(() => Object.fromEntries(
+    cart.map((i) => [i.product_id, i.discount_eligible !== false ? i.qty : 0])));
   const [busy, setBusy] = useState(false);
 
   const vatRate = (settings?.tax?.vat_rate || 12) / 100;
@@ -377,14 +382,14 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
     let net = 0;
     cart.forEach((i) => {
       const line = i.unit_price * i.qty;
-      if (eligible[i.product_id]) {
-        const n = i.tax_mode === "VAT" ? line / (1 + vatRate) : line;
-        vatExempt += line - n; net += n * (1 - spPct);
-        spDisc += n * spPct;
-      } else {
-        net += line;
-        if (i.tax_mode === "VAT") vatAmt += line - line / (1 + vatRate);
-      }
+      const eq = Math.min(i.qty, Math.max(0, Number(eligibleQty[i.product_id]) || 0));
+      const eligibleGross = i.qty > 0 ? line * eq / i.qty : 0;
+      const regularGross = line - eligibleGross;
+      const eligibleNet = i.tax_mode === "VAT" ? eligibleGross / (1 + vatRate) : eligibleGross;
+      vatExempt += eligibleGross - eligibleNet;
+      spDisc += eligibleNet * spPct;
+      net += eligibleNet * (1 - spPct) + regularGross;
+      if (i.tax_mode === "VAT") vatAmt += regularGross - regularGross / (1 + vatRate);
     });
     total = net;
   } else {
@@ -411,7 +416,10 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
     const validPayments = payments.filter((p) => Number(p.amount) > 0).map((p) => ({ method: p.method, amount: Number(p.amount), reference: "" }));
     const body = {
       store_id: storeId, register_id: "reg_1", shift_id: shiftId,
-      items: cart.map((i) => ({ product_id: i.product_id, qty: i.qty, discount_eligible: !!eligible[i.product_id] })),
+      items: cart.map((i) => {
+        const eq = Math.min(i.qty, Math.max(0, Number(eligibleQty[i.product_id]) || 0));
+        return { product_id: i.product_id, qty: i.qty, discount_eligible: eq > 0, discount_eligible_qty: eq };
+      }),
       payments: validPayments,
       discount_type: discountType, order_discount: Number(orderDiscount) || 0,
       senior_pwd: (discountType !== "REGULAR") ? { id_number: idNumber, name: spName } : null,
@@ -420,7 +428,9 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
     const localSale = {
       number: "OFFLINE-" + String(Date.now()).slice(-8), cashier_name: cashierName,
       customer_name: customers.find((c) => c.id === customerId) ? `${customers.find((c) => c.id === customerId).first_name} ${customers.find((c) => c.id === customerId).last_name}` : null,
-      items: cart.map((i) => ({ name: i.name, qty: i.qty, unit_price: i.unit_price, line_gross: i.unit_price * i.qty, discount_eligible: !!eligible[i.product_id] })),
+      items: cart.map((i) => ({ name: i.name, qty: i.qty, unit_price: i.unit_price, line_gross: i.unit_price * i.qty,
+        discount_eligible: Number(eligibleQty[i.product_id]) > 0,
+        discount_eligible_qty: Math.min(i.qty, Math.max(0, Number(eligibleQty[i.product_id]) || 0)) })),
       subtotal: gross, vat_exempt_amount: vatExempt, spwd_discount: spDisc, vat_amount: vatAmt,
       total, payments: validPayments, change: change > 0 ? change : 0, _offline: true,
     };
@@ -481,9 +491,15 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
                 <div className="text-[11px] font-bold uppercase text-slate-500 mb-1">Items eligible for discount</div>
                 <div className="space-y-1.5">
                   {cart.map((i) => <label key={i.product_id} className="flex items-center gap-2 text-sm bg-white/70 rounded px-2 py-1.5">
-                    <input type="checkbox" checked={!!eligible[i.product_id]} onChange={(e) => setEligible((x) => ({ ...x, [i.product_id]: e.target.checked }))}
+                    <input type="checkbox" checked={Number(eligibleQty[i.product_id]) > 0}
+                      onChange={(e) => setEligibleQty((x) => ({ ...x, [i.product_id]: e.target.checked ? i.qty : 0 }))}
                       data-testid={`discount-eligible-${i.product_id}`} className="w-4 h-4 accent-teal-600" />
-                    <span className="flex-1">{i.name}</span><span className="text-xs text-slate-500">{peso(i.unit_price * i.qty)}</span>
+                    <span className="flex-1">{i.name}</span>
+                    {i.qty > 1 && Number(eligibleQty[i.product_id]) > 0 && <input type="number" min="0" max={i.qty} step="1"
+                      value={eligibleQty[i.product_id]} onChange={(e) => setEligibleQty((x) => ({ ...x, [i.product_id]: e.target.value }))}
+                      onClick={(e) => e.stopPropagation()} data-testid={`discount-eligible-qty-${i.product_id}`}
+                      className="w-16 px-2 py-1 border rounded text-right text-sm" title="Eligible quantity" />}
+                    <span className="text-xs text-slate-500">of {i.qty}</span>
                   </label>)}
                 </div>
               </div>

@@ -91,3 +91,13 @@ Decimal-safe money · immutable inventory ledger · atomic sale (sale+items+paym
 - Dashboard KPIs/trends/payment mix/category/product figures now deduct refunds and restored cost instead of reporting refunded revenue as earned sales.
 - Offline queue failures are retained with an error instead of silently deleting rejected sales.
 - Verification: focused async backend suite 5/5 passed; optimized React production build completed successfully.
+
+# [2026-09] Receipt, refund, cancellation, and local-auth completion
+- Every new sale item now receives a stable `sale_line_id`; legacy receipts are normalized on read without resetting or migrating the database. Refunds target the exact sale line, so repeated products and batch allocations remain unambiguous.
+- Senior/PWD checkout supports an eligible quantity within a multi-quantity line. Only that quantity receives VAT exemption and the statutory discount; the remaining quantity keeps normal VAT treatment.
+- Refunds calculate from the historical amount actually paid, including ticket-level and Senior/PWD discounts. Partial/full refunds show the exact customer refund before confirmation, restore original lots when restocked, retain non-restock returns, and record method, VAT, cost, reason, and history.
+- Refund submissions use `client_txn_id` idempotency and optimistic receipt versioning. Duplicate submissions return the original refund; stale or excessive returns fail with a conflict instead of over-refunding or restoring inventory twice.
+- Cashiers can open a dedicated searchable/paginated “My Receipts” screen from POS, reprint and refund only their own receipts. Back-office users retain Sales & Refunds access according to permissions.
+- Full receipt cancellation is restricted to manager-level wildcard permission, only applies to untouched completed receipts, records a `VOID`, and restores inventory. Cancelled receipts cannot be refunded again.
+- Local HTTP authentication cookies now work in Safari when `FRONTEND_URL` explicitly points to localhost; non-local/default deployments retain secure cross-site cookie settings.
+- Verification: focused async backend suite 10/10 passed; Python compilation and diff checks passed; optimized React production build completed successfully. Broader live-API suites require a running seeded backend.

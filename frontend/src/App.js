@@ -61,6 +61,7 @@ function App() {
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/pos" element={<Protected><POS /></Protected>} />
+          <Route path="/receipts" element={<Protected><Sales cashierMode /></Protected>} />
           <Route path="/" element={<RequireBackOffice><Layout /></RequireBackOffice>}>
             <Route index element={<DashboardIndex />} />
             <Route path="products" element={<Products />} />

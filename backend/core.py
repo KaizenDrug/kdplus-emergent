@@ -6,6 +6,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 from fastapi import HTTPException, Request, Depends
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -58,9 +59,19 @@ def create_refresh_token(sub, kind, ver=0):
                "exp": datetime.now(timezone.utc) + timedelta(days=7)}
     return jwt.encode(payload, jwt_secret(), algorithm=JWT_ALG)
 
+def auth_cookie_options():
+    """Use HTTPS cookies in production and Safari-compatible cookies for local installs."""
+    # Default to the safer production policy; local setup explicitly sets FRONTEND_URL.
+    frontend_url = os.environ.get("FRONTEND_URL", "")
+    parsed = urlparse(frontend_url)
+    local = parsed.hostname in ("localhost", "127.0.0.1", "::1")
+    return {"secure": not local, "samesite": "lax" if local else "none"}
+
+
 def set_auth_cookies(response, access, refresh):
-    response.set_cookie("access_token", access, httponly=True, secure=True, samesite="none", max_age=43200, path="/")
-    response.set_cookie("refresh_token", refresh, httponly=True, secure=True, samesite="none", max_age=604800, path="/")
+    opts = auth_cookie_options()
+    response.set_cookie("access_token", access, httponly=True, max_age=43200, path="/", **opts)
+    response.set_cookie("refresh_token", refresh, httponly=True, max_age=604800, path="/", **opts)
 
 # ---------------- Money helpers (decimal-safe) ----------------
 def D(x) -> Decimal:

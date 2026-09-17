@@ -20,7 +20,8 @@ import routes_pos  # noqa: E402
 import routes_reports  # noqa: E402
 
 
-PRINCIPAL = {"id": "emp_cashier", "name": "Test Cashier", "role": "cashier", "permissions": ["pos.sell", "pos.refund", "pos.open_drawer", "pos.discount"]}
+PRINCIPAL = {"id": "emp_cashier", "name": "Test Cashier", "kind": "employee", "role": "cashier", "permissions": ["pos.sell", "pos.refund", "pos.view_receipts", "pos.open_drawer", "pos.discount"]}
+MANAGER = {"id": "emp_manager", "name": "Test Manager", "kind": "employee", "role": "manager", "permissions": ["*"]}
 
 
 @pytest_asyncio.fixture
@@ -150,3 +151,116 @@ async def test_dashboard_deducts_refunds_and_restored_cost(pos_db):
     assert report["kpi"]["refunds"] == 80
     assert report["kpi"]["cogs"] == 40
     assert report["kpi"]["gross_profit"] == 72
+
+
+@pytest.mark.asyncio
+async def test_partial_quantity_senior_discount_and_stable_line_ids(pos_db):
+    sale = await routes_pos.create_sale(routes_pos.SaleIn(
+        store_id="store_main", register_id="reg_1", shift_id="shift1",
+        items=[routes_pos.SaleLine(
+            product_id="p_med", qty=2, discount_eligible=True, discount_eligible_qty=1,
+        )],
+        payments=[routes_pos.PaymentIn(method="Cash", amount=192)],
+        discount_type="SENIOR",
+        senior_pwd=routes_pos.SeniorPwdInfo(id_number="SC-002", name="One eligible unit"),
+        client_txn_id="txn-partial-eligible",
+    ), principal=PRINCIPAL)
+
+    assert sale["subtotal"] == 224
+    assert sale["vat_exempt_amount"] == 12
+    assert sale["spwd_discount"] == 20
+    assert sale["vat_amount"] == 12
+    assert sale["total"] == 192
+    assert sale["items"][0]["discount_eligible_qty"] == 1
+    assert sale["items"][0]["sale_line_id"]
+
+
+@pytest.mark.asyncio
+async def test_refund_idempotency_and_over_refund_protection(pos_db):
+    sale = await routes_pos.create_sale(senior_sale(), principal=PRINCIPAL)
+    request = routes_pos.RefundIn(
+        sale_id=sale["id"], reason="Returned once", refund_method="Cash",
+        client_txn_id="refund-once",
+        lines=[routes_pos.RefundLine(
+            sale_line_id=sale["items"][0]["sale_line_id"], qty=1, restore_stock=True,
+        )],
+    )
+    first = await routes_pos.create_refund(request, principal=PRINCIPAL)
+    duplicate = await routes_pos.create_refund(request, principal=PRINCIPAL)
+
+    assert duplicate["id"] == first["id"]
+    assert await pos_db.refunds.count_documents({"sale_id": sale["id"]}) == 1
+    assert (await pos_db.inventory_lots.find_one({"id": "lot1"}))["quantity"] == 10
+
+    with pytest.raises(HTTPException) as exc:
+        await routes_pos.create_refund(routes_pos.RefundIn(
+            sale_id=sale["id"], reason="Attempted twice",
+            lines=[routes_pos.RefundLine(
+                sale_line_id=sale["items"][0]["sale_line_id"], qty=1,
+            )],
+        ), principal=PRINCIPAL)
+    assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_manager_can_cancel_untouched_receipt(pos_db):
+    sale = await routes_pos.create_sale(routes_pos.SaleIn(
+        store_id="store_main", register_id="reg_1", shift_id="shift1",
+        items=[routes_pos.SaleLine(product_id="p_other", qty=1)],
+        payments=[routes_pos.PaymentIn(method="Cash", amount=112)],
+        client_txn_id="txn-to-cancel",
+    ), principal=PRINCIPAL)
+    assert (await pos_db.inventory_levels.find_one({"product_id": "p_other"}))["quantity"] == 9
+
+    void = await routes_pos.cancel_sale(sale["id"], routes_pos.CancelSaleIn(
+        reason="Cashier entered wrong receipt", refund_method="Cash", client_txn_id="void-once",
+    ), principal=MANAGER)
+
+    assert void["type"] == "VOID"
+    assert void["total"] == 112
+    assert (await pos_db.sales.find_one({"id": sale["id"]}))["status"] == "CANCELLED"
+    assert (await pos_db.inventory_levels.find_one({"product_id": "p_other"}))["quantity"] == 10
+    movement = await pos_db.inventory_movements.find_one({"reference": void["number"]})
+    assert movement["type"] == "VOID"
+
+    duplicate = await routes_pos.cancel_sale(sale["id"], routes_pos.CancelSaleIn(
+        reason="Cashier entered wrong receipt", refund_method="Cash", client_txn_id="void-once",
+    ), principal=MANAGER)
+    assert duplicate["id"] == void["id"]
+    assert (await pos_db.inventory_levels.find_one({"product_id": "p_other"}))["quantity"] == 10
+
+
+@pytest.mark.asyncio
+async def test_cashier_cannot_open_or_refund_another_cashiers_receipt(pos_db):
+    sale = await routes_pos.create_sale(senior_sale(), principal=PRINCIPAL)
+    other = {**PRINCIPAL, "id": "emp_other", "name": "Other Cashier"}
+
+    with pytest.raises(HTTPException) as view_exc:
+        await routes_pos.get_sale(sale["id"], principal=other)
+    assert view_exc.value.status_code == 403
+
+    with pytest.raises(HTTPException) as refund_exc:
+        await routes_pos.create_refund(routes_pos.RefundIn(
+            sale_id=sale["id"], reason="Not my sale",
+            lines=[routes_pos.RefundLine(sale_line_id=sale["items"][0]["sale_line_id"], qty=1)],
+        ), principal=other)
+    assert refund_exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_receipt_search_pagination_and_legacy_line_normalization(pos_db):
+    sale = await routes_pos.create_sale(senior_sale(), principal=PRINCIPAL)
+    await pos_db.sales.update_one(
+        {"id": sale["id"]},
+        {"$unset": {"items.0.sale_line_id": "", "refund_version": ""}},
+    )
+
+    result = await routes_pos.list_sales(
+        store_id=None, limit=100, page=1, page_size=1,
+        q=sale["number"], paginated=True, principal=PRINCIPAL,
+    )
+
+    assert result["total"] == 1
+    assert result["pages"] == 1
+    assert result["items"][0]["items"][0]["sale_line_id"] == f"{sale['id']}-line-1"
+    assert result["items"][0]["refund_version"] == 0
