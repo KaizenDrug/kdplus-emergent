@@ -34,6 +34,16 @@ export default function Products() {
   }, []);
 
   const catName = (id) => categories.find((c) => c.id === id)?.name || "—";
+  const exportProducts = async () => {
+    try {
+      const { data } = await api.get("/products/export/csv");
+      const url = URL.createObjectURL(new Blob([data.csv], { type: "text/csv;charset=utf-8" }));
+      const a = document.createElement("a");
+      a.href = url; a.download = data.filename || "kdplus-products.csv"; a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Exported ${data.count} product${data.count === 1 ? "" : "s"}`);
+    } catch (e) { toast.error(apiError(e.response?.data?.detail) || "Export failed"); }
+  };
   const filtered = useMemo(() => products.filter((p) => {
     if (cat !== "all" && p.category_id !== cat) return false;
     if (!q) return true;
@@ -45,6 +55,7 @@ export default function Products() {
     <div>
       <PageHeader title="Products" subtitle={`${products.length} items in catalog`}>
         <Button variant="outline" onClick={() => setCatOpen(true)} data-testid="manage-categories-btn"><Tags className="w-4 h-4 mr-1" />Categories</Button>
+        <Button variant="outline" onClick={exportProducts} data-testid="export-products-btn"><FileDown className="w-4 h-4 mr-1" />Export Products</Button>
         <Button variant="outline" onClick={() => setImportOpen(true)} data-testid="import-csv-btn"><Upload className="w-4 h-4 mr-1" />Import CSV</Button>
         <Button onClick={() => setEditing({ ...empty })} data-testid="add-product-btn" className="bg-primary hover:bg-teal-800"><Plus className="w-4 h-4 mr-1" />New Product</Button>
       </PageHeader>
@@ -206,9 +217,9 @@ function ImportDialog({ onClose, onDone }) {
               <button onClick={getTemplate} data-testid="import-template-btn" className="text-sm text-primary hover:underline flex items-center gap-1"><FileDown className="w-4 h-4" />Download template</button>
               <label className="text-sm text-accent hover:underline cursor-pointer flex items-center gap-1"><Upload className="w-4 h-4" />Choose CSV file<input type="file" accept=".csv,text/csv" className="hidden" onChange={onFile} data-testid="import-file" /></label>
             </div>
-            <textarea value={csv} onChange={(e) => setCsv(e.target.value)} data-testid="import-csv-text" rows={10} placeholder="Paste CSV here (columns: name,generic_name,brand,sku,barcode,category,cost,price,stock,reorder_level,supplier,batch,expiry)"
+            <textarea value={csv} onChange={(e) => setCsv(e.target.value)} data-testid="import-csv-text" rows={10} placeholder="Paste CSV here or download the complete template above"
               className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-sm font-mono" />
-            <div className="text-xs text-slate-500">Category and Supplier are matched by name to existing records; unmatched values are imported blank. Rows with a matching SKU, barcode or name are flagged as duplicates and skipped.</div>
+            <div className="text-xs text-slate-500">The complete template includes product details, pharmacy classifications, pricing, tax, reorder settings, and inventory tracking options. Use true/false for checkbox fields. Category and Supplier are matched by name; matching SKU, barcode, or product names are skipped as duplicates.</div>
             <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={validate} disabled={busy} data-testid="import-validate" className="bg-primary hover:bg-teal-800">Validate & Preview</Button></DialogFooter>
           </div>
         ) : (
