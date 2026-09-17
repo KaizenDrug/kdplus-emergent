@@ -202,7 +202,7 @@ function ImportDialog({ onClose, onDone }) {
   };
   const commit = async () => {
     setBusy(true);
-    try { const { data } = await api.post("/products/import/commit", { csv, skip_duplicates: true }); toast.success(`Imported ${data.created} · skipped ${data.skipped} · errors ${data.errors}`); onDone(); }
+    try { const { data } = await api.post("/products/import/commit", { csv, overwrite_duplicates: true }); toast.success(`Created ${data.created} · updated ${data.updated} · errors ${data.errors}`); onDone(); }
     catch (e) { toast.error(e.response?.data?.detail || "Import failed"); } finally { setBusy(false); }
   };
   const tone = { new: "bg-emerald-100 text-emerald-700", duplicate: "bg-amber-100 text-amber-700", error: "bg-red-100 text-red-700" };
@@ -219,7 +219,7 @@ function ImportDialog({ onClose, onDone }) {
             </div>
             <textarea value={csv} onChange={(e) => setCsv(e.target.value)} data-testid="import-csv-text" rows={10} placeholder="Paste CSV here or download the complete template above"
               className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-sm font-mono" />
-            <div className="text-xs text-slate-500">The complete template includes product details, pharmacy classifications, pricing, tax, reorder settings, and inventory tracking options. Use true/false for checkbox fields. Category and Supplier are matched by name; matching SKU, barcode, or product names are skipped as duplicates.</div>
+            <div className="text-xs text-slate-500">The complete template includes product details, pharmacy classifications, pricing, tax, reorder settings, and inventory tracking options. Use true/false for checkbox fields. Category and Supplier are matched by name. Matching SKU, barcode, or product names will update the existing product; the last matching row in the file wins. Existing stock is preserved.</div>
             <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={validate} disabled={busy} data-testid="import-validate" className="bg-primary hover:bg-teal-800">Validate & Preview</Button></DialogFooter>
           </div>
         ) : (
@@ -248,7 +248,7 @@ function ImportDialog({ onClose, onDone }) {
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setPreview(null)}>Back</Button>
-              <Button onClick={commit} disabled={busy || preview.summary.new === 0} data-testid="import-commit" className="bg-primary hover:bg-teal-800">Import {preview.summary.new} New Product(s)</Button>
+              <Button onClick={commit} disabled={busy || (preview.summary.new === 0 && preview.summary.duplicate === 0)} data-testid="import-commit" className="bg-primary hover:bg-teal-800">Import &amp; Update {preview.summary.new + preview.summary.duplicate} Product(s)</Button>
             </DialogFooter>
           </div>
         )}
