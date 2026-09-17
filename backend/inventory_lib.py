@@ -1,5 +1,5 @@
 from core import db, ORG_ID, uid, now_iso, m, D
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 async def get_level(store_id: str, product_id: str) -> float:
@@ -40,7 +40,7 @@ async def allocate_fefo(store_id, product_id, qty, allow_expired=False):
     """Allocate qty across lots FEFO. Returns (allocations, weighted_cost, shortfall)."""
     need = D(qty)
     lots = await active_lots(store_id, product_id)
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     allocations = []
     total_cost = D(0)
     for lot in lots:

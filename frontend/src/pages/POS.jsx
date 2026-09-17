@@ -38,11 +38,16 @@ export default function POS() {
   const [showClose, setShowClose] = useState(false);
   const searchRef = useRef();
 
+  const cacheShift = (value) => {
+    const cached = getCache();
+    saveCache({ activeShifts: { ...(cached.activeShifts || {}), [storeId]: value || null } });
+  };
+
   const loadShift = () => {
     setShiftLoading(true);
     return api.get(`/pos/shifts/current?store_id=${storeId}&register_id=reg_1`)
-      .then((r) => setShift(r.data || null))
-      .catch(() => setShift(null))
+      .then((r) => { const current = r.data || null; setShift(current); cacheShift(current); })
+      .catch(() => setShift(getCache().activeShifts?.[storeId] || null))
       .finally(() => setShiftLoading(false));
   };
   useEffect(() => { loadShift(); }, [storeId]); // eslint-disable-line
@@ -107,7 +112,7 @@ export default function POS() {
     setCart((c) => {
       const ex = c.find((i) => i.product_id === p.id);
       if (ex) return c.map((i) => (i.product_id === p.id ? { ...i, qty: i.qty + 1 } : i));
-      return [...c, { product_id: p.id, name: p.name, unit_price: p.price, qty: 1, tax_mode: p.tax_mode }];
+      return [...c, { product_id: p.id, name: p.name, unit_price: p.price, qty: 1, tax_mode: p.tax_mode, discount_eligible: p.discount_eligible !== false }];
     });
   };
 
@@ -132,7 +137,10 @@ export default function POS() {
       <div className="h-14 bg-white border-b border-slate-200 flex items-center px-4 gap-3 shrink-0">
         <button onClick={goBack} data-testid="pos-back" title={canBack ? "Back to office" : "Exit / sign out"} className="p-2 rounded-lg hover:bg-slate-100"><ArrowLeft className="w-5 h-5" /></button>
         <span className="font-heading font-extrabold text-slate-900">KDPLUS POS</span>
-        <Select value={storeId} onValueChange={setStoreId}>
+        <Select value={storeId} onValueChange={(v) => {
+          if (cart.length) { toast.error("Clear the current ticket before changing stores"); return; }
+          setShift(null); setStoreId(v);
+        }}>
           <SelectTrigger className="w-44 h-9" data-testid="pos-store"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="store_main">KDPLUS Main Branch</SelectItem>
@@ -244,9 +252,9 @@ export default function POS() {
           <div className="p-4 border-t border-slate-200 bg-white">
             <div className="flex justify-between text-sm mb-1"><span className="text-slate-500">Subtotal</span><span className="font-semibold" data-testid="cart-subtotal">{peso(subtotal)}</span></div>
             <div className="flex justify-between text-sm mb-3"><span className="text-slate-500">Items</span><span className="font-semibold">{cart.reduce((s, i) => s + i.qty, 0)}</span></div>
-            <button onClick={() => setCheckout(true)} disabled={!cart.length} data-testid="checkout-btn"
+            <button onClick={() => setCheckout(true)} disabled={!cart.length || !shift} data-testid="checkout-btn"
               className="w-full py-3.5 rounded-xl bg-primary text-white font-bold text-lg hover:bg-teal-800 transition-colors active:scale-[0.99] disabled:opacity-40">
-              Charge {peso(subtotal)}
+              {shift ? `Charge ${peso(subtotal)}` : "Start Shift to Charge"}
             </button>
           </div>
         </div>
@@ -257,12 +265,12 @@ export default function POS() {
           open={checkout} onClose={() => setCheckout(false)} cart={cart} storeId={storeId} shiftId={shift?.id}
           customers={customers} settings={settings} cashierName={user?.name}
           onOfflineQueued={() => setPending(queueCount())}
-          onComplete={(sale) => { setLastSale(sale); setCart([]); setCheckout(false); toast.success(sale._offline ? `Sale queued offline (${sale.number})` : `Sale ${sale.number} completed`); }}
+          onComplete={(sale) => { setLastSale(sale); setCart([]); setCheckout(false); refreshLevels(); toast.success(sale._offline ? `Sale queued offline (${sale.number})` : `Sale ${sale.number} completed`); }}
         />
       )}
       {lastSale && <ReceiptDialog sale={lastSale} settings={settings} onClose={() => setLastSale(null)} />}
-      {!shiftLoading && !shift && <ShiftStartOverlay online={online} storeId={storeId} onOpened={(sh) => setShift(sh)} />}
-      {showClose && shift && <ShiftCloseDialog shift={shift} onClose={() => setShowClose(false)} onClosed={() => { setShowClose(false); setShift(null); }} />}
+      {!shiftLoading && !shift && <ShiftStartOverlay online={online} storeId={storeId} onOpened={(sh) => { setShift(sh); cacheShift(sh); }} />}
+      {showClose && shift && <ShiftCloseDialog shift={shift} pending={pending} onClose={() => setShowClose(false)} onClosed={() => { setShowClose(false); setShift(null); cacheShift(null); }} />}
     </div>
   );
 }
@@ -302,11 +310,12 @@ function ShiftStartOverlay({ online, storeId, onOpened }) {
   );
 }
 
-function ShiftCloseDialog({ shift, onClose, onClosed }) {
+function ShiftCloseDialog({ shift, pending, onClose, onClosed }) {
   const [counted, setCounted] = useState("");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
   const close = async () => {
+    if (pending > 0) { toast.error("Sync queued sales before closing the shift"); return; }
     const cc = Number(counted);
     if (counted === "" || !isFinite(cc) || cc < 0) { toast.error("Enter the counted cash amount"); return; }
     setBusy(true);
@@ -322,11 +331,12 @@ function ShiftCloseDialog({ shift, onClose, onClosed }) {
         {!result ? (
           <>
             <div className="text-sm text-slate-500">Opening cash: <b className="text-slate-700">{peso(shift.opening_cash)}</b></div>
+            {pending > 0 && <div className="mt-3 text-xs text-amber-700 bg-amber-50 rounded p-2">{pending} offline sale(s) must sync before this shift can close.</div>}
             <label className="block mt-3"><span className="text-[11px] font-bold uppercase text-slate-500">Counted Cash in Drawer (₱)</span>
               <input type="number" min={0} step="0.01" value={counted} onChange={(e) => setCounted(e.target.value)} data-testid="counted-cash-input" autoFocus
                 className="w-full mt-1 px-3 py-2.5 rounded-lg bg-slate-50 border border-slate-200 text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-primary/30" /></label>
             <DialogFooter className="mt-4"><Button variant="outline" onClick={onClose}>Cancel</Button>
-              <Button onClick={close} disabled={busy} data-testid="confirm-close-shift" className="bg-primary hover:bg-teal-800">{busy ? "Closing…" : "Close & Reconcile"}</Button></DialogFooter>
+              <Button onClick={close} disabled={busy || pending > 0} data-testid="confirm-close-shift" className="bg-primary hover:bg-teal-800">{busy ? "Closing…" : "Close & Reconcile"}</Button></DialogFooter>
           </>
         ) : (
           <div className="space-y-1.5 text-sm" data-testid="shift-recon">
@@ -354,6 +364,7 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
   const [idNumber, setIdNumber] = useState("");
   const [spName, setSpName] = useState("");
   const [payments, setPayments] = useState([{ method: "Cash", amount: "" }]);
+  const [eligible, setEligible] = useState(() => Object.fromEntries(cart.map((i) => [i.product_id, i.discount_eligible !== false])));
   const [busy, setBusy] = useState(false);
 
   const vatRate = (settings?.tax?.vat_rate || 12) / 100;
@@ -366,10 +377,16 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
     let net = 0;
     cart.forEach((i) => {
       const line = i.unit_price * i.qty;
-      const n = i.tax_mode === "VAT" ? line / (1 + vatRate) : line;
-      vatExempt += line - n; net += n;
+      if (eligible[i.product_id]) {
+        const n = i.tax_mode === "VAT" ? line / (1 + vatRate) : line;
+        vatExempt += line - n; net += n * (1 - spPct);
+        spDisc += n * spPct;
+      } else {
+        net += line;
+        if (i.tax_mode === "VAT") vatAmt += line - line / (1 + vatRate);
+      }
     });
-    spDisc = net * spPct; total = net - spDisc;
+    total = net;
   } else {
     if (orderDiscount) total = Math.max(0, gross - Number(orderDiscount));
     cart.forEach((i) => { const line = i.unit_price * i.qty; if (i.tax_mode === "VAT") vatAmt += line - line / (1 + vatRate); });
@@ -384,13 +401,17 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
   const fillExact = () => setPayments([{ method: payments[0].method, amount: total.toFixed(2) }]);
 
   const submit = async () => {
+    if (!shiftId) { toast.error("Open a shift before completing a sale"); return; }
+    if ((discountType === "SENIOR" || discountType === "PWD") && (!idNumber.trim() || !spName.trim())) {
+      toast.error("Enter the Senior/PWD ID number and cardholder name"); return;
+    }
     if (paid + 0.001 < total) { toast.error("Insufficient payment"); return; }
     setBusy(true);
     const client_txn_id = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
     const validPayments = payments.filter((p) => Number(p.amount) > 0).map((p) => ({ method: p.method, amount: Number(p.amount), reference: "" }));
     const body = {
-      store_id: storeId, register_id: "reg_1", shift_id: shiftId || null,
-      items: cart.map((i) => ({ product_id: i.product_id, qty: i.qty })),
+      store_id: storeId, register_id: "reg_1", shift_id: shiftId,
+      items: cart.map((i) => ({ product_id: i.product_id, qty: i.qty, discount_eligible: !!eligible[i.product_id] })),
       payments: validPayments,
       discount_type: discountType, order_discount: Number(orderDiscount) || 0,
       senior_pwd: (discountType !== "REGULAR") ? { id_number: idNumber, name: spName } : null,
@@ -399,7 +420,7 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
     const localSale = {
       number: "OFFLINE-" + String(Date.now()).slice(-8), cashier_name: cashierName,
       customer_name: customers.find((c) => c.id === customerId) ? `${customers.find((c) => c.id === customerId).first_name} ${customers.find((c) => c.id === customerId).last_name}` : null,
-      items: cart.map((i) => ({ name: i.name, qty: i.qty, unit_price: i.unit_price, line_gross: i.unit_price * i.qty })),
+      items: cart.map((i) => ({ name: i.name, qty: i.qty, unit_price: i.unit_price, line_gross: i.unit_price * i.qty, discount_eligible: !!eligible[i.product_id] })),
       subtotal: gross, vat_exempt_amount: vatExempt, spwd_discount: spDisc, vat_amount: vatAmt,
       total, payments: validPayments, change: change > 0 ? change : 0, _offline: true,
     };
@@ -449,11 +470,23 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
           </div>
 
           {discountType !== "REGULAR" && (
-            <div className="grid grid-cols-2 gap-3 p-3 bg-teal-50 rounded-lg">
-              <div><label className="text-[11px] font-bold uppercase text-slate-500">ID Number</label>
-                <input value={idNumber} onChange={(e) => setIdNumber(e.target.value)} data-testid="spwd-id" className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 text-sm" placeholder="OSCA/PWD ID" /></div>
-              <div><label className="text-[11px] font-bold uppercase text-slate-500">Name</label>
-                <input value={spName} onChange={(e) => setSpName(e.target.value)} className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 text-sm" placeholder="Cardholder name" /></div>
+            <div className="space-y-3 p-3 bg-teal-50 rounded-lg">
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="text-[11px] font-bold uppercase text-slate-500">ID Number</label>
+                  <input value={idNumber} onChange={(e) => setIdNumber(e.target.value)} data-testid="spwd-id" className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 text-sm" placeholder="OSCA/PWD ID" /></div>
+                <div><label className="text-[11px] font-bold uppercase text-slate-500">Name</label>
+                  <input value={spName} onChange={(e) => setSpName(e.target.value)} data-testid="spwd-name" className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 text-sm" placeholder="Cardholder name" /></div>
+              </div>
+              <div>
+                <div className="text-[11px] font-bold uppercase text-slate-500 mb-1">Items eligible for discount</div>
+                <div className="space-y-1.5">
+                  {cart.map((i) => <label key={i.product_id} className="flex items-center gap-2 text-sm bg-white/70 rounded px-2 py-1.5">
+                    <input type="checkbox" checked={!!eligible[i.product_id]} onChange={(e) => setEligible((x) => ({ ...x, [i.product_id]: e.target.checked }))}
+                      data-testid={`discount-eligible-${i.product_id}`} className="w-4 h-4 accent-teal-600" />
+                    <span className="flex-1">{i.name}</span><span className="text-xs text-slate-500">{peso(i.unit_price * i.qty)}</span>
+                  </label>)}
+                </div>
+              </div>
             </div>
           )}
 

@@ -12,7 +12,7 @@ const empty = {
   strength: "", dosage_form: "", pack_size: "", rx_classification: "OTC", uom: "piece", purchase_uom: "box",
   conversion_factor: 100, acquisition_cost: 0, average_cost: 0, price: 0, reorder_level: 20, reorder_qty: 100,
   max_stock: 500, track_inventory: true, track_lots: true, track_expiry: true, tax_mode: "VAT",
-  vat_inclusive: true, shelf_code: "", storage: "", refrigerated: false, controlled: false, active: true,
+  vat_inclusive: true, discount_eligible: true, shelf_code: "", storage: "", refrigerated: false, controlled: false, active: true,
 };
 
 export default function Products() {
@@ -303,7 +303,7 @@ function ProductDialog({ product, categories, suppliers, onClose, onSaved }) {
           {inp("reorder_level", "Reorder Level", { type: "number" })}{inp("reorder_qty", "Reorder Qty", { type: "number" })}
           {inp("shelf_code", "Shelf Code", { ph: "A1" })}{inp("storage", "Storage", { ph: "Store below 30°C" })}
           <div className="col-span-2 flex flex-wrap gap-4 pt-1">
-            {[["track_lots", "Track Lots"], ["track_expiry", "Track Expiry"], ["track_inventory", "Track Inventory"], ["refrigerated", "Refrigerated"]].map(([k, l]) => (
+            {[["track_lots", "Track Lots"], ["track_expiry", "Track Expiry"], ["track_inventory", "Track Inventory"], ["discount_eligible", "Discount Eligible"], ["refrigerated", "Refrigerated"]].map(([k, l]) => (
               <label key={k} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!f[k]} onChange={(e) => set(k, e.target.checked)} data-testid={`pf-${k}`} className="w-4 h-4 accent-teal-600" />{l}</label>
             ))}
           </div>

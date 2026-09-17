@@ -9,8 +9,10 @@ import { toast } from "sonner";
 
 export default function Sales() {
   const [rows, setRows] = useState([]);
+  const [refunds, setRefunds] = useState([]);
   const [viewing, setViewing] = useState(null);
-  const load = () => api.get("/pos/sales?limit=200").then((r) => setRows(r.data));
+  const load = () => Promise.all([api.get("/pos/sales?limit=200"), api.get("/pos/refunds?limit=500")])
+    .then(([sales, refundRows]) => { setRows(sales.data); setRefunds(refundRows.data); });
   useEffect(() => { load(); }, []);
   return (
     <div>
@@ -35,22 +37,24 @@ export default function Sales() {
         </table>
         {!rows.length && <Empty />}
       </Card>
-      {viewing && <SaleView sale={viewing} onClose={() => setViewing(null)} onRefunded={() => { load(); }} />}
+      {viewing && <SaleView sale={viewing} refunds={refunds.filter((r) => r.sale_id === viewing.id)} onClose={() => setViewing(null)} onRefunded={() => { load(); }} />}
     </div>
   );
 }
 
-function SaleView({ sale, onClose, onRefunded }) {
+function SaleView({ sale, refunds, onClose, onRefunded }) {
   const [refunding, setRefunding] = useState(false);
   const [qtys, setQtys] = useState({});
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
+  const [refundMethod, setRefundMethod] = useState(sale.payments?.[0]?.method || "Cash");
+  const [restore, setRestore] = useState(() => Object.fromEntries(sale.items.map((i) => [i.product_id, true])));
   const doRefund = async () => {
-    const lines = sale.items.filter((i) => Number(qtys[i.product_id]) > 0).map((i) => ({ product_id: i.product_id, qty: Number(qtys[i.product_id]), restore_stock: true }));
+    const lines = sale.items.filter((i) => Number(qtys[i.product_id]) > 0).map((i) => ({ product_id: i.product_id, qty: Number(qtys[i.product_id]), restore_stock: restore[i.product_id] !== false }));
     if (!lines.length) { toast.error("Enter quantities to refund"); return; }
-    if (!reason) { toast.error("Refund reason required"); return; }
+    if (!reason.trim()) { toast.error("Refund reason required"); return; }
     setBusy(true);
-    try { await api.post("/pos/refunds", { sale_id: sale.id, reason, lines }); toast.success("Refund processed"); onRefunded(); onClose(); }
+    try { await api.post("/pos/refunds", { sale_id: sale.id, reason, lines, refund_method: refundMethod }); toast.success("Refund processed"); onRefunded(); onClose(); }
     catch (e) { toast.error(e.response?.data?.detail || "Refund failed"); } finally { setBusy(false); }
   };
   return (
@@ -59,14 +63,15 @@ function SaleView({ sale, onClose, onRefunded }) {
         <DialogHeader><DialogTitle>{sale.number} <StatusBadge value={sale.status} /></DialogTitle></DialogHeader>
         <div className="text-sm text-slate-500 mb-2">{fmtDate(sale.created_at)} · {sale.cashier_name} · {sale.customer_name || "Walk-in"}</div>
         <table className="w-full text-sm mb-3">
-          <thead className="text-xs uppercase text-slate-400 text-left"><tr><th className="py-1">Item</th><th className="py-1 text-right">Qty</th><th className="py-1 text-right">Total</th>{refunding && <th className="py-1 text-right">Refund</th>}</tr></thead>
+          <thead className="text-xs uppercase text-slate-400 text-left"><tr><th className="py-1">Item</th><th className="py-1 text-right">Qty</th><th className="py-1 text-right">Total</th>{refunding && <><th className="py-1 text-right">Refund</th><th className="py-1 text-center">Restock</th></>}</tr></thead>
           <tbody>
             {sale.items.map((i) => (
               <tr key={i.product_id} className="border-t border-slate-100">
                 <td className="py-1.5">{i.name}{i.refunded_qty > 0 && <span className="text-xs text-red-500 ml-1">(-{i.refunded_qty})</span>}</td>
                 <td className="py-1.5 text-right">{i.qty}</td>
                 <td className="py-1.5 text-right">{peso(i.line_gross)}</td>
-                {refunding && <td className="py-1.5 text-right"><input type="number" className="w-16 px-2 py-1 border rounded text-sm" value={qtys[i.product_id] || ""} onChange={(e) => setQtys((q) => ({ ...q, [i.product_id]: e.target.value }))} data-testid={`refund-qty-${i.product_id}`} /></td>}
+                {refunding && <><td className="py-1.5 text-right"><input type="number" min="0" max={Math.max(0, Number(i.qty) - Number(i.refunded_qty || 0))} className="w-16 px-2 py-1 border rounded text-sm" value={qtys[i.product_id] || ""} onChange={(e) => setQtys((q) => ({ ...q, [i.product_id]: e.target.value }))} data-testid={`refund-qty-${i.product_id}`} /></td>
+                  <td className="py-1.5 text-center"><input type="checkbox" checked={restore[i.product_id] !== false} onChange={(e) => setRestore((r) => ({ ...r, [i.product_id]: e.target.checked }))} data-testid={`refund-restock-${i.product_id}`} className="w-4 h-4 accent-teal-600" /></td></>}
               </tr>
             ))}
           </tbody>
@@ -78,7 +83,19 @@ function SaleView({ sale, onClose, onRefunded }) {
           <div className="flex justify-between font-bold text-base border-t border-slate-200 pt-1"><span>Total</span><span>{peso(sale.total)}</span></div>
           <div className="flex justify-between text-slate-500 text-xs">Profit {peso(sale.gross_profit)} · Margin {sale.gross_margin}%</div>
         </div>
-        {refunding && <input className="w-full mt-3 px-3 py-2 border rounded-lg text-sm" placeholder="Refund reason" value={reason} onChange={(e) => setReason(e.target.value)} data-testid="refund-reason" />}
+        {refunds.length > 0 && <div className="mt-3 border border-red-100 rounded-lg overflow-hidden">
+          <div className="px-3 py-2 bg-red-50 text-xs font-bold uppercase text-red-700">Refund history</div>
+          {refunds.map((r) => <div key={r.id} className="px-3 py-2 border-t border-red-100 text-xs flex items-start justify-between gap-3">
+            <div><div className="font-semibold text-slate-700">{r.number} · {r.payments?.[0]?.method || "—"}</div><div className="text-slate-500">{fmtDate(r.created_at)} · {r.reason}</div></div>
+            <div className="font-bold text-red-600">-{peso(r.total)}</div>
+          </div>)}
+        </div>}
+        {refunding && <div className="grid grid-cols-2 gap-3 mt-3">
+          <input className="px-3 py-2 border rounded-lg text-sm" placeholder="Refund reason" value={reason} onChange={(e) => setReason(e.target.value)} data-testid="refund-reason" />
+          <Select value={refundMethod} onValueChange={setRefundMethod}><SelectTrigger data-testid="refund-method"><SelectValue /></SelectTrigger><SelectContent>
+            {["Cash", "GCash", "Maya", "Credit Card", "Debit Card", "Bank Transfer"].map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+          </SelectContent></Select>
+        </div>}
         <DialogFooter>
           {!refunding && sale.status !== "REFUNDED" && <Button variant="outline" onClick={() => setRefunding(true)} data-testid="start-refund"><Undo2 className="w-4 h-4 mr-1" />Refund</Button>}
           {refunding && <Button onClick={doRefund} disabled={busy} data-testid="confirm-refund" className="bg-red-600 hover:bg-red-700">Process Refund</Button>}

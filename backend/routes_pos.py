@@ -16,6 +16,7 @@ class SaleLine(BaseModel):
     qty: float
     unit_price: Optional[float] = None      # override if authorized
     line_discount: float = 0                 # peso amount off the line
+    discount_eligible: Optional[bool] = None # per-sale Senior/PWD eligibility
 
 class PaymentIn(BaseModel):
     method: str
@@ -54,13 +55,14 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
         if existing:
             return existing
 
-    # ---- Shift enforcement: staff must sell under their own open shift ----
-    if body.shift_id:
-        sh = await db.shifts.find_one({"id": body.shift_id, "org_id": ORG_ID, "status": "OPEN"}, {"_id": 0})
-        if not sh:
-            raise HTTPException(status_code=400, detail="Your shift is no longer open. Please start a shift.")
-    elif principal.get("kind") == "employee":
-        raise HTTPException(status_code=400, detail="You need to start a shift before processing sales.")
+    if not body.items:
+        raise HTTPException(status_code=400, detail="Add at least one item to the sale")
+    if not body.payments:
+        raise HTTPException(status_code=400, detail="Add at least one payment")
+    if body.discount_type not in ("REGULAR", "SENIOR", "PWD"):
+        raise HTTPException(status_code=400, detail="Invalid discount type")
+    if any(D(p.amount) <= 0 for p in body.payments):
+        raise HTTPException(status_code=400, detail="Payment amounts must be greater than zero")
 
     settings = await get_settings()
     vat_rate = D(settings.get("tax", {}).get("vat_rate", 12)) / D(100)
@@ -69,6 +71,22 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
     spwd_vat_exempt = spwd.get("vat_exempt", True)
     neg_policy = settings.get("negative_stock_policy", "WARN")
     is_spwd = body.discount_type in ("SENIOR", "PWD") and spwd.get("enabled", True)
+    if body.discount_type in ("SENIOR", "PWD") and not is_spwd:
+        raise HTTPException(status_code=400, detail="Senior/PWD discounts are disabled")
+    if is_spwd and (not body.senior_pwd or not body.senior_pwd.id_number.strip() or not body.senior_pwd.name.strip()):
+        raise HTTPException(status_code=400, detail="Senior/PWD ID number and cardholder name are required")
+
+    if body.register_id and not body.shift_id:
+        raise HTTPException(status_code=400, detail="Open a shift before completing a sale")
+    shift = None
+    if body.shift_id:
+        shift = await db.shifts.find_one({"id": body.shift_id, "org_id": ORG_ID})
+        if not shift:
+            raise HTTPException(status_code=400, detail="The selected shift no longer exists")
+        if shift.get("status") != "OPEN":
+            raise HTTPException(status_code=400, detail="The selected shift is already closed")
+        if shift.get("store_id") != body.store_id or shift.get("register_id") != body.register_id:
+            raise HTTPException(status_code=400, detail="The shift does not belong to this store and register")
 
     line_docs = []
     subtotal = D(0)        # gross (VAT-inclusive) before order/senior discount
@@ -82,8 +100,19 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
         p = await db.products.find_one({"id": it.product_id, "org_id": ORG_ID})
         if not p:
             raise HTTPException(status_code=400, detail="A selected product is no longer available")
-        unit_price = D(it.unit_price if it.unit_price is not None else p.get("price", 0))
         qty = D(it.qty)
+        if qty <= 0:
+            raise HTTPException(status_code=400, detail=f"Quantity for {p['name']} must be greater than zero")
+        if D(it.line_discount) < 0:
+            raise HTTPException(status_code=400, detail=f"Discount for {p['name']} cannot be negative")
+        catalog_price = D(p.get("price", 0))
+        unit_price = D(it.unit_price if it.unit_price is not None else catalog_price)
+        if unit_price < 0:
+            raise HTTPException(status_code=400, detail=f"Price for {p['name']} cannot be negative")
+        if it.unit_price is not None and unit_price != catalog_price:
+            perms = principal.get("permissions", [])
+            if "*" not in perms and "pos.price_override" not in perms:
+                raise HTTPException(status_code=403, detail="A manager is required to override an item price")
         line_gross = unit_price * qty - D(it.line_discount)
         if line_gross < 0:
             line_gross = D(0)
@@ -110,7 +139,8 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
         line_vat = D(0)
         line_exempt = D(0)
         line_spwd_disc = D(0)
-        if is_spwd:
+        discount_eligible = it.discount_eligible if it.discount_eligible is not None else p.get("discount_eligible", True)
+        if is_spwd and discount_eligible:
             if vatable and spwd_vat_exempt:
                 net = line_gross / (D(1) + vat_rate)
                 line_exempt = line_gross - net
@@ -138,6 +168,7 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
             "vat_exempt": m(line_exempt), "spwd_discount": m(line_spwd_disc),
             "unit_cost": m(wcost), "line_cost": m(line_cost),
             "lot_allocations": allocations, "refunded_qty": 0,
+            "discount_eligible": bool(discount_eligible),
             "track_lots": p.get("track_lots", False), "track_inventory": p.get("track_inventory", True),
         })
 
@@ -145,12 +176,16 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
     order_disc = D(0)
     if not is_spwd and body.order_discount:
         order_disc = D(body.order_discount)
+        if order_disc < 0:
+            raise HTTPException(status_code=400, detail="Order discount cannot be negative")
         net_total = net_total - order_disc
         if net_total < 0:
             net_total = D(0)
 
     total = net_total
     amount_paid = sum(D(pmt.amount) for pmt in body.payments)
+    if amount_paid < total:
+        raise HTTPException(status_code=400, detail=f"Insufficient payment: {m(total - amount_paid)} still due")
     change = amount_paid - total
     gross_profit = total - cost_total
 
@@ -247,42 +282,112 @@ class RefundIn(BaseModel):
     sale_id: str
     reason: str
     lines: List[RefundLine]
+    refund_method: Optional[str] = None
+
+
+async def restore_refunded_lots(sale, sline, qty, already_refunded, number, principal, reason):
+    """Restore the exact originally sold lots before falling back to unallocated stock."""
+    remaining = D(qty)
+    skip = D(already_refunded)
+    for allocation in sline.get("lot_allocations", []):
+        allocated = D(allocation.get("qty", 0))
+        if skip >= allocated:
+            skip -= allocated
+            continue
+        available_to_restore = allocated - skip
+        restore_qty = min(available_to_restore, remaining)
+        skip = D(0)
+        if restore_qty <= 0:
+            continue
+        await db.inventory_lots.update_one(
+            {"id": allocation.get("lot_id"), "org_id": ORG_ID},
+            {"$inc": {"quantity": float(restore_qty)}, "$set": {"status": "ACTIVE"}},
+        )
+        await record_movement(
+            sale["store_id"], sline["product_id"], "REFUND", float(restore_qty),
+            unit_cost=allocation.get("unit_cost", sline.get("unit_cost", 0)),
+            lot_id=allocation.get("lot_id"), reference=number, ref_id=sale["id"],
+            principal=principal, note=reason,
+        )
+        remaining -= restore_qty
+        if remaining <= 0:
+            break
+    if remaining > 0:
+        await record_movement(
+            sale["store_id"], sline["product_id"], "REFUND", float(remaining),
+            unit_cost=sline.get("unit_cost", 0), reference=number,
+            ref_id=sale["id"], principal=principal, note=reason,
+        )
 
 @router.post("/refunds")
 async def create_refund(body: RefundIn, principal=Depends(require_perm("pos.refund"))):
     sale = await db.sales.find_one({"id": body.sale_id, "org_id": ORG_ID})
     if not sale:
         raise HTTPException(status_code=404, detail="Sale not found")
+    if not body.reason.strip():
+        raise HTTPException(status_code=400, detail="Refund reason is required")
+    if not body.lines:
+        raise HTTPException(status_code=400, detail="Select at least one item to refund")
     number = await next_number("RFND")
     refund_total = D(0)
+    refund_cost = D(0)
+    refund_vat = D(0)
     refund_items = []
+    sale_line_total = sum(D(x.get("line_net", 0)) for x in sale.get("items", []))
     for rl in body.lines:
         sline = next((x for x in sale["items"] if x["product_id"] == rl.product_id), None)
         if not sline:
             continue
-        remaining = D(sline["qty"]) - D(sline.get("refunded_qty", 0))
+        if D(rl.qty) <= 0:
+            raise HTTPException(status_code=400, detail="Refund quantities must be greater than zero")
+        already_refunded = D(sline.get("refunded_qty", 0))
+        remaining = D(sline["qty"]) - already_refunded
         qty = min(D(rl.qty), remaining)
         if qty <= 0:
             continue
-        unit_net = D(sline["line_net"]) / D(sline["qty"]) if D(sline["qty"]) > 0 else D(0)
+        # Allocate any order-level discount proportionally so partial refunds never
+        # reimburse more than the amount actually paid for the line.
+        line_paid = (D(sale.get("total", 0)) * D(sline.get("line_net", 0)) / sale_line_total
+                     if sale_line_total > 0 else D(0))
+        unit_net = line_paid / D(sline["qty"]) if D(sline["qty"]) > 0 else D(0)
         amount = unit_net * qty
+        cost_amount = D(sline.get("unit_cost", 0)) * qty
+        vat_amount = (D(sline.get("vat", 0)) / D(sline["qty"]) * qty
+                      if D(sline["qty"]) > 0 else D(0))
         refund_total += amount
+        refund_vat += vat_amount
+        if rl.restore_stock:
+            refund_cost += cost_amount
         sline["refunded_qty"] = m(D(sline.get("refunded_qty", 0)) + qty)
         refund_items.append({"product_id": rl.product_id, "name": sline["name"], "qty": m(qty),
-                             "amount": m(amount), "restore_stock": rl.restore_stock})
+                             "amount": m(amount), "unit_cost": m(sline.get("unit_cost", 0)),
+                             "vat_refunded": m(vat_amount),
+                             "cost_restored": m(cost_amount if rl.restore_stock else 0),
+                             "restore_stock": rl.restore_stock})
         if rl.restore_stock and sline.get("track_inventory", True):
-            await record_movement(sale["store_id"], rl.product_id, "REFUND", float(qty),
-                                   unit_cost=sline.get("unit_cost", 0), reference=number,
-                                   ref_id=sale["id"], principal=principal, note=body.reason)
+            if sline.get("track_lots") and sline.get("lot_allocations"):
+                await restore_refunded_lots(sale, sline, qty, already_refunded, number, principal, body.reason.strip())
+            else:
+                await record_movement(sale["store_id"], rl.product_id, "REFUND", float(qty),
+                                       unit_cost=sline.get("unit_cost", 0), reference=number,
+                                       ref_id=sale["id"], principal=principal, note=body.reason.strip())
+
+    if not refund_items:
+        raise HTTPException(status_code=400, detail="None of the selected items can be refunded")
 
     all_refunded = all(D(x["qty"]) <= D(x.get("refunded_qty", 0)) for x in sale["items"])
     new_status = "REFUNDED" if all_refunded else "PARTIAL_REFUND"
     await db.sales.update_one({"id": sale["id"]}, {"$set": {"items": sale["items"], "status": new_status}})
 
+    refund_method = (body.refund_method or (sale.get("payments") or [{}])[0].get("method") or "Cash").strip()
     refund = {"id": uid(), "number": number, "org_id": ORG_ID, "sale_id": sale["id"],
               "sale_number": sale["number"], "store_id": sale["store_id"],
+              "shift_id": sale.get("shift_id"),
               "cashier_id": principal.get("id"), "cashier_name": principal.get("name"),
-              "reason": body.reason, "items": refund_items, "total": m(refund_total),
+              "reason": body.reason.strip(), "items": refund_items, "total": m(refund_total),
+              "cost_restored": m(refund_cost),
+              "vat_refunded": m(refund_vat),
+              "payments": [{"method": refund_method, "amount": m(refund_total)}],
               "created_at": now_iso()}
     await db.refunds.insert_one(dict(refund))
     await audit(principal, "sale.refunded", "refund", refund["id"],
@@ -345,6 +450,13 @@ class CashMoveIn(BaseModel):
 
 @router.post("/cash-movements")
 async def cash_movement(body: CashMoveIn, principal=Depends(require_perm("pos.open_drawer"))):
+    if body.type not in ("IN", "OUT", "DROP", "PETTY"):
+        raise HTTPException(status_code=400, detail="Invalid cash movement type")
+    if D(body.amount) <= 0:
+        raise HTTPException(status_code=400, detail="Cash movement amount must be greater than zero")
+    shift = await db.shifts.find_one({"id": body.shift_id, "org_id": ORG_ID, "status": "OPEN"})
+    if not shift or shift.get("store_id") != body.store_id:
+        raise HTTPException(status_code=400, detail="An open shift is required for this cash movement")
     doc = {"id": uid(), "org_id": ORG_ID, "shift_id": body.shift_id, "store_id": body.store_id,
            "type": body.type, "amount": m(body.amount), "reason": body.reason,
            "employee_id": principal.get("id"), "employee_name": principal.get("name"), "created_at": now_iso()}
@@ -362,24 +474,39 @@ async def close_shift(body: CloseShiftIn, principal=Depends(require_perm("pos.se
     shift = await db.shifts.find_one({"id": body.shift_id, "org_id": ORG_ID})
     if not shift:
         raise HTTPException(status_code=404, detail="Shift not found")
+    if shift.get("status") != "OPEN":
+        raise HTTPException(status_code=400, detail="Shift is already closed")
+    if D(body.counted_cash) < 0:
+        raise HTTPException(status_code=400, detail="Counted cash cannot be negative")
     sales = await db.sales.find({"org_id": ORG_ID, "shift_id": body.shift_id}, {"_id": 0}).to_list(10000)
     cash_sales = D(0)
     sales_total = D(0)
     for s in sales:
         sales_total += D(s["total"])
+        cash_tendered = D(0)
         for p in s.get("payments", []):
             if p["method"].lower() == "cash":
-                cash_sales += D(p["amount"])
+                cash_tendered += D(p["amount"])
+        # Only cash retained in the drawer belongs in reconciliation; change
+        # handed back to the customer does not.
+        cash_sales += max(D(0), cash_tendered - D(s.get("change", 0)))
     moves = await db.cash_movements.find({"shift_id": body.shift_id}, {"_id": 0}).to_list(1000)
-    cash_in = sum(D(x["amount"]) for x in moves if x["type"] in ("IN", "PETTY"))
-    cash_out = sum(D(x["amount"]) for x in moves if x["type"] in ("OUT", "DROP"))
-    refunds = await db.refunds.find({"org_id": ORG_ID, "store_id": shift["store_id"]}, {"_id": 0}).to_list(10000)
-    refunds_total = sum(D(r["total"]) for r in refunds if r.get("created_at", "") >= shift["opened_at"])
-    expected = D(shift["opening_cash"]) + cash_sales + cash_in - cash_out - refunds_total
+    cash_in = sum(D(x["amount"]) for x in moves if x["type"] == "IN")
+    cash_out = sum(D(x["amount"]) for x in moves if x["type"] in ("OUT", "DROP", "PETTY"))
+    refunds = await db.refunds.find({"org_id": ORG_ID, "shift_id": body.shift_id}, {"_id": 0}).to_list(10000)
+    cash_refunds = D(0)
+    for r in refunds:
+        payments = r.get("payments", [])
+        if not payments:  # legacy refunds were implicitly cash refunds
+            cash_refunds += D(r.get("total", 0))
+        else:
+            cash_refunds += sum(D(p.get("amount", 0)) for p in payments
+                                if p.get("method", "").lower() == "cash")
+    expected = D(shift["opening_cash"]) + cash_sales + cash_in - cash_out - cash_refunds
     diff = D(body.counted_cash) - expected
     upd = {"status": "CLOSED", "closed_at": now_iso(), "closed_by": principal.get("name"),
            "sales_total": m(sales_total), "cash_sales": m(cash_sales), "cash_in": m(cash_in),
-           "cash_out": m(cash_out), "refunds_total": m(refunds_total), "expected_cash": m(expected),
+           "cash_out": m(cash_out), "refunds_total": m(cash_refunds), "expected_cash": m(expected),
            "counted_cash": m(body.counted_cash), "difference": m(diff), "transaction_count": len(sales)}
     await db.shifts.update_one({"id": body.shift_id}, {"$set": upd})
     await audit(principal, "shift.closed", "shift", body.shift_id, after={"difference": m(diff)}, store_id=shift["store_id"])

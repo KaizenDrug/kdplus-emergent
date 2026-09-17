@@ -35,10 +35,14 @@ export async function syncQueue(api) {
       await api.post("/pos/sales", item.body);
       synced++;
     } catch (e) {
-      const status = e.response?.status;
-      // 4xx (except auth) means the payload is bad — drop it so it doesn't block forever.
-      if (status && status >= 400 && status < 500 && status !== 401) synced++;
-      else { failed++; remaining.push(item); }
+      // Never silently discard a sale. Validation and stock conflicts need a
+      // cashier/manager to resolve them while preserving the original payload.
+      failed++;
+      remaining.push({
+        ...item,
+        last_error: e.response?.data?.detail || e.message || "Sync failed",
+        last_attempt_at: Date.now(),
+      });
     }
   }
   setQueue(remaining);

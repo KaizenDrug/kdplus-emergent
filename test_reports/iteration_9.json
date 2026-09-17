@@ -1,0 +1,7 @@
+{
+  "summary": "Completed the production-critical cashier shift, per-item Senior/PWD eligibility, and refund correctness slice. POS cashiers can open/close shifts in-register; checkout carries and validates shift_id. Senior/PWD discount and VAT exemption apply only to selected eligible items. Refunds restore original lots, support restock choice and payment method, respect order discounts, and appear in sale history. Shift cash reconciliation excludes change and non-cash refunds. Dashboard refund accounting and offline queue retention were corrected. Focused backend tests: 5/5 passed. Frontend: optimized production build passed.",
+  "bugs": null,
+  "feature": "Cashier shift workflow, selective discounts, refund and reporting correctness",
+  "passed": 5,
+  "failed": 0
+}

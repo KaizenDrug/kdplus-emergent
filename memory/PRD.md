@@ -80,3 +80,13 @@ Decimal-safe money · immutable inventory ledger · atomic sale (sale+items+paym
 - Settings: purchasing.cost_variance_threshold_pct default 5 (seed + SettingsIn). routes_reports.py: GET /reports/cost-variance (supplier/product summary, total_cost_difference=variance*qty).
 - Frontend PurchaseOrders.jsx rewritten: POForm(create/edit), POView(detail: Ordered/Received/Cancelled/Outstanding/PO Cost + Receipt History + actions), ReceivePanel(live variance, on-hand/avg/latest + est preview, reason dropdown when >threshold, Other->note), printPO (original ordered costs, safe DOM). Friendly status labels incl CLOSED_PARTIAL="Closed – Partially Received".
 - Verified: curl (avg 5.60/latest 6.00/on-hand 50, LOT-A@5 preserved/LOT-B@6, 400 over-outstanding, 400 variance-no-reason, PARTIALLY->cancel->CLOSED_PARTIAL stock unchanged, draft edit, RECEIVED-edit 400, cost-variance report). testing_agent iteration_7: 15/15 UI checks pass, 0 bugs.
+
+# [2026-09] Cashier shift + discount/refund completion
+- Cashier-only POS now opens with an in-register shift workflow. Cashiers can enter opening cash, see the active shift, close and reconcile it, and cannot charge a ticket without a shift. Sales carry the active `shift_id`; queued offline sales must sync before shift close.
+- Product master now includes `discount_eligible` (legacy default true). Senior/PWD checkout shows a per-item eligibility checklist; VAT exemption and the 20% discount apply only to selected eligible items, while ineligible items retain normal tax treatment. ID number and cardholder name are required.
+- Checkout API now rejects empty/invalid sales, non-positive payments/quantities, unauthorized price overrides, insufficient tender, invalid discounts, missing/closed/mismatched shifts, and disabled statutory discounts.
+- Refunds now record the refund payment method, restore the original sold lot(s), support non-restock returns, proportionally respect order-level discounts, retain VAT/cost reversal data, and display refund history in the sale detail.
+- Shift reconciliation excludes cash change, subtracts cash refunds only, scopes refunds to the originating shift, and treats petty cash as cash out. Invalid cash movements and duplicate shift closes are rejected.
+- Dashboard KPIs/trends/payment mix/category/product figures now deduct refunds and restored cost instead of reporting refunded revenue as earned sales.
+- Offline queue failures are retained with an error instead of silently deleting rejected sales.
+- Verification: focused async backend suite 5/5 passed; optimized React production build completed successfully.

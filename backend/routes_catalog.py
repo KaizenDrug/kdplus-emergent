@@ -113,6 +113,9 @@ class ProductIn(BaseModel):
     latest_cost: float = 0
     price: float = 0
     wholesale_price: float = 0
+    # Whether this product is normally eligible for statutory/customer discounts.
+    # Cashiers may still confirm eligibility per sale; legacy products default to eligible.
+    discount_eligible: bool = True
     # inventory
     track_inventory: bool = True
     reorder_level: float = 10

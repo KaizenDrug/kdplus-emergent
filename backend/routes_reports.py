@@ -35,25 +35,44 @@ async def fetch_sales(period, start, end, store_id=None):
     return await db.sales.find(q, {"_id": 0}).to_list(50000)
 
 
+async def fetch_refunds(period, start, end, store_id=None):
+    s, e = parse_range(period, start, end)
+    q = {"org_id": ORG_ID, "created_at": {"$gte": s, "$lte": e}}
+    if store_id:
+        q["store_id"] = store_id
+    return await db.refunds.find(q, {"_id": 0}).to_list(50000)
+
+
 @router.get("/dashboard")
 async def dashboard(period: str = "today", store_id: Optional[str] = None,
                     start: Optional[str] = None, end: Optional[str] = None,
                     principal=Depends(get_current_principal)):
     sales = await fetch_sales(period, start, end, store_id)
+    refunds = await fetch_refunds(period, start, end, store_id)
+    refund_total = sum(D(r.get("total", 0)) for r in refunds)
+    restored_cost = sum(D(r.get("cost_restored", 0)) for r in refunds)
     gross = sum(D(s["subtotal"]) for s in sales)
-    net = sum(D(s["total"]) for s in sales)
-    cogs = sum(D(s["cost_total"]) for s in sales)
-    profit = sum(D(s["gross_profit"]) for s in sales)
+    net = sum(D(s["total"]) for s in sales) - refund_total
+    cogs = sum(D(s["cost_total"]) for s in sales) - restored_cost
+    profit = sum(D(s["gross_profit"]) for s in sales) - refund_total + restored_cost
     txns = len(sales)
-    items_sold = sum(D(i["qty"]) for s in sales for i in s["items"])
+    items_sold = (sum(D(i["qty"]) for s in sales for i in s["items"])
+                  - sum(D(i.get("qty", 0)) for r in refunds for i in r.get("items", [])))
     discounts = sum(D(s["discount_total"]) for s in sales)
-    vat = sum(D(s["vat_amount"]) for s in sales)
+    vat = (sum(D(s["vat_amount"]) for s in sales)
+           - sum(D(r.get("vat_refunded", 0)) for r in refunds))
 
     # payment mix
     pay = defaultdict(lambda: D(0))
     for s in sales:
+        remaining = D(s.get("total", 0))
         for p in s.get("payments", []):
-            pay[p["method"]] += D(p["amount"])
+            applied = min(D(p["amount"]), remaining)
+            pay[p["method"]] += applied
+            remaining -= applied
+    for r in refunds:
+        for p in r.get("payments", []):
+            pay[p["method"]] -= D(p["amount"])
 
     # trend (by day)
     trend = defaultdict(lambda: {"sales": D(0), "profit": D(0)})
@@ -61,6 +80,10 @@ async def dashboard(period: str = "today", store_id: Optional[str] = None,
         day = s["created_at"][:10]
         trend[day]["sales"] += D(s["total"])
         trend[day]["profit"] += D(s["gross_profit"])
+    for r in refunds:
+        day = r["created_at"][:10]
+        trend[day]["sales"] -= D(r.get("total", 0))
+        trend[day]["profit"] -= D(r.get("total", 0)) - D(r.get("cost_restored", 0))
     trend_rows = [{"date": k, "sales": m(v["sales"]), "profit": m(v["profit"])} for k, v in sorted(trend.items())]
 
     # hourly
@@ -86,6 +109,14 @@ async def dashboard(period: str = "today", store_id: Optional[str] = None,
             prod[i["product_id"]]["qty"] += D(i["qty"])
             prod[i["product_id"]]["sales"] += D(i["line_net"])
             prod[i["product_id"]]["name"] = i["name"]
+    for r in refunds:
+        for i in r.get("items", []):
+            p = pmap.get(i["product_id"], {})
+            cname = catmap.get(p.get("category_id"), "Uncategorized")
+            cat[cname] -= D(i.get("amount", 0))
+            prod[i["product_id"]]["qty"] -= D(i.get("qty", 0))
+            prod[i["product_id"]]["sales"] -= D(i.get("amount", 0))
+            prod[i["product_id"]]["name"] = i.get("name", prod[i["product_id"]]["name"])
     cat_rows = [{"name": k, "value": m(v)} for k, v in sorted(cat.items(), key=lambda x: -x[1])]
     top = sorted(prod.values(), key=lambda x: -x["sales"])[:10]
     top_rows = [{"name": t["name"], "qty": m(t["qty"]), "sales": m(t["sales"])} for t in top]
@@ -125,7 +156,7 @@ async def dashboard(period: str = "today", store_id: Optional[str] = None,
                 "avg_sale": m(net / D(txns) if txns else 0), "items_sold": m(items_sold),
                 "cogs": m(cogs), "gross_profit": m(profit),
                 "gross_margin": m(profit / net * 100 if net > 0 else 0),
-                "discounts": m(discounts), "vat": m(vat),
+                "discounts": m(discounts), "refunds": m(refund_total), "refund_count": len(refunds), "vat": m(vat),
                 "low_stock": low, "out_stock": out, "expiring": expiring, "expired": expired},
         "payment_mix": [{"name": k, "value": m(v)} for k, v in pay.items()],
         "trend": trend_rows, "hourly": hourly_rows, "category_mix": cat_rows,
