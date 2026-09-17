@@ -1,8 +1,9 @@
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth, apiError } from "@/context/AuthContext";
-import { Cross, Mail, Lock, Delete } from "lucide-react";
+import { Mail, Lock, Delete } from "lucide-react";
 import { toast } from "sonner";
+import BrandLogo from "@/components/BrandLogo";
 
 const BG = "https://images.unsplash.com/photo-1745455782861-43334c2d036f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA3MDR8MHwxfHNlYXJjaHwzfHxwaGFybWFjeSUyMGludGVyaW9yJTIwbW9kZXJuJTIwYnJpZ2h0fGVufDB8fHx8MTc4ODQ3OTQzOHww&ixlib=rb-4.1.0&q=85";
 
@@ -48,14 +49,8 @@ export default function Login() {
         <img src={BG} alt="Pharmacy" className="absolute inset-0 w-full h-full object-cover" />
         <div className="absolute inset-0 bg-primary/70 mix-blend-multiply" />
         <div className="relative z-10 h-full flex flex-col justify-between p-12 text-white">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-xl bg-white/20 backdrop-blur flex items-center justify-center">
-              <Cross className="w-6 h-6" />
-            </div>
-            <div>
-              <div className="font-heading font-extrabold text-xl leading-none">KDPLUS</div>
-              <div className="text-xs uppercase tracking-[0.2em] opacity-80">Pharmacy</div>
-            </div>
+          <div className="inline-flex self-start rounded-xl bg-white px-4 py-2 shadow-sm">
+            <BrandLogo className="h-14 w-auto" />
           </div>
           <div>
             <h2 className="text-4xl font-extrabold font-heading leading-tight">Point of Sale &<br />Business Management</h2>
@@ -67,9 +62,8 @@ export default function Login() {
 
       <div className="flex-1 flex items-center justify-center p-6 bg-background">
         <div className="w-full max-w-md">
-          <div className="lg:hidden flex items-center gap-3 mb-8 justify-center">
-            <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center text-white"><Cross className="w-5 h-5" /></div>
-            <span className="font-heading font-extrabold text-xl">KDPLUS Pharmacy</span>
+          <div className="lg:hidden flex mb-8 justify-center">
+            <BrandLogo className="h-16 w-auto max-w-full" />
           </div>
 
           <div className="flex gap-1 p-1 bg-slate-100 rounded-xl mb-6">

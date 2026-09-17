@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import api, { apiError } from "@/lib/api";
-import { Cross } from "lucide-react";
+import BrandLogo from "@/components/BrandLogo";
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState("");
@@ -18,10 +18,7 @@ export default function ForgotPassword() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-6">
       <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-sm p-8">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center text-white"><Cross className="w-5 h-5" /></div>
-          <span className="font-heading font-extrabold text-lg">KDPLUS Pharmacy</span>
-        </div>
+        <BrandLogo className="h-14 w-auto max-w-full mb-6" />
         {sent ? (
           <div className="text-center">
             <h1 className="text-xl font-bold text-slate-900 font-heading">Check your email</h1>

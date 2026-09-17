@@ -1,8 +1,8 @@
 import React, { useState } from "react";
 import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import api, { apiError } from "@/lib/api";
-import { Cross } from "lucide-react";
 import { toast } from "sonner";
+import BrandLogo from "@/components/BrandLogo";
 
 export default function ResetPassword() {
   const [params] = useSearchParams();
@@ -25,10 +25,7 @@ export default function ResetPassword() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-6">
       <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-sm p-8">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center text-white"><Cross className="w-5 h-5" /></div>
-          <span className="font-heading font-extrabold text-lg">KDPLUS Pharmacy</span>
-        </div>
+        <BrandLogo className="h-14 w-auto max-w-full mb-6" />
         <form onSubmit={submit}>
           <h1 className="text-xl font-bold text-slate-900 font-heading">Set a new password</h1>
           <p className="text-sm text-slate-500 mt-1 mb-5">Choose a strong password for your account.</p>

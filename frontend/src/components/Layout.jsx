@@ -3,11 +3,12 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, ShoppingCart, Package, Boxes, Truck, ClipboardList, Users,
   BarChart3, Receipt, Clock, UserCog, ShieldCheck, Settings as SettingsIcon,
-  LogOut, Search, Menu, Cross, ArrowLeftRight, ClipboardCheck, TrendingDown,
+  LogOut, Search, Menu, ArrowLeftRight, ClipboardCheck, TrendingDown,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import GlobalSearch from "@/components/GlobalSearch";
 import { Button } from "@/components/ui/button";
+import BrandLogo from "@/components/BrandLogo";
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true, full: true },
@@ -45,14 +46,8 @@ export default function Layout() {
 
   const Sidebar = (
     <aside className="w-64 shrink-0 bg-white border-r border-slate-200 flex flex-col h-full">
-      <div className="h-16 flex items-center gap-2.5 px-5 border-b border-slate-100">
-        <div className="w-9 h-9 rounded-lg bg-primary flex items-center justify-center text-white">
-          <Cross className="w-5 h-5" />
-        </div>
-        <div>
-          <div className="font-heading font-extrabold text-slate-900 leading-none">KDPLUS</div>
-          <div className="text-[10px] uppercase tracking-[0.18em] text-slate-400 font-semibold">Pharmacy POS</div>
-        </div>
+      <div className="h-16 flex items-center px-5 border-b border-slate-100">
+        <BrandLogo className="h-11 w-auto max-w-full" />
       </div>
       <nav className="flex-1 overflow-y-auto py-3 px-3 space-y-0.5">
         {navItems.map((n) => (

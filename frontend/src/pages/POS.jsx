@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import BrandLogo from "@/components/BrandLogo";
 
 const PAY_METHODS = ["Cash", "GCash", "Maya", "Credit Card", "Debit Card", "Bank Transfer"];
 
@@ -146,7 +147,7 @@ export default function POS() {
       {/* Top bar */}
       <div className="h-14 bg-white border-b border-slate-200 flex items-center px-4 gap-3 shrink-0">
         <button onClick={goBack} data-testid="pos-back" title={canBack ? "Back to office" : "Exit / sign out"} className="p-2 rounded-lg hover:bg-slate-100"><ArrowLeft className="w-5 h-5" /></button>
-        <span className="font-heading font-extrabold text-slate-900">KDPLUS POS</span>
+        <BrandLogo className="h-9 w-auto" />
         <Select value={storeId} onValueChange={(v) => {
           if (cart.length) { toast.error("Clear the current ticket before changing stores"); return; }
           setShift(null); setStoreId(v);
