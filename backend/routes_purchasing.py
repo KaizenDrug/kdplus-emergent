@@ -61,7 +61,8 @@ def _norm_item(it: dict) -> dict:
     it["ordered_unit_cost"] = m(ordered)
     it["unit_cost"] = m(ordered)  # kept for backward compatibility
     it["qty_cancelled"] = m(qc)
-    it["qty_outstanding"] = m(qo - qr - qc)
+    it["qty_outstanding"] = m(max(D(0), qo - qr - qc))
+    it["qty_over_received"] = m(max(D(0), qr - qo))
     return it
 
 
@@ -218,10 +219,8 @@ async def receive_po(pid: str, body: POReceiveIn, principal=Depends(require_perm
         poi = item_by_pid.get(ln.product_id)
         if not poi:
             raise HTTPException(status_code=400, detail=f"Product {ln.product_id} is not on this PO")
-        outstanding = D(poi["qty_ordered"]) - D(poi["qty_received"]) - D(poi["qty_cancelled"])
-        if qty > outstanding:
-            raise HTTPException(status_code=400,
-                                detail=f"{poi['name']}: cannot receive {m(qty)} — only {m(outstanding)} outstanding")
+        outstanding = max(D(0), D(poi["qty_ordered"]) - D(poi["qty_received"]) - D(poi["qty_cancelled"]))
+        over_received = max(D(0), qty - outstanding)
         ordered = D(poi["ordered_unit_cost"])
         actual = D(ln.actual_unit_cost) if ln.actual_unit_cost is not None else ordered
         var_amt = actual - ordered
@@ -235,7 +234,8 @@ async def receive_po(pid: str, body: POReceiveIn, principal=Depends(require_perm
             if reason.lower() == "other" and not note:
                 raise HTTPException(status_code=400,
                                     detail=f"{poi['name']}: please add a note for the 'Other' variance reason")
-        planned.append({"ln": ln, "poi": poi, "qty": qty, "ordered": ordered, "actual": actual,
+        planned.append({"ln": ln, "poi": poi, "qty": qty, "outstanding": outstanding,
+                        "over_received": over_received, "ordered": ordered, "actual": actual,
                         "var_amt": var_amt, "var_pct": var_pct, "reason": reason, "note": note})
 
     if not planned:
@@ -277,7 +277,9 @@ async def receive_po(pid: str, body: POReceiveIn, principal=Depends(require_perm
             "id": uid(), "receipt_group_id": receipt_group_id, "receipt_no": receipt_no, "org_id": ORG_ID,
             "po_id": pid, "po_number": po["number"], "po_line_id": ln.product_id, "product_id": ln.product_id,
             "product_name": poi["name"], "supplier_id": po["supplier_id"], "store_id": store_id,
-            "qty_received": m(qty), "ordered_unit_cost": m(pl["ordered"]), "actual_unit_cost": m(actual),
+            "qty_received": m(qty), "qty_outstanding_before": m(pl["outstanding"]),
+            "qty_over_received": m(pl["over_received"]),
+            "ordered_unit_cost": m(pl["ordered"]), "actual_unit_cost": m(actual),
             "variance_amount": m(pl["var_amt"]), "variance_percent": m(pl["var_pct"]),
             "variance_reason": pl["reason"], "variance_note": pl["note"],
             "lot_id": lot_id, "lot_number": ln.lot_number or po["number"], "expiry_date": ln.expiry_date,
@@ -290,6 +292,7 @@ async def receive_po(pid: str, body: POReceiveIn, principal=Depends(require_perm
         # 6) audit
         await audit(principal, "po.received", "purchase_order", pid,
                     after={"number": po["number"], "product": poi["name"], "qty": m(qty),
+                           "qty_over_received": m(pl["over_received"]),
                            "ordered_unit_cost": m(pl["ordered"]), "actual_unit_cost": m(actual),
                            "lot": ln.lot_number, "expiry": ln.expiry_date}, store_id=store_id)
         if pl["var_amt"] != 0:
@@ -300,7 +303,8 @@ async def receive_po(pid: str, body: POReceiveIn, principal=Depends(require_perm
 
     # recompute outstanding + status
     for it in items:
-        it["qty_outstanding"] = m(D(it["qty_ordered"]) - D(it["qty_received"]) - D(it["qty_cancelled"]))
+        it["qty_outstanding"] = m(max(D(0), D(it["qty_ordered"]) - D(it["qty_received"]) - D(it["qty_cancelled"])))
+        it["qty_over_received"] = m(max(D(0), D(it["qty_received"]) - D(it["qty_ordered"])))
     status = _compute_status(items)
     await db.purchase_orders.update_one({"id": pid, "org_id": ORG_ID},
                                         {"$set": {"items": items, "status": status, "updated_at": now_iso()}})

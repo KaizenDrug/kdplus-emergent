@@ -169,7 +169,7 @@ function POView({ poId, products, threshold, supName, onClose, onEdit, onChanged
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="text-xs uppercase text-slate-400 text-left border-b border-slate-200">
-                  <tr><th className="py-1.5">Item</th><th className="py-1.5 text-right">Ordered</th><th className="py-1.5 text-right">Received</th><th className="py-1.5 text-right">Cancelled</th><th className="py-1.5 text-right">Outstanding</th><th className="py-1.5 text-right">PO Cost</th><th className="py-1.5 text-right">Line Total</th></tr>
+                  <tr><th className="py-1.5">Item</th><th className="py-1.5 text-right">Ordered</th><th className="py-1.5 text-right">Received</th><th className="py-1.5 text-right">Over</th><th className="py-1.5 text-right">Cancelled</th><th className="py-1.5 text-right">Outstanding</th><th className="py-1.5 text-right">PO Cost</th><th className="py-1.5 text-right">Line Total</th></tr>
                 </thead>
                 <tbody>
                   {po.items.map((it) => (
@@ -177,6 +177,7 @@ function POView({ poId, products, threshold, supName, onClose, onEdit, onChanged
                       <td className="py-1.5">{it.name}</td>
                       <td className="py-1.5 text-right">{it.qty_ordered}</td>
                       <td className="py-1.5 text-right text-emerald-700">{it.qty_received}</td>
+                      <td className="py-1.5 text-right text-amber-700">{Number(it.qty_over_received) > 0 ? `+${it.qty_over_received}` : "—"}</td>
                       <td className="py-1.5 text-right text-red-600">{it.qty_cancelled}</td>
                       <td className="py-1.5 text-right font-semibold">{it.qty_outstanding}</td>
                       <td className="py-1.5 text-right text-slate-600">{peso(it.ordered_unit_cost)}</td>
@@ -200,7 +201,7 @@ function POView({ poId, products, threshold, supName, onClose, onEdit, onChanged
                         <tr key={r.id} className="border-t border-slate-100">
                           <td className="px-2 py-1.5 whitespace-nowrap">{fmtDay(r.received_at)}</td>
                           <td className="px-2 py-1.5">{r.product_name}</td>
-                          <td className="px-2 py-1.5 text-right">{r.qty_received}</td>
+                          <td className="px-2 py-1.5 text-right">{r.qty_received}{Number(r.qty_over_received) > 0 && <div className="text-[10px] font-semibold text-amber-700">+{r.qty_over_received} over PO</div>}</td>
                           <td className="px-2 py-1.5 text-right text-slate-500">{peso(r.ordered_unit_cost)}</td>
                           <td className="px-2 py-1.5 text-right font-semibold">{peso(r.actual_unit_cost)}</td>
                           <td className={`px-2 py-1.5 text-right ${r.variance_amount > 0 ? "text-red-600" : r.variance_amount < 0 ? "text-emerald-600" : "text-slate-400"}`}>
@@ -255,7 +256,8 @@ function ReceivePanel({ po, prodMap, levels, threshold, onCancel, onDone }) {
     const qty = Number(row.qty) || 0;
     const newHand = onhand + qty;
     const newAvg = newHand > 0 ? (onhand * avg + qty * actual) / newHand : actual;
-    return { varAmt, varPct, over, onhand, avg, latest, qty, newHand, newAvg };
+    const overDeliveryQty = Math.max(0, qty - row.outstanding);
+    return { varAmt, varPct, over, overDeliveryQty, onhand, avg, latest, qty, newHand, newAvg };
   };
 
   const submit = async () => {
@@ -263,7 +265,6 @@ function ReceivePanel({ po, prodMap, levels, threshold, onCancel, onDone }) {
     for (const [i, row] of rows.entries()) {
       const qty = Number(row.qty) || 0;
       if (qty <= 0) continue;
-      if (qty > row.outstanding) { toast.error(`${row.name}: exceeds outstanding (${row.outstanding})`); return; }
       const { over } = calc(row);
       if (over && !row.variance_reason) { toast.error(`${row.name}: select a variance reason`); return; }
       if (over && row.variance_reason === "Other" && !row.variance_note.trim()) { toast.error(`${row.name}: add a note for 'Other'`); return; }
@@ -290,8 +291,8 @@ function ReceivePanel({ po, prodMap, levels, threshold, onCancel, onDone }) {
               <div className="text-xs text-slate-400">Ordered {it.qty_ordered} · Received {row.received} · Cancelled {row.cancelled} · <b className="text-slate-600">Outstanding {row.outstanding}</b></div>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
-              <label className="block"><span className="text-[10px] font-bold uppercase text-slate-500">Receive Now (max {row.outstanding})</span>
-                <input type="number" min={0} max={row.outstanding} className="w-full mt-1 px-2 py-1.5 border rounded text-sm" value={row.qty} onChange={(e) => set(i, "qty", e.target.value)} data-testid={`recv-qty-${it.product_id}`} /></label>
+              <label className="block"><span className="text-[10px] font-bold uppercase text-slate-500">Receive Now (Outstanding {row.outstanding})</span>
+                <input type="number" min={0} className="w-full mt-1 px-2 py-1.5 border rounded text-sm" value={row.qty} onChange={(e) => set(i, "qty", e.target.value)} data-testid={`recv-qty-${it.product_id}`} /></label>
               <label className="block"><span className="text-[10px] font-bold uppercase text-slate-500">PO Cost</span>
                 <div className="mt-1 px-2 py-1.5 bg-slate-50 border rounded text-sm text-slate-500">{peso(row.ordered)}</div></label>
               <label className="block"><span className="text-[10px] font-bold uppercase text-slate-500">Actual Cost</span>
@@ -311,6 +312,12 @@ function ReceivePanel({ po, prodMap, levels, threshold, onCancel, onDone }) {
                 {c.qty > 0 && <> → Est. New On Hand <b className="text-slate-700">{c.newHand}</b> · Est. Avg <b className="text-slate-700">{peso(c.newAvg)}</b></>}
               </div>
             </div>
+
+            {c.overDeliveryQty > 0 && (
+              <div className="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-800" data-testid={`recv-over-delivery-${it.product_id}`}>
+                <span className="font-semibold">Over-delivery: +{c.overDeliveryQty}</span> above the PO outstanding quantity. The full received quantity will be added to inventory and recorded in the receipt history.
+              </div>
+            )}
 
             {c.over && (
               <div className="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200" data-testid={`recv-variance-warn-${it.product_id}`}>
@@ -370,16 +377,16 @@ function printPO(po, supName) {
 
   const tot = d.createElement("div"); tot.className = "tot"; tot.textContent = "PO Total: PHP " + Number(po.total).toFixed(2); d.body.appendChild(tot);
 
-  if (["PARTIALLY_RECEIVED", "CLOSED_PARTIAL"].includes(po.status)) {
+  if (["PARTIALLY_RECEIVED", "CLOSED_PARTIAL", "RECEIVED"].includes(po.status)) {
     const sec = d.createElement("div"); sec.className = "sec"; sec.textContent = "Receipt Summary"; d.body.appendChild(sec);
     const rt = d.createElement("table");
     const rhead = d.createElement("tr");
-    ["Item", "Ordered", "Received", "Cancelled", "Outstanding"].forEach((t, idx) => { const th = d.createElement("th"); th.textContent = t; if (idx > 0) th.className = "r"; rhead.appendChild(th); });
+    ["Item", "Ordered", "Received", "Over", "Cancelled", "Outstanding"].forEach((t, idx) => { const th = d.createElement("th"); th.textContent = t; if (idx > 0) th.className = "r"; rhead.appendChild(th); });
     const rthead = d.createElement("thead"); rthead.appendChild(rhead); rt.appendChild(rthead);
     const rtb = d.createElement("tbody");
     po.items.forEach((it) => {
       const tr = d.createElement("tr");
-      [[it.name, ""], [it.qty_ordered, "r"], [it.qty_received, "r"], [it.qty_cancelled, "r"], [it.qty_outstanding, "r"]].forEach(([val, cls]) => {
+      [[it.name, ""], [it.qty_ordered, "r"], [it.qty_received, "r"], [it.qty_over_received || 0, "r"], [it.qty_cancelled, "r"], [it.qty_outstanding, "r"]].forEach(([val, cls]) => {
         const td = d.createElement("td"); td.textContent = String(val); if (cls) td.className = cls; tr.appendChild(td);
       });
       rtb.appendChild(tr);
