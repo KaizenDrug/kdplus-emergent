@@ -1,10 +1,10 @@
-import React, { useEffect, useMemo, useState, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Search, Plus, Minus, Trash2, X, ShoppingCart, Wifi, ArrowLeft, Printer, UserPlus, Barcode,
   RefreshCw, CloudOff, AlertCircle, Receipt,
 } from "lucide-react";
-import api, { peso } from "@/lib/api";
+import api, { peso, fmtDate } from "@/lib/api";
 import { getCache, saveCache, enqueueSale, queueCount, syncQueue } from "@/lib/offline";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
@@ -42,6 +42,16 @@ export default function POS() {
     const cached = getCache();
     saveCache({ activeShifts: { ...(cached.activeShifts || {}), [storeId]: value || null } });
   };
+
+  const finishClosedShift = useCallback(async () => {
+    const cached = getCache();
+    saveCache({ activeShifts: { ...(cached.activeShifts || {}), [storeId]: null } });
+    setShowClose(false);
+    setShift(null);
+    toast.success("Shift closed. You have been logged out.");
+    await logout();
+    navigate("/login", { replace: true });
+  }, [logout, navigate, storeId]);
 
   const loadShift = () => {
     setShiftLoading(true);
@@ -274,7 +284,7 @@ export default function POS() {
       )}
       {lastSale && <ReceiptDialog sale={lastSale} settings={settings} onClose={() => setLastSale(null)} />}
       {!shiftLoading && !shift && <ShiftStartOverlay online={online} storeId={storeId} onOpened={(sh) => { setShift(sh); cacheShift(sh); }} />}
-      {showClose && shift && <ShiftCloseDialog shift={shift} pending={pending} onClose={() => setShowClose(false)} onClosed={() => { setShowClose(false); setShift(null); cacheShift(null); }} />}
+      {showClose && shift && <ShiftCloseDialog shift={shift} pending={pending} onClose={() => setShowClose(false)} onClosed={finishClosedShift} />}
     </div>
   );
 }
@@ -318,6 +328,36 @@ function ShiftCloseDialog({ shift, pending, onClose, onClosed }) {
   const [counted, setCounted] = useState("");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
+  const printSummary = () => {
+    if (!result) return;
+    const w = window.open("", "_blank", "width=420,height=700");
+    if (!w) { toast.error("Allow pop-ups to print the shift summary"); return; }
+    const differenceLabel = result.difference === 0 ? "Balanced" : result.difference > 0 ? "Overage" : "Shortage";
+    const rows = [
+      ["Transactions", result.transaction_count],
+      ["Total Sales", peso(result.sales_total)],
+      ["Opening Cash", peso(result.opening_cash)],
+      ["Cash Sales", peso(result.cash_sales)],
+      ["Cash In", peso(result.cash_in)],
+      ["Cash Out", `-${peso(result.cash_out)}`],
+      ["Cash Refunds", `-${peso(result.refunds_total)}`],
+      ["Expected Cash", peso(result.expected_cash)],
+      ["Counted Cash", peso(result.counted_cash)],
+      [differenceLabel, peso(Math.abs(result.difference))],
+    ];
+    const pre = w.document.createElement("pre");
+    pre.style.cssText = "font:12px monospace;width:310px;white-space:pre-wrap;line-height:1.5";
+    pre.textContent = [
+      "KDPLUS PHARMACY", "SHIFT SALES SUMMARY", "------------------------------",
+      `Shift: ${result.id}`, `Cashier: ${result.employee_name || result.closed_by || "—"}`,
+      `Opened: ${fmtDate(result.opened_at)}`, `Closed: ${fmtDate(result.closed_at)}`,
+      "------------------------------",
+      ...rows.map(([label, value]) => `${String(label).padEnd(18)}${value}`),
+      "------------------------------",
+    ].join("\n");
+    w.document.body.appendChild(pre);
+    w.focus(); w.print(); w.close();
+  };
   const close = async () => {
     if (pending > 0) { toast.error("Sync queued sales before closing the shift"); return; }
     const cc = Number(counted);
@@ -344,16 +384,23 @@ function ShiftCloseDialog({ shift, pending, onClose, onClosed }) {
           </>
         ) : (
           <div className="space-y-1.5 text-sm" data-testid="shift-recon">
-            {[["Opening Cash", result.opening_cash, false], ["Cash Sales", result.cash_sales, false], ["Cash In", result.cash_in, false],
-              ["Cash Out", result.cash_out, true], ["Cash Refunds", result.refunds_total, true], ["Expected Cash", result.expected_cash, false],
-              ["Counted Cash", result.counted_cash, false]].map(([k, v, neg]) => (
-              <div key={k} className="flex justify-between"><span className="text-slate-500">{k}</span><span className="font-semibold">{neg && v ? "-" : ""}{peso(v)}</span></div>
+            {[["Transactions", result.transaction_count, false, false], ["Total Sales", result.sales_total, false, true],
+              ["Opening Cash", result.opening_cash, false, true], ["Cash Sales", result.cash_sales, false, true], ["Cash In", result.cash_in, false, true],
+              ["Cash Out", result.cash_out, true, true], ["Cash Refunds", result.refunds_total, true, true], ["Expected Cash", result.expected_cash, false, true],
+              ["Counted Cash", result.counted_cash, false, true]].map(([k, v, neg, money]) => (
+              <div key={k} className="flex justify-between"><span className="text-slate-500">{k}</span><span className="font-semibold">{neg && v ? "-" : ""}{money ? peso(v) : v}</span></div>
             ))}
             <div className={`flex justify-between pt-2 mt-1 border-t font-bold ${result.difference === 0 ? "text-slate-800" : result.difference > 0 ? "text-emerald-600" : "text-red-600"}`}>
               <span>{result.difference === 0 ? "Balanced" : result.difference > 0 ? "Overage" : "Shortage"}</span>
               <span data-testid="shift-difference">{peso(Math.abs(result.difference))}</span>
             </div>
-            <Button onClick={onClosed} className="w-full mt-4 bg-primary hover:bg-teal-800" data-testid="shift-done-btn">Done</Button>
+            <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-center text-xs font-semibold text-slate-500">
+              Shift closed successfully. Print the summary if needed, then select Done to sign out.
+            </div>
+            <DialogFooter className="mt-3 gap-2">
+              <Button variant="outline" onClick={printSummary} data-testid="print-shift-summary"><Printer className="w-4 h-4 mr-1" />Print Summary</Button>
+              <Button onClick={onClosed} className="bg-primary hover:bg-teal-800" data-testid="shift-done-btn">Done</Button>
+            </DialogFooter>
           </div>
         )}
       </DialogContent>
