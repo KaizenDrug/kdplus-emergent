@@ -99,14 +99,24 @@ function LoyaltyTab({ s, save }) {
 }
 
 function DangerZoneTab() {
-  const [mode, setMode] = useState("demo");
+  const [mode, setMode] = useState("selected");
+  const resetCategories = [
+    ["catalog", "Products & categories", "Products, categories and price history (also clears inventory)"],
+    ["inventory", "Inventory", "Stock levels, lots, movements, transfers and counts"],
+    ["sales", "Sales & refunds", "Sales, refunds, discounts and cash movements"],
+    ["purchasing", "Suppliers & purchasing", "Suppliers and purchase orders"],
+    ["customers", "Customers & loyalty", "Customers, loyalty history and prescriptions"],
+    ["employees", "Employees & shifts", "Staff PIN accounts and shift records"],
+    ["activity", "Logs & notifications", "Audit logs, notifications and login/reset activity"],
+  ];
+  const [selected, setSelected] = useState([]);
   const [confirm, setConfirm] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [bk, setBk] = useState(false);
   const [result, setResult] = useState(null);
   const phraseOk = confirm.trim() === "RESET DATABASE";
-  const canReset = phraseOk && password.length > 0 && !busy;
+  const canReset = phraseOk && password.length > 0 && !busy && (mode !== "selected" || selected.length > 0);
 
   const downloadBackup = async () => {
     setBk(true);
@@ -130,7 +140,7 @@ function DangerZoneTab() {
     if (!canReset) return;
     setBusy(true);
     try {
-      const { data } = await api.post("/admin/reset-database", { confirm, password, mode });
+      const { data } = await api.post("/admin/reset-database", { confirm, password, mode, categories: mode === "selected" ? selected : null });
       setResult(data);
       setConfirm(""); setPassword("");
       toast.success(data.message || "Database reset");
@@ -149,6 +159,15 @@ function DangerZoneTab() {
     </label>
   );
 
+  const toggleCategory = (key) => setSelected((items) => {
+    if (items.includes(key)) {
+      return key === "inventory" && items.includes("catalog")
+        ? items.filter((item) => item !== "inventory" && item !== "catalog")
+        : items.filter((item) => item !== key);
+    }
+    return key === "catalog" ? [...new Set([...items, "catalog", "inventory"])] : [...items, key];
+  });
+
   if (result) {
     const entries = Object.entries(result.deleted || {}).sort((a, b) => b[1] - a[1]);
     return (
@@ -158,7 +177,7 @@ function DangerZoneTab() {
           <div className="flex-1">
             <h3 className="font-heading font-bold text-emerald-700 text-lg">Reset complete</h3>
             <p className="text-sm text-slate-600 mt-1">
-              Mode: <strong>{result.mode === "clean" ? "Empty / clean start" : "Default demo data"}</strong> ·
+              Mode: <strong>{result.mode === "selected" ? "Selected data only" : result.mode === "clean" ? "Empty / clean start" : "Default demo data"}</strong> ·
               &nbsp;<strong data-testid="recap-total">{result.deleted_total}</strong> records deleted.
             </p>
             <div className="mt-4 rounded-lg border border-slate-200 bg-white divide-y divide-slate-100 max-h-72 overflow-auto" data-testid="recap-breakdown">
@@ -186,9 +205,9 @@ function DangerZoneTab() {
         <div className="flex-1">
           <h3 className="font-heading font-bold text-red-700 text-lg">Reset Database</h3>
           <p className="text-sm text-slate-600 mt-1">
-            Permanently deletes <strong>all transactional and master data</strong> — sales, inventory, products,
-            customers, suppliers, purchase orders, transfers, counts and all numbering counters. Your
-            <strong> Owner account</strong> and <strong>business / tax settings</strong> are always preserved.
+            Permanently deletes the data categories you select. Your <strong>Owner account</strong>,
+            <strong> business / tax settings</strong>, stores, registers and numbering counters are always preserved
+            when resetting selected categories.
           </p>
           <p className="text-sm font-semibold text-red-600 mt-2">This action cannot be undone.</p>
 
@@ -203,10 +222,31 @@ function DangerZoneTab() {
           </div>
 
           <div className="mt-5 space-y-2">
-            <div className="text-sm font-medium text-slate-600">What to reseed after wiping:</div>
+            <div className="text-sm font-medium text-slate-600">Reset type:</div>
+            {opt("selected", "Choose data categories", "Clear only the checked groups below without adding demo data.")}
             {opt("demo", "Default demo data", "Reseed the full KDPLUS demo catalog, sample sales, suppliers and staff PINs. Good for testing.")}
             {opt("clean", "Empty / clean start (production)", "Keep ONLY your Owner account + settings + default stores/registers. Everything else starts empty. Other user accounts are removed.")}
           </div>
+
+          {mode === "selected" && <div className="mt-5">
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <div className="text-sm font-medium text-slate-600">Select data to delete:</div>
+              <div className="flex gap-3 text-xs">
+                <button type="button" className="text-primary hover:underline" onClick={() => setSelected(resetCategories.map(([key]) => key))}>Select all</button>
+                <button type="button" className="text-slate-500 hover:underline" onClick={() => setSelected([])}>Clear</button>
+              </div>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2" data-testid="reset-category-list">
+              {resetCategories.map(([key, title, desc]) => <label key={key}
+                className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer ${selected.includes(key) ? "border-red-400 bg-red-100/50" : "border-slate-200 bg-white"}`}>
+                <input type="checkbox" checked={selected.includes(key)} onChange={() => toggleCategory(key)}
+                       className="mt-1 accent-red-600" data-testid={`reset-category-${key}`} />
+                <span><span className="block text-sm font-semibold text-slate-800">{title}</span>
+                  <span className="block text-xs text-slate-500 mt-0.5">{desc}</span></span>
+              </label>)}
+            </div>
+            {selected.length === 0 && <p className="text-xs text-red-600 mt-2">Select at least one category.</p>}
+          </div>}
 
           <div className="mt-5 space-y-3">
             <div>
@@ -224,7 +264,7 @@ function DangerZoneTab() {
           <div className="mt-5">
             <Button onClick={reset} disabled={!canReset} data-testid="reset-database-btn"
                     className="bg-red-600 hover:bg-red-700 text-white disabled:opacity-40 disabled:cursor-not-allowed">
-              {busy ? "Resetting…" : (mode === "clean" ? "Reset to Empty State" : "Reset with Demo Data")}
+              {busy ? "Resetting…" : (mode === "selected" ? `Reset Selected Data (${selected.length})` : mode === "clean" ? "Reset to Empty State" : "Reset with Demo Data")}
             </Button>
           </div>
         </div>
