@@ -86,6 +86,7 @@ Decimal-safe money · immutable inventory ledger · atomic sale (sale+items+paym
 - Product master now includes `discount_eligible` (legacy default true). Senior/PWD checkout shows a per-item eligibility checklist; VAT exemption and the 20% discount apply only to selected eligible items, while ineligible items retain normal tax treatment. ID number and cardholder name are required.
 - Checkout API now rejects empty/invalid sales, non-positive payments/quantities, unauthorized price overrides, insufficient tender, invalid discounts, missing/closed/mismatched shifts, and disabled statutory discounts.
 - Refunds now record the refund payment method, restore the original sold lot(s), support non-restock returns, proportionally respect order-level discounts, retain VAT/cost reversal data, and display refund history in the sale detail.
+- The refund dialog now calculates and prominently displays the live amount to return to the customer using the backend's discounted line-allocation formula.
 - Shift reconciliation excludes cash change, subtracts cash refunds only, scopes refunds to the originating shift, and treats petty cash as cash out. Invalid cash movements and duplicate shift closes are rejected.
 - Dashboard KPIs/trends/payment mix/category/product figures now deduct refunds and restored cost instead of reporting refunded revenue as earned sales.
 - Offline queue failures are retained with an error instead of silently deleting rejected sales.

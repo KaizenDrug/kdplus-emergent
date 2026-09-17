@@ -49,6 +49,16 @@ function SaleView({ sale, refunds, onClose, onRefunded }) {
   const [busy, setBusy] = useState(false);
   const [refundMethod, setRefundMethod] = useState(sale.payments?.[0]?.method || "Cash");
   const [restore, setRestore] = useState(() => Object.fromEntries(sale.items.map((i) => [i.product_id, true])));
+  const saleLineTotal = sale.items.reduce((sum, i) => sum + Number(i.line_net || 0), 0);
+  const refundAmount = sale.items.reduce((sum, i) => {
+    const remaining = Math.max(0, Number(i.qty) - Number(i.refunded_qty || 0));
+    const selected = Math.min(Math.max(0, Number(qtys[i.product_id]) || 0), remaining);
+    const linePaid = saleLineTotal > 0
+      ? Number(sale.total || 0) * Number(i.line_net || 0) / saleLineTotal
+      : 0;
+    const unitPaid = Number(i.qty) > 0 ? linePaid / Number(i.qty) : 0;
+    return sum + unitPaid * selected;
+  }, 0);
   const doRefund = async () => {
     const lines = sale.items.filter((i) => Number(qtys[i.product_id]) > 0).map((i) => ({ product_id: i.product_id, qty: Number(qtys[i.product_id]), restore_stock: restore[i.product_id] !== false }));
     if (!lines.length) { toast.error("Enter quantities to refund"); return; }
@@ -96,9 +106,18 @@ function SaleView({ sale, refunds, onClose, onRefunded }) {
             {["Cash", "GCash", "Maya", "Credit Card", "Debit Card", "Bank Transfer"].map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
           </SelectContent></Select>
         </div>}
+        {refunding && <div className="mt-3 rounded-xl border-2 border-red-200 bg-red-50 px-4 py-3" data-testid="refund-amount-summary">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wide text-red-700">Amount to Refund</div>
+              <div className="text-xs text-slate-500 mt-0.5">Return to customer via {refundMethod}</div>
+            </div>
+            <div className="text-2xl font-extrabold text-red-700" data-testid="refund-amount">{peso(refundAmount)}</div>
+          </div>
+        </div>}
         <DialogFooter>
           {!refunding && sale.status !== "REFUNDED" && <Button variant="outline" onClick={() => setRefunding(true)} data-testid="start-refund"><Undo2 className="w-4 h-4 mr-1" />Refund</Button>}
-          {refunding && <Button onClick={doRefund} disabled={busy} data-testid="confirm-refund" className="bg-red-600 hover:bg-red-700">Process Refund</Button>}
+          {refunding && <Button onClick={doRefund} disabled={busy || refundAmount <= 0} data-testid="confirm-refund" className="bg-red-600 hover:bg-red-700">{busy ? "Processing…" : `Refund ${peso(refundAmount)}`}</Button>}
           <Button variant="outline" onClick={onClose}>Close</Button>
         </DialogFooter>
       </DialogContent>
