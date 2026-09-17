@@ -415,6 +415,7 @@ async def _validate_rows(rows):
 class ImportIn(BaseModel):
     csv: str
     skip_duplicates: bool = True
+    overwrite_duplicates: bool = False
     store_id: str = "store_main"
 
 @router.get("/products/import/template")
@@ -480,13 +481,25 @@ async def import_commit(body: ImportIn, principal=Depends(require_perm("*"))):
     rows = parse_import_csv(body.csv)
     if not rows:
         raise HTTPException(status_code=400, detail="No data rows found.")
+    # When overwrite is selected, the last occurrence of the same item in the
+    # uploaded file wins.  This prevents a repeated row from producing two
+    # updates (or a newly-created duplicate).
+    if body.overwrite_duplicates:
+        latest = {}
+        for row in rows:
+            key = ((row.get("sku") or "").strip().lower()
+                   or (row.get("barcode") or "").strip()
+                   or (row.get("name") or "").strip().lower())
+            latest[key] = row
+        rows = list(latest.values())
+
     preview, _ = await _validate_rows(rows)
-    created = skipped = errors = 0
+    created = updated = skipped = errors = 0
     for r in preview:
         if r["status"] == "error":
             errors += 1
             continue
-        if r["status"] == "duplicate" and body.skip_duplicates:
+        if r["status"] == "duplicate" and not body.overwrite_duplicates and body.skip_duplicates:
             skipped += 1
             continue
         data = {
@@ -508,9 +521,30 @@ async def import_commit(body: ImportIn, principal=Depends(require_perm("*"))):
             "preferred_supplier_id": r["preferred_supplier_id"], "track_lots": r["track_lots"],
             "track_expiry": r["track_expiry"], "tax_mode": r["tax_mode"],
             "vat_inclusive": r["vat_inclusive"], "shelf_code": r["shelf_code"], "active": r["active"],
-            "created_at": now_iso(), "updated_at": now_iso(),
+            "updated_at": now_iso(),
         }
         data = compute_margins(data)
+
+        if r["status"] == "duplicate" and body.overwrite_duplicates:
+            clauses = []
+            if r["sku"]:
+                clauses.append({"sku": {"$regex": f"^{re.escape(r['sku'])}$", "$options": "i"}})
+            if r["barcode"]:
+                clauses.append({"barcode": r["barcode"]})
+            clauses.append({"name": {"$regex": f"^{re.escape(r['name'])}$", "$options": "i"}})
+            existing = await db.products.find_one({"org_id": ORG_ID, "$or": clauses}, {"_id": 0})
+            if existing:
+                # Product fields are overwritten, while stock remains controlled
+                # by inventory movements/counts to preserve the audit trail.
+                data.pop("id", None)
+                data.pop("org_id", None)
+                await db.products.update_one({"id": existing["id"], "org_id": ORG_ID}, {"$set": data})
+                await audit(principal, "item.import_updated", "product", existing["id"],
+                            before=existing, after=data)
+                updated += 1
+                continue
+
+        data["created_at"] = now_iso()
         await db.products.insert_one(dict(data))
         if r["stock"] and r["stock"] > 0 and r["track_inventory"]:
             lot_id = None
@@ -525,5 +559,6 @@ async def import_commit(body: ImportIn, principal=Depends(require_perm("*"))):
                                   unit_cost=r["acquisition_cost"], lot_id=lot_id,
                                   reference="CSV_IMPORT", principal=principal)
         created += 1
-    await audit(principal, "data.import", "product", after={"created": created, "skipped": skipped, "errors": errors})
-    return {"created": created, "skipped": skipped, "errors": errors}
+    await audit(principal, "data.import", "product",
+                after={"created": created, "updated": updated, "skipped": skipped, "errors": errors})
+    return {"created": created, "updated": updated, "skipped": skipped, "errors": errors}
