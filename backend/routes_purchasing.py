@@ -68,7 +68,10 @@ def _norm_item(it: dict) -> dict:
 
 def _norm_po(po: dict) -> dict:
     po.pop("_id", None)
-    po["items"] = [_norm_item(dict(i)) for i in po.get("items", [])]
+    po["items"] = sorted(
+        (_norm_item(dict(i)) for i in po.get("items", [])),
+        key=lambda item: (item.get("name") or "").strip().casefold(),
+    )
     return po
 
 
@@ -125,7 +128,7 @@ async def _build_items(body_items):
         items.append({"product_id": it.product_id, "name": it.name or (p or {}).get("name", ""),
                       "qty_ordered": m(it.qty_ordered), "qty_received": 0, "qty_cancelled": 0,
                       "ordered_unit_cost": m(it.unit_cost), "unit_cost": m(it.unit_cost)})
-    return items
+    return sorted(items, key=lambda item: (item.get("name") or "").strip().casefold())
 
 
 @router.post("/purchase-orders")
