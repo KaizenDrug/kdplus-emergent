@@ -77,3 +77,16 @@ async def test_receive_more_than_original_po_quantity(purchasing_db):
     assert receipt["qty_outstanding_before"] == 10
     assert receipt["qty_over_received"] == 2
     assert movement["qty_change"] == 12
+
+
+def test_purchase_order_items_are_normalized_alphabetically():
+    po = routes_purchasing._norm_po({
+        "id": "po-sort",
+        "items": [
+            {"product_id": "z", "name": "Zinc", "qty_ordered": 1},
+            {"product_id": "a", "name": "amoxicillin", "qty_ordered": 1},
+            {"product_id": "b", "name": "Biogesic", "qty_ordered": 1},
+        ],
+    })
+
+    assert [item["name"] for item in po["items"]] == ["amoxicillin", "Biogesic", "Zinc"]
