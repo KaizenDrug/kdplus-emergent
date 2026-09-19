@@ -25,6 +25,10 @@ const VARIANCE_REASONS = [
   "Invoice discrepancy", "Freight/handling included", "Approved supplier adjustment", "Other",
 ];
 
+const byProductName = (a, b) => (a?.name || "").localeCompare(b?.name || "", undefined, {
+  sensitivity: "base", numeric: true,
+});
+
 export default function PurchaseOrders() {
   const [rows, setRows] = useState([]);
   const [products, setProducts] = useState([]);
@@ -80,7 +84,7 @@ function POForm({ po, products, suppliers, onClose, onSaved }) {
   const [supplier, setSupplier] = useState(po?.supplier_id || "");
   const [expected, setExpected] = useState(po?.expected_date ? po.expected_date.slice(0, 10) : "");
   const [lines, setLines] = useState(
-    po ? po.items.map((i) => ({ product_id: i.product_id, qty_ordered: String(i.qty_ordered), unit_cost: String(i.ordered_unit_cost ?? i.unit_cost) }))
+    po ? [...po.items].sort(byProductName).map((i) => ({ product_id: i.product_id, qty_ordered: String(i.qty_ordered), unit_cost: String(i.ordered_unit_cost ?? i.unit_cost) }))
        : [{ product_id: "", qty_ordered: "", unit_cost: "" }]);
   const [busy, setBusy] = useState(false);
   const upd = (i, k, v) => setLines((l) => l.map((x, idx) => idx === i ? { ...x, [k]: v } : x));
@@ -112,7 +116,7 @@ function POForm({ po, products, suppliers, onClose, onSaved }) {
         <div className="space-y-2 max-h-[40vh] overflow-y-auto">
           {lines.map((l, i) => (
             <div key={i} className="grid grid-cols-12 gap-2 items-center">
-              <div className="col-span-6"><Select value={l.product_id} onValueChange={(v) => pickProduct(i, v)}><SelectTrigger data-testid={`po-prod-${i}`}><SelectValue placeholder="Product" /></SelectTrigger><SelectContent>{products.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent></Select></div>
+              <div className="col-span-6"><Select value={l.product_id} onValueChange={(v) => pickProduct(i, v)}><SelectTrigger data-testid={`po-prod-${i}`}><SelectValue placeholder="Product" /></SelectTrigger><SelectContent>{[...products].sort(byProductName).map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent></Select></div>
               <input className="col-span-2 px-2 py-2 border rounded-lg text-sm" placeholder="Qty" type="number" value={l.qty_ordered} onChange={(e) => upd(i, "qty_ordered", e.target.value)} data-testid={`po-qty-${i}`} />
               <input className="col-span-3 px-2 py-2 border rounded-lg text-sm" placeholder="Cost" type="number" value={l.unit_cost} onChange={(e) => upd(i, "unit_cost", e.target.value)} data-testid={`po-cost-${i}`} />
               <button className="col-span-1 text-slate-400 hover:text-red-500" onClick={() => setLines((ls) => ls.filter((_, x) => x !== i))}><Trash2 className="w-4 h-4" /></button>
@@ -172,7 +176,7 @@ function POView({ poId, products, threshold, supName, onClose, onEdit, onChanged
                   <tr><th className="py-1.5">Item</th><th className="py-1.5 text-right">Ordered</th><th className="py-1.5 text-right">Received</th><th className="py-1.5 text-right">Over</th><th className="py-1.5 text-right">Cancelled</th><th className="py-1.5 text-right">Outstanding</th><th className="py-1.5 text-right">PO Cost</th><th className="py-1.5 text-right">Line Total</th></tr>
                 </thead>
                 <tbody>
-                  {po.items.map((it) => (
+                  {[...po.items].sort(byProductName).map((it) => (
                     <tr key={it.product_id} className="border-b border-slate-100" data-testid={`po-line-${it.product_id}`}>
                       <td className="py-1.5">{it.name}</td>
                       <td className="py-1.5 text-right">{it.qty_ordered}</td>
@@ -236,7 +240,7 @@ function POView({ poId, products, threshold, supName, onClose, onEdit, onChanged
 }
 
 function ReceivePanel({ po, prodMap, levels, threshold, onCancel, onDone }) {
-  const open = po.items.filter((i) => Number(i.qty_outstanding) > 0);
+  const open = [...po.items].filter((i) => Number(i.qty_outstanding) > 0).sort(byProductName);
   const [rows, setRows] = useState(open.map((i) => ({
     product_id: i.product_id, name: i.name, ordered: Number(i.ordered_unit_cost), outstanding: Number(i.qty_outstanding),
     received: Number(i.qty_received), cancelled: Number(i.qty_cancelled), qty: "", actual: String(i.ordered_unit_cost),
@@ -365,7 +369,7 @@ function printPO(po, supName) {
   });
   const thead = d.createElement("thead"); thead.appendChild(head); table.appendChild(thead);
   const tb = d.createElement("tbody");
-  po.items.forEach((it) => {
+  [...po.items].sort(byProductName).forEach((it) => {
     const tr = d.createElement("tr");
     const lineTotal = (Number(it.qty_ordered) || 0) * (Number(it.ordered_unit_cost) || 0);
     [[it.name, ""], [it.qty_ordered, "r"], ["PHP " + Number(it.ordered_unit_cost).toFixed(2), "r"], ["PHP " + lineTotal.toFixed(2), "r"]].forEach(([val, cls]) => {
@@ -384,7 +388,7 @@ function printPO(po, supName) {
     ["Item", "Ordered", "Received", "Over", "Cancelled", "Outstanding"].forEach((t, idx) => { const th = d.createElement("th"); th.textContent = t; if (idx > 0) th.className = "r"; rhead.appendChild(th); });
     const rthead = d.createElement("thead"); rthead.appendChild(rhead); rt.appendChild(rthead);
     const rtb = d.createElement("tbody");
-    po.items.forEach((it) => {
+    [...po.items].sort(byProductName).forEach((it) => {
       const tr = d.createElement("tr");
       [[it.name, ""], [it.qty_ordered, "r"], [it.qty_received, "r"], [it.qty_over_received || 0, "r"], [it.qty_cancelled, "r"], [it.qty_outstanding, "r"]].forEach(([val, cls]) => {
         const td = d.createElement("td"); td.textContent = String(val); if (cls) td.className = cls; tr.appendChild(td);
