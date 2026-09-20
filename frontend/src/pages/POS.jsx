@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import BrandLogo from "@/components/BrandLogo";
+import { matchesSearchTerms } from "@/lib/utils";
 
 const PAY_METHODS = ["Cash", "GCash", "Maya", "Credit Card", "Debit Card", "Bank Transfer"];
 
@@ -113,8 +114,7 @@ export default function POS() {
     let list = products;
     if (cat !== "all") list = list.filter((p) => p.category_id === cat);
     if (q) {
-      const s = q.toLowerCase();
-      list = list.filter((p) => [p.name, p.generic_name, p.brand, p.sku, p.barcode].some((f) => (f || "").toLowerCase().includes(s)));
+      list = list.filter((p) => matchesSearchTerms(q, [p.name, p.generic_name, p.brand, p.sku, p.barcode, p.manufacturer]));
     }
     return list.slice(0, 120);
   }, [products, cat, q]);
