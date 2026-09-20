@@ -30,7 +30,7 @@ export default function GlobalSearch({ open, setOpen }) {
         {res.products.length > 0 && (
           <CommandGroup heading="Products">
             {res.products.map((p) => (
-              <CommandItem key={p.id} onSelect={() => go("/products")} value={"prod" + p.id}>
+              <CommandItem key={p.id} onSelect={() => go("/products")} value={[p.name, p.generic_name, p.brand, p.sku, p.barcode].filter(Boolean).join(" ")}>
                 <Package className="w-4 h-4 mr-2 text-primary" /> {p.name}
                 <span className="ml-auto text-xs text-slate-400">{peso(p.price)}</span>
               </CommandItem>
