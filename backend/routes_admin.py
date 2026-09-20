@@ -178,8 +178,13 @@ async def create_prescription(body: PrescriptionIn, principal=Depends(require_pe
 async def global_search(q: str, principal=Depends(get_current_principal)):
     rx = re.escape(q)
     r = {"$regex": rx, "$options": "i"}
-    products = await db.products.find({"org_id": ORG_ID, "$or": [
-        {"name": r}, {"sku": r}, {"barcode": r}, {"generic_name": r}]}, {"_id": 0}).limit(6).to_list(6)
+    terms = [term for term in re.split(r"\s+", q.strip()) if term]
+    product_query = {"org_id": ORG_ID, "$and": [
+        {"$or": [{field: {"$regex": re.escape(term), "$options": "i"}}
+                 for field in ("name", "generic_name", "brand", "sku", "barcode", "manufacturer")]}
+        for term in terms
+    ]}
+    products = await db.products.find(product_query, {"_id": 0}).limit(6).to_list(6)
     customers = await db.customers.find({"org_id": ORG_ID, "$or": [
         {"first_name": r}, {"last_name": r}, {"phone": r}]}, {"_id": 0}).limit(6).to_list(6)
     sales = await db.sales.find({"org_id": ORG_ID, "number": r}, {"_id": 0}).limit(6).to_list(6)
