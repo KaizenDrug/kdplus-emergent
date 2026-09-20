@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import api, { peso, fmtDay, fmtDate } from "@/lib/api";
 import { PageHeader, Card, StatusBadge, Empty, StatCard } from "@/components/kit";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -7,6 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { PackagePlus, SlidersHorizontal, CalendarClock, AlertTriangle, PackageX } from "lucide-react";
 import { toast } from "sonner";
+import SortableHeader from "@/components/SortableHeader";
+import { sortTableRows } from "@/lib/utils";
 
 export default function Inventory() {
   const [store, setStore] = useState("store_main");
@@ -15,6 +17,8 @@ export default function Inventory() {
   const [products, setProducts] = useState([]);
   const [receive, setReceive] = useState(false);
   const [adjust, setAdjust] = useState(false);
+  const [levelSort, setLevelSort] = useState({ key: "name", direction: "asc" });
+  const [expirySort, setExpirySort] = useState({ key: "expiry_date", direction: "asc" });
 
   const loadLevels = () => api.get(`/inventory/levels?store_id=${store}`).then((r) => setLevels(r.data));
   const loadExpiry = () => api.get(`/inventory/expiry?store_id=${store}`).then((r) => setExpiry(r.data));
@@ -23,6 +27,16 @@ export default function Inventory() {
   const low = levels.filter((l) => l.status === "LOW").length;
   const out = levels.filter((l) => l.status === "OUT").length;
   const totalValue = levels.reduce((s, l) => s + l.stock_value, 0);
+  const sortedLevels = useMemo(() => sortTableRows(levels, levelSort, {
+    quantity: (row) => Number(row.quantity || 0),
+    reorder_level: (row) => Number(row.reorder_level || 0),
+    stock_value: (row) => Number(row.stock_value || 0),
+  }), [levels, levelSort]);
+  const sortedExpiry = useMemo(() => sortTableRows(expiry?.lots || [], expirySort, {
+    days_remaining: (row) => Number(row.days_remaining || 0),
+    quantity: (row) => Number(row.quantity || 0),
+    stock_value: (row) => Number(row.stock_value || 0),
+  }), [expiry, expirySort]);
 
   return (
     <div>
@@ -53,9 +67,14 @@ export default function Inventory() {
           <Card className="overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>
-                <th className="px-4 py-3">Product</th><th className="px-4 py-3">Shelf</th><th className="px-4 py-3 text-right">On Hand</th><th className="px-4 py-3 text-right">Reorder</th><th className="px-4 py-3 text-right">Value</th><th className="px-4 py-3">Status</th></tr></thead>
+                <SortableHeader column="name" label="Product" sort={levelSort} onSort={setLevelSort} />
+                <SortableHeader column="shelf_code" label="Shelf" sort={levelSort} onSort={setLevelSort} />
+                <SortableHeader column="quantity" label="On Hand" sort={levelSort} onSort={setLevelSort} numeric />
+                <SortableHeader column="reorder_level" label="Reorder" sort={levelSort} onSort={setLevelSort} numeric />
+                <SortableHeader column="stock_value" label="Value" sort={levelSort} onSort={setLevelSort} numeric />
+                <SortableHeader column="status" label="Status" sort={levelSort} onSort={setLevelSort} /></tr></thead>
               <tbody>
-                {levels.map((l) => (
+                {sortedLevels.map((l) => (
                   <tr key={l.product_id} className="border-t border-slate-100 hover:bg-slate-50">
                     <td className="px-4 py-2.5 font-medium text-slate-800">{l.name}<div className="text-xs text-slate-400">{l.sku}</div></td>
                     <td className="px-4 py-2.5 font-mono text-xs">{l.shelf_code}</td>
@@ -86,9 +105,15 @@ export default function Inventory() {
               <Card className="overflow-hidden">
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>
-                    <th className="px-4 py-3">Product</th><th className="px-4 py-3">Lot</th><th className="px-4 py-3">Expiry</th><th className="px-4 py-3 text-right">Days Left</th><th className="px-4 py-3 text-right">Qty</th><th className="px-4 py-3 text-right">Value</th><th className="px-4 py-3">Bucket</th></tr></thead>
+                    <SortableHeader column="product_name" label="Product" sort={expirySort} onSort={setExpirySort} />
+                    <SortableHeader column="lot_number" label="Lot" sort={expirySort} onSort={setExpirySort} />
+                    <SortableHeader column="expiry_date" label="Expiry" sort={expirySort} onSort={setExpirySort} />
+                    <SortableHeader column="days_remaining" label="Days Left" sort={expirySort} onSort={setExpirySort} numeric />
+                    <SortableHeader column="quantity" label="Qty" sort={expirySort} onSort={setExpirySort} numeric />
+                    <SortableHeader column="stock_value" label="Value" sort={expirySort} onSort={setExpirySort} numeric />
+                    <SortableHeader column="bucket" label="Bucket" sort={expirySort} onSort={setExpirySort} /></tr></thead>
                   <tbody>
-                    {expiry.lots.map((l) => (
+                    {sortedExpiry.map((l) => (
                       <tr key={l.id} className="border-t border-slate-100 hover:bg-slate-50">
                         <td className="px-4 py-2.5 font-medium text-slate-800">{l.product_name}</td>
                         <td className="px-4 py-2.5 font-mono text-xs">{l.lot_number}</td>
@@ -118,15 +143,27 @@ export default function Inventory() {
 
 function LedgerTab({ store, products }) {
   const [rows, setRows] = useState([]);
+  const [sort, setSort] = useState({ key: "created_at", direction: "desc" });
   useEffect(() => { api.get(`/inventory/movements?store_id=${store}&limit=300`).then((r) => setRows(r.data)); }, [store]);
   const pn = (id) => products.find((p) => p.id === id)?.name || id;
+  const sortedRows = useMemo(() => sortTableRows(rows, sort, {
+    product: (row) => pn(row.product_id),
+    qty_change: (row) => Number(row.qty_change || 0),
+    qty_after: (row) => Number(row.qty_after || 0),
+  }), [rows, sort, products]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <Card className="overflow-hidden">
       <table className="w-full text-sm">
         <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>
-          <th className="px-4 py-3">Time</th><th className="px-4 py-3">Product</th><th className="px-4 py-3">Type</th><th className="px-4 py-3 text-right">Change</th><th className="px-4 py-3 text-right">After</th><th className="px-4 py-3">Ref</th><th className="px-4 py-3">By</th></tr></thead>
+          <SortableHeader column="created_at" label="Time" sort={sort} onSort={setSort} />
+          <SortableHeader column="product" label="Product" sort={sort} onSort={setSort} />
+          <SortableHeader column="type" label="Type" sort={sort} onSort={setSort} />
+          <SortableHeader column="qty_change" label="Change" sort={sort} onSort={setSort} numeric />
+          <SortableHeader column="qty_after" label="After" sort={sort} onSort={setSort} numeric />
+          <SortableHeader column="reference" label="Ref" sort={sort} onSort={setSort} />
+          <SortableHeader column="user_name" label="By" sort={sort} onSort={setSort} /></tr></thead>
         <tbody>
-          {rows.map((m) => (
+          {sortedRows.map((m) => (
             <tr key={m.id} className="border-t border-slate-100 hover:bg-slate-50">
               <td className="px-4 py-2.5 text-slate-500 text-xs">{fmtDate(m.created_at)}</td>
               <td className="px-4 py-2.5 font-medium">{pn(m.product_id)}</td>
