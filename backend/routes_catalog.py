@@ -5,7 +5,8 @@ import re
 import csv
 import io
 
-from core import (db, ORG_ID, uid, now_iso, m, D, get_current_principal, require_perm, audit)
+from core import (db, ORG_ID, uid, now_iso, m, D, get_current_principal, require_perm, audit,
+                  next_number)
 
 router = APIRouter(prefix="/api", tags=["catalog"])
 
@@ -145,6 +146,19 @@ def compute_margins(p: dict) -> dict:
     return p
 
 
+PRODUCT_SEARCH_FIELDS = ("name", "generic_name", "brand", "sku", "barcode", "manufacturer")
+
+
+def product_search_clauses(search: str):
+    """Return AND-of-terms clauses, with each term matching any product field."""
+    terms = [term for term in re.split(r"\s+", (search or "").strip()) if term]
+    return [
+        {"$or": [{field: {"$regex": re.escape(term), "$options": "i"}}
+                 for field in PRODUCT_SEARCH_FIELDS]}
+        for term in terms
+    ]
+
+
 @router.get("/products")
 async def list_products(principal=Depends(get_current_principal),
                         q: Optional[str] = None, category_id: Optional[str] = None,
@@ -155,16 +169,14 @@ async def list_products(principal=Depends(get_current_principal),
     if active is not None:
         query["active"] = active
     if q:
-        rx = re.escape(q)
-        query["$or"] = [
-            {"name": {"$regex": rx, "$options": "i"}},
-            {"generic_name": {"$regex": rx, "$options": "i"}},
-            {"brand": {"$regex": rx, "$options": "i"}},
-            {"sku": {"$regex": rx, "$options": "i"}},
-            {"barcode": {"$regex": rx, "$options": "i"}},
-            {"manufacturer": {"$regex": rx, "$options": "i"}},
-        ]
+        query["$and"] = product_search_clauses(q)
     return await db.products.find(query, {"_id": 0}).sort("name", 1).to_list(limit)
+
+
+@router.post("/products/generate-sku")
+async def generate_product_sku(principal=Depends(require_perm("*"))):
+    """Reserve a unique SKU for the new-product form."""
+    return {"sku": await next_number("SKU")}
 
 
 @router.get("/products/{pid}")
@@ -178,6 +190,13 @@ async def get_product(pid: str, principal=Depends(get_current_principal)):
 @router.post("/products")
 async def create_product(body: ProductIn, principal=Depends(require_perm("*"))):
     data = body.model_dump()
+    data["sku"] = (data.get("sku") or "").strip() or await next_number("SKU")
+    duplicate_sku = await db.products.find_one(
+        {"org_id": ORG_ID, "sku": {"$regex": f"^{re.escape(data['sku'])}$", "$options": "i"}},
+        {"_id": 0, "id": 1},
+    )
+    if duplicate_sku:
+        raise HTTPException(status_code=400, detail="SKU already exists")
     if not data.get("average_cost"):
         data["average_cost"] = data.get("acquisition_cost", 0)
     data = compute_margins(data)
@@ -193,7 +212,16 @@ async def update_product(pid: str, body: ProductIn, principal=Depends(require_pe
     old = await db.products.find_one({"id": pid, "org_id": ORG_ID}, {"_id": 0})
     if not old:
         raise HTTPException(status_code=404, detail="Product not found")
-    data = compute_margins(body.model_dump())
+    data = body.model_dump()
+    data["sku"] = (data.get("sku") or "").strip() or old.get("sku") or await next_number("SKU")
+    duplicate_sku = await db.products.find_one(
+        {"org_id": ORG_ID, "id": {"$ne": pid},
+         "sku": {"$regex": f"^{re.escape(data['sku'])}$", "$options": "i"}},
+        {"_id": 0, "id": 1},
+    )
+    if duplicate_sku:
+        raise HTTPException(status_code=400, detail="SKU already exists")
+    data = compute_margins(data)
     data["updated_at"] = now_iso()
     if D(old.get("price")) != D(data.get("price")):
         await db.price_history.insert_one({
