@@ -6,6 +6,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Plus, Search, Pencil, Upload, FileDown, Tags, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { matchesSearchTerms } from "@/lib/utils";
+import { sortTableRows } from "@/lib/utils";
+import SortableHeader from "@/components/SortableHeader";
 
 const empty = {
   name: "", generic_name: "", brand: "", category_id: "", supplier_id: "", sku: "", barcode: "",
@@ -22,8 +25,10 @@ export default function Products() {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
   const [editing, setEditing] = useState(null);
+  const [preparingProduct, setPreparingProduct] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [catOpen, setCatOpen] = useState(false);
+  const [sort, setSort] = useState({ key: "name", direction: "asc" });
 
   const load = () => api.get("/products?limit=1000").then((r) => setProducts(r.data));
   const loadCats = () => api.get("/categories").then((r) => setCategories(r.data));
@@ -34,6 +39,17 @@ export default function Products() {
   }, []);
 
   const catName = (id) => categories.find((c) => c.id === id)?.name || "—";
+  const startNewProduct = async () => {
+    setPreparingProduct(true);
+    try {
+      const { data } = await api.post("/products/generate-sku");
+      setEditing({ ...empty, sku: data.sku });
+    } catch (e) {
+      // The backend still assigns an SKU on save if pre-generation fails.
+      setEditing({ ...empty });
+      toast.warning("SKU will be assigned when the product is saved");
+    } finally { setPreparingProduct(false); }
+  };
   const exportProducts = async () => {
     try {
       const { data } = await api.get("/products/export/csv");
@@ -47,9 +63,15 @@ export default function Products() {
   const filtered = useMemo(() => products.filter((p) => {
     if (cat !== "all" && p.category_id !== cat) return false;
     if (!q) return true;
-    const s = q.toLowerCase();
-    return [p.name, p.generic_name, p.brand, p.sku, p.barcode].some((f) => (f || "").toLowerCase().includes(s));
+    return matchesSearchTerms(q, [p.name, p.generic_name, p.brand, p.sku, p.barcode, p.manufacturer]);
   }), [products, q, cat]);
+  const sortedProducts = useMemo(() => sortTableRows(filtered, sort, {
+    category: (p) => catName(p.category_id),
+    class: (p) => p.rx_classification,
+    cost: (p) => Number(p.average_cost || 0),
+    price: (p) => Number(p.price || 0),
+    margin: (p) => Number(p.margin_pct || 0),
+  }), [filtered, sort, categories]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div>
@@ -57,7 +79,7 @@ export default function Products() {
         <Button variant="outline" onClick={() => setCatOpen(true)} data-testid="manage-categories-btn"><Tags className="w-4 h-4 mr-1" />Categories</Button>
         <Button variant="outline" onClick={exportProducts} data-testid="export-products-btn"><FileDown className="w-4 h-4 mr-1" />Export Products</Button>
         <Button variant="outline" onClick={() => setImportOpen(true)} data-testid="import-csv-btn"><Upload className="w-4 h-4 mr-1" />Import CSV</Button>
-        <Button onClick={() => setEditing({ ...empty })} data-testid="add-product-btn" className="bg-primary hover:bg-teal-800"><Plus className="w-4 h-4 mr-1" />New Product</Button>
+        <Button onClick={startNewProduct} disabled={preparingProduct} data-testid="add-product-btn" className="bg-primary hover:bg-teal-800"><Plus className="w-4 h-4 mr-1" />{preparingProduct ? "Preparing…" : "New Product"}</Button>
       </PageHeader>
 
       <Card className="p-3 mb-4 flex flex-wrap gap-3 items-center">
@@ -76,10 +98,16 @@ export default function Products() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-              <tr><th className="px-4 py-3">Product</th><th className="px-4 py-3">Category</th><th className="px-4 py-3">Class</th><th className="px-4 py-3 text-right">Cost</th><th className="px-4 py-3 text-right">Price</th><th className="px-4 py-3 text-right">Margin</th><th className="px-4 py-3"></th></tr>
+              <tr><SortableHeader column="name" label="Product" sort={sort} onSort={setSort} />
+                <SortableHeader column="category" label="Category" sort={sort} onSort={setSort} />
+                <SortableHeader column="class" label="Class" sort={sort} onSort={setSort} />
+                <SortableHeader column="cost" label="Cost" sort={sort} onSort={setSort} numeric />
+                <SortableHeader column="price" label="Price" sort={sort} onSort={setSort} numeric />
+                <SortableHeader column="margin" label="Margin" sort={sort} onSort={setSort} numeric />
+                <th className="px-4 py-3"></th></tr>
             </thead>
             <tbody>
-              {filtered.map((p) => (
+              {sortedProducts.map((p) => (
                 <tr key={p.id} className="border-t border-slate-100 hover:bg-slate-50" data-testid={`product-row-${p.id}`}>
                   <td className="px-4 py-2.5">
                     <div className="font-semibold text-slate-800">{p.name}</div>
@@ -301,7 +329,7 @@ function ProductDialog({ product, categories, suppliers, onClose, onSaved }) {
           <label className="block"><span className="text-[11px] font-bold uppercase text-slate-500">Supplier</span>
             <Select value={f.supplier_id || ""} onValueChange={(v) => set("supplier_id", v)}><SelectTrigger className="mt-1"><SelectValue placeholder="Select" /></SelectTrigger>
               <SelectContent>{suppliers.map((s) => <SelectItem key={s.id} value={s.id}>{s.company}</SelectItem>)}</SelectContent></Select></label>
-          {inp("sku", "SKU")}{inp("barcode", "Barcode")}
+          {inp("sku", "SKU", { ph: "Automatically generated" })}{inp("barcode", "Barcode")}
           {inp("strength", "Strength", { ph: "500mg" })}{inp("dosage_form", "Dosage Form", { ph: "Tablet" })}
           <label className="block"><span className="text-[11px] font-bold uppercase text-slate-500">Rx Class</span>
             <Select value={f.rx_classification} onValueChange={(v) => set("rx_classification", v)}><SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
