@@ -116,3 +116,38 @@ async def test_import_can_overwrite_duplicate_product_without_changing_stock(cat
     assert product["price"] == 9.25
     level = await catalog_db.inventory_levels.find_one({"product_id": product["id"]})
     assert level["quantity"] == 25
+
+
+@pytest.mark.asyncio
+async def test_new_product_gets_automatic_unique_sku(catalog_db):
+    payload = routes_catalog.ProductIn(name="Automatic SKU Product", price=10)
+    created = await routes_catalog.create_product(payload, principal=MANAGER)
+
+    assert created["sku"].startswith("SKU-")
+    assert await catalog_db.products.count_documents({"sku": created["sku"]}) == 1
+
+    with pytest.raises(routes_catalog.HTTPException, match="SKU already exists"):
+        await routes_catalog.create_product(
+            routes_catalog.ProductIn(name="Duplicate SKU", sku=created["sku"], price=10),
+            principal=MANAGER,
+        )
+
+
+def test_product_search_splits_abbreviated_words_into_terms():
+    clauses = routes_catalog.product_search_clauses("ab bin")
+
+    assert len(clauses) == 2
+    assert clauses[0]["$or"][0]["name"]["$regex"] == "ab"
+    assert clauses[1]["$or"][0]["name"]["$regex"] == "bin"
+
+
+@pytest.mark.asyncio
+async def test_ab_bin_finds_abdominal_binder(catalog_db):
+    await catalog_db.products.insert_one({
+        "id": "binder", "org_id": core.ORG_ID, "name": "Abdominal Binder",
+        "generic_name": "", "brand": "", "sku": "MED-001", "barcode": "",
+    })
+
+    results = await routes_catalog.list_products(q="ab bin", principal=MANAGER)
+
+    assert [product["id"] for product in results] == ["binder"]
