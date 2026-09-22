@@ -133,7 +133,8 @@ async def receive_stock(body: ReceiveIn, principal=Depends(require_perm("invento
 # ---------------- Stock adjustments ----------------
 class AdjustLine(BaseModel):
     product_id: str
-    quantity: float          # signed: negative to remove, positive to add
+    quantity: Optional[float] = None      # legacy signed change
+    new_quantity: Optional[float] = None  # preferred final on-hand quantity
     lot_id: Optional[str] = None
 
 class AdjustIn(BaseModel):
@@ -145,17 +146,41 @@ class AdjustIn(BaseModel):
 @router.post("/inventory/adjust")
 async def adjust_stock(body: AdjustIn, principal=Depends(require_perm("inventory.adjust"))):
     number = await next_number("ADJ")
+    if not body.lines:
+        raise HTTPException(status_code=400, detail="Add at least one product to adjust")
+    if len({line.product_id for line in body.lines}) != len(body.lines):
+        raise HTTPException(status_code=400, detail="Each product can only appear once per adjustment")
+
+    planned = []
     for ln in body.lines:
-        if ln.lot_id:
-            await db.inventory_lots.update_one({"id": ln.lot_id}, {"$inc": {"quantity": float(ln.quantity)}})
         p = await db.products.find_one({"id": ln.product_id, "org_id": ORG_ID})
-        cost = p.get("average_cost", 0) if p else 0
-        await record_movement(body.store_id, ln.product_id, "ADJUSTMENT", ln.quantity,
-                              unit_cost=cost, lot_id=ln.lot_id, reference=number,
-                              principal=principal, note=f"{body.reason}: {body.notes}")
+        if not p:
+            raise HTTPException(status_code=404, detail=f"Product {ln.product_id} was not found")
+        before = await get_level(body.store_id, ln.product_id)
+        if ln.new_quantity is not None:
+            if ln.new_quantity < 0:
+                raise HTTPException(status_code=400, detail=f"{p.get('name')}: stock on hand cannot be negative")
+            change = m(D(ln.new_quantity) - D(before))
+        elif ln.quantity is not None:
+            change = m(ln.quantity)
+        else:
+            raise HTTPException(status_code=400, detail=f"{p.get('name')}: enter a new on-hand quantity")
+        planned.append((ln, p, before, change))
+
+    results = []
+    for ln, p, before, change in planned:
+        if ln.lot_id:
+            await db.inventory_lots.update_one({"id": ln.lot_id}, {"$inc": {"quantity": float(change)}})
+        after = await record_movement(body.store_id, ln.product_id, "ADJUSTMENT", change,
+                                      unit_cost=p.get("average_cost", 0), lot_id=ln.lot_id,
+                                      reference=number, principal=principal,
+                                      note=f"{body.reason}: {body.notes}")
+        results.append({"product_id": ln.product_id, "name": p.get("name"),
+                        "quantity_before": before, "quantity_change": change,
+                        "quantity_after": after})
     await audit(principal, "inventory.adjust", "adjustment", number,
                 after={"reason": body.reason, "lines": len(body.lines)}, store_id=body.store_id)
-    return {"number": number, "adjusted": len(body.lines)}
+    return {"number": number, "adjusted": len(body.lines), "lines": results}
 
 
 @router.get("/inventory/adjustment-reasons")

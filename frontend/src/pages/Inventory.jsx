@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
-import { PackagePlus, SlidersHorizontal, CalendarClock, AlertTriangle, PackageX, Check, ChevronsUpDown } from "lucide-react";
+import { PackagePlus, SlidersHorizontal, CalendarClock, AlertTriangle, PackageX, Check, ChevronsUpDown, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import SortableHeader from "@/components/SortableHeader";
 import { matchesSearchTerms, sortTableRows } from "@/lib/utils";
@@ -19,6 +19,7 @@ export default function Inventory() {
   const [products, setProducts] = useState([]);
   const [receive, setReceive] = useState(false);
   const [adjust, setAdjust] = useState(false);
+  const [search, setSearch] = useState("");
   const [levelSort, setLevelSort] = useState({ key: "name", direction: "asc" });
   const [expirySort, setExpirySort] = useState({ key: "expiry_date", direction: "asc" });
 
@@ -29,16 +30,25 @@ export default function Inventory() {
   const low = levels.filter((l) => l.status === "LOW").length;
   const out = levels.filter((l) => l.status === "OUT").length;
   const totalValue = levels.reduce((s, l) => s + l.stock_value, 0);
-  const sortedLevels = useMemo(() => sortTableRows(levels, levelSort, {
+  const productById = useMemo(() => Object.fromEntries(products.map((p) => [p.id, p])), [products]);
+  const filteredLevels = useMemo(() => levels.filter((l) => {
+    const p = productById[l.product_id] || {};
+    return matchesSearchTerms(search, [l.name, l.sku, l.shelf_code, p.generic_name, p.brand, p.barcode, p.manufacturer]);
+  }), [levels, productById, search]);
+  const filteredExpiry = useMemo(() => (expiry?.lots || []).filter((l) => {
+    const p = productById[l.product_id] || {};
+    return matchesSearchTerms(search, [l.product_name, l.sku, l.lot_number, l.expiry_date, p.generic_name, p.brand, p.barcode]);
+  }), [expiry, productById, search]);
+  const sortedLevels = useMemo(() => sortTableRows(filteredLevels, levelSort, {
     quantity: (row) => Number(row.quantity || 0),
     reorder_level: (row) => Number(row.reorder_level || 0),
     stock_value: (row) => Number(row.stock_value || 0),
-  }), [levels, levelSort]);
-  const sortedExpiry = useMemo(() => sortTableRows(expiry?.lots || [], expirySort, {
+  }), [filteredLevels, levelSort]);
+  const sortedExpiry = useMemo(() => sortTableRows(filteredExpiry, expirySort, {
     days_remaining: (row) => Number(row.days_remaining || 0),
     quantity: (row) => Number(row.quantity || 0),
     stock_value: (row) => Number(row.stock_value || 0),
-  }), [expiry, expirySort]);
+  }), [filteredExpiry, expirySort]);
 
   return (
     <div>
@@ -58,6 +68,17 @@ export default function Inventory() {
         <StatCard label="Expiring ≤90d" value={expiry ? (expiry.summary["0-30"].count + expiry.summary["31-60"].count + expiry.summary["61-90"].count) : 0} icon={CalendarClock} tone="critical" />
       </div>
 
+      <Card className="p-3 mb-4">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} data-testid="inventory-search"
+            placeholder="Search product, generic name, SKU, barcode, shelf, or lot…"
+            className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+          {search && <button type="button" onClick={() => setSearch("")} aria-label="Clear inventory search"
+            className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-700"><X className="h-4 w-4" /></button>}
+        </div>
+      </Card>
+
       <Tabs defaultValue="levels">
         <TabsList>
           <TabsTrigger value="levels" data-testid="tab-levels">Stock Levels</TabsTrigger>
@@ -74,7 +95,8 @@ export default function Inventory() {
                 <SortableHeader column="quantity" label="On Hand" sort={levelSort} onSort={setLevelSort} numeric />
                 <SortableHeader column="reorder_level" label="Reorder" sort={levelSort} onSort={setLevelSort} numeric />
                 <SortableHeader column="stock_value" label="Value" sort={levelSort} onSort={setLevelSort} numeric />
-                <SortableHeader column="status" label="Status" sort={levelSort} onSort={setLevelSort} /></tr></thead>
+                <SortableHeader column="status" label="Status" sort={levelSort} onSort={setLevelSort} />
+                <th className="px-4 py-3"></th></tr></thead>
               <tbody>
                 {sortedLevels.map((l) => (
                   <tr key={l.product_id} className="border-t border-slate-100 hover:bg-slate-50">
@@ -84,11 +106,13 @@ export default function Inventory() {
                     <td className="px-4 py-2.5 text-right text-slate-500">{l.reorder_level}</td>
                     <td className="px-4 py-2.5 text-right">{peso(l.stock_value)}</td>
                     <td className="px-4 py-2.5"><StatusBadge value={l.status} label={l.status === "OK" ? "In Stock" : l.status === "LOW" ? "Low" : "Out"} /></td>
+                    <td className="px-4 py-2.5 text-right"><button type="button" onClick={() => setAdjust(l.product_id)}
+                      className="text-xs font-semibold text-primary hover:underline" data-testid={`adjust-product-${l.product_id}`}>Adjust</button></td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            {!levels.length && <Empty />}
+            {!sortedLevels.length && <Empty text={search ? "No inventory items match your search." : "No inventory items found."} />}
           </Card>
         </TabsContent>
 
@@ -128,31 +152,37 @@ export default function Inventory() {
                     ))}
                   </tbody>
                 </table>
-                {!expiry.lots.length && <Empty text="No lots expiring within 180 days." />}
+                {!sortedExpiry.length && <Empty text={search ? "No expiry records match your search." : "No lots expiring within 180 days."} />}
               </Card>
             </>
           )}
         </TabsContent>
 
-        <TabsContent value="movements"><LedgerTab store={store} products={products} /></TabsContent>
+        <TabsContent value="movements"><LedgerTab store={store} products={products} search={search} /></TabsContent>
       </Tabs>
 
       {receive && <ReceiveDialog store={store} products={products} onClose={() => setReceive(false)} onSaved={() => { setReceive(false); loadLevels(); loadExpiry(); toast.success("Stock received"); }} />}
-      {adjust && <AdjustDialog store={store} products={products} onClose={() => setAdjust(false)} onSaved={() => { setAdjust(false); loadLevels(); toast.success("Adjustment posted"); }} />}
+      {adjust && <AdjustDialog store={store} products={products} levels={levels} initialProductId={typeof adjust === "string" ? adjust : ""}
+        onClose={() => setAdjust(false)} onSaved={() => { setAdjust(false); loadLevels(); loadExpiry(); }} />}
     </div>
   );
 }
 
-function LedgerTab({ store, products }) {
+function LedgerTab({ store, products, search }) {
   const [rows, setRows] = useState([]);
   const [sort, setSort] = useState({ key: "created_at", direction: "desc" });
   useEffect(() => { api.get(`/inventory/movements?store_id=${store}&limit=300`).then((r) => setRows(r.data)); }, [store]);
   const pn = (id) => products.find((p) => p.id === id)?.name || id;
-  const sortedRows = useMemo(() => sortTableRows(rows, sort, {
+  const filteredRows = useMemo(() => rows.filter((row) => {
+    const product = products.find((p) => p.id === row.product_id) || {};
+    return matchesSearchTerms(search, [product.name, product.generic_name, product.brand, product.sku,
+      product.barcode, row.type, row.reference, row.user_name, row.note]);
+  }), [rows, products, search]);
+  const sortedRows = useMemo(() => sortTableRows(filteredRows, sort, {
     product: (row) => pn(row.product_id),
     qty_change: (row) => Number(row.qty_change || 0),
     qty_after: (row) => Number(row.qty_after || 0),
-  }), [rows, sort, products]); // eslint-disable-line react-hooks/exhaustive-deps
+  }), [filteredRows, sort, products]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <Card className="overflow-hidden">
       <table className="w-full text-sm">
@@ -178,7 +208,7 @@ function LedgerTab({ store, products }) {
           ))}
         </tbody>
       </table>
-      {!rows.length && <Empty />}
+      {!sortedRows.length && <Empty text={search ? "No inventory movements match your search." : "No inventory movements found."} />}
     </Card>
   );
 }
@@ -218,19 +248,41 @@ function ReceiveDialog({ store, products, onClose, onSaved }) {
   );
 }
 
-function AdjustDialog({ store, products, onClose, onSaved }) {
+function AdjustDialog({ store, products, levels, initialProductId, onClose, onSaved }) {
+  const quantityFor = (productId) => Number(levels.find((l) => l.product_id === productId)?.quantity || 0);
+  const initialQuantity = quantityFor(initialProductId);
   const [reason, setReason] = useState("correction");
   const [reasons, setReasons] = useState([]);
-  const [lines, setLines] = useState([{ product_id: "", quantity: "" }]);
+  const [lines, setLines] = useState([{
+    product_id: initialProductId || "",
+    current_quantity: initialProductId ? initialQuantity : "",
+    new_quantity: initialProductId ? initialQuantity : "",
+  }]);
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   useEffect(() => { api.get("/inventory/adjustment-reasons").then((r) => setReasons(r.data)); }, []);
   const upd = (i, k, v) => setLines((l) => l.map((x, idx) => idx === i ? { ...x, [k]: v } : x));
+  const selectProduct = (i, productId) => {
+    const current = quantityFor(productId);
+    setLines((rows) => rows.map((row, idx) => idx === i ? {
+      ...row, product_id: productId, current_quantity: current, new_quantity: current,
+    } : row));
+  };
   const save = async () => {
-    const valid = lines.filter((l) => l.product_id && Number(l.quantity) !== 0);
-    if (!valid.length) { toast.error("Add a line with non-zero qty"); return; }
+    const complete = lines.filter((l) => l.product_id && l.new_quantity !== "");
+    if (!complete.length) { toast.error("Select a product and enter its new on-hand quantity"); return; }
+    if (complete.some((l) => Number(l.new_quantity) < 0)) { toast.error("New on-hand quantity cannot be negative"); return; }
+    if (new Set(complete.map((l) => l.product_id)).size !== complete.length) { toast.error("Each product can only be adjusted once"); return; }
+    const valid = complete.filter((l) => Number(l.new_quantity) !== Number(l.current_quantity))
+      .map((l) => ({ product_id: l.product_id, new_quantity: Number(l.new_quantity) }));
+    if (!valid.length) { toast.error("Enter a new quantity that differs from the current stock"); return; }
     setBusy(true);
-    try { await api.post("/inventory/adjust", { store_id: store, reason, notes, lines: valid.map((l) => ({ product_id: l.product_id, quantity: Number(l.quantity) })) }); onSaved(); }
+    try {
+      const { data } = await api.post("/inventory/adjust", { store_id: store, reason, notes, lines: valid });
+      const summary = data.lines?.map((l) => `${l.name}: ${l.quantity_before} → ${l.quantity_after}`).join("; ");
+      toast.success(summary || "Stock adjustment posted");
+      onSaved();
+    }
     catch (e) { toast.error(e.response?.data?.detail || "Failed"); } finally { setBusy(false); }
   };
   return (
@@ -243,13 +295,19 @@ function AdjustDialog({ store, products, onClose, onSaved }) {
               <Select value={reason} onValueChange={setReason}><SelectTrigger className="mt-1" data-testid="adj-reason"><SelectValue /></SelectTrigger><SelectContent>{reasons.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent></Select></label>
             <label><span className="text-[11px] font-bold uppercase text-slate-500">Notes</span><input className="w-full mt-1 px-3 py-2 border rounded-lg text-sm" value={notes} onChange={(e) => setNotes(e.target.value)} /></label>
           </div>
+          <div className="grid grid-cols-12 gap-2 px-1 text-[11px] font-bold uppercase text-slate-500">
+            <span className="col-span-6">Product</span><span className="col-span-3 text-right">Current</span><span className="col-span-3 text-right">New On-Hand</span>
+          </div>
           {lines.map((l, i) => (
             <div key={i} className="grid grid-cols-12 gap-2">
-              <div className="col-span-8"><ProductSearchSelect products={products} value={l.product_id} onChange={(v) => upd(i, "product_id", v)} testId={`adj-prod-${i}`} /></div>
-              <input className="col-span-4 px-2 py-2 border rounded-lg text-sm" placeholder="+/- Qty" type="number" value={l.quantity} onChange={(e) => upd(i, "quantity", e.target.value)} data-testid={`adj-qty-${i}`} />
+              <div className="col-span-6"><ProductSearchSelect products={products} value={l.product_id} onChange={(v) => selectProduct(i, v)} testId={`adj-prod-${i}`} /></div>
+              <div className="col-span-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-right text-sm font-semibold text-slate-600" data-testid={`adj-current-${i}`}>{l.product_id ? l.current_quantity : "—"}</div>
+              <input className="col-span-3 rounded-lg border px-2 py-2 text-right text-sm font-semibold" placeholder="New qty" type="number" min="0" step="any"
+                value={l.new_quantity} onChange={(e) => upd(i, "new_quantity", e.target.value)} data-testid={`adj-qty-${i}`} />
             </div>
           ))}
-          <button onClick={() => setLines((l) => [...l, { product_id: "", quantity: "" }])} className="text-sm text-accent hover:underline">+ Add line</button>
+          <p className="text-xs text-slate-500">Enter the final physical quantity you want shown as stock on hand. KDPLUS will calculate and record the adjustment.</p>
+          <button onClick={() => setLines((l) => [...l, { product_id: "", current_quantity: "", new_quantity: "" }])} className="text-sm text-accent hover:underline">+ Add line</button>
         </div>
         <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={busy} data-testid="save-adjust" className="bg-primary hover:bg-teal-800">{busy ? "Saving…" : "Post Adjustment"}</Button></DialogFooter>
       </DialogContent>
