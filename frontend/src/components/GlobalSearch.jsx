@@ -7,30 +7,58 @@ import { Package, User, Receipt, Truck } from "lucide-react";
 export default function GlobalSearch({ open, setOpen }) {
   const [q, setQ] = useState("");
   const [res, setRes] = useState({ products: [], customers: [], sales: [], suppliers: [] });
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!q || q.length < 2) { setRes({ products: [], customers: [], sales: [], suppliers: [] }); return; }
+    const search = q.trim();
+    if (search.length < 2) {
+      setRes({ products: [], customers: [], sales: [], suppliers: [] });
+      setLoading(false);
+      setFailed(false);
+      return;
+    }
+    const controller = new AbortController();
+    setRes({ products: [], customers: [], sales: [], suppliers: [] });
+    setLoading(true);
+    setFailed(false);
     const t = setTimeout(async () => {
-      try { const { data } = await api.get(`/search?q=${encodeURIComponent(q)}`); setRes(data); } catch {}
+      try {
+        const { data } = await api.get("/search", { params: { q: search }, signal: controller.signal });
+        setRes(data);
+      } catch (e) {
+        if (e.code !== "ERR_CANCELED") {
+          setRes({ products: [], customers: [], sales: [], suppliers: [] });
+          setFailed(true);
+        }
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
     }, 200);
-    return () => clearTimeout(t);
+    return () => { clearTimeout(t); controller.abort(); };
   }, [q]);
 
-  const go = (path) => { setOpen(false); setQ(""); navigate(path); };
+  const go = (path, search) => {
+    setOpen(false);
+    setQ("");
+    navigate(`${path}?q=${encodeURIComponent(search)}`);
+  };
 
   return (
-    <CommandDialog open={open} onOpenChange={setOpen}>
+    <CommandDialog open={open} onOpenChange={setOpen} shouldFilter={false}>
       <CommandInput placeholder="Search products, customers, receipts, suppliers…" value={q} onValueChange={setQ} data-testid="global-search-input" />
       <CommandList>
-        {q.length < 2 && <div className="py-6 text-center text-sm text-slate-400">Type at least 2 characters…</div>}
-        {q.length >= 2 && !res.products.length && !res.customers.length && !res.sales.length && !res.suppliers.length && (
+        {q.trim().length < 2 && <div className="py-6 text-center text-sm text-slate-400">Type at least 2 characters…</div>}
+        {loading && <div className="py-6 text-center text-sm text-slate-400">Searching…</div>}
+        {failed && <div className="py-6 text-center text-sm text-red-500">Search could not be completed. Please try again.</div>}
+        {!loading && !failed && q.trim().length >= 2 && !res.products.length && !res.customers.length && !res.sales.length && !res.suppliers.length && (
           <CommandEmpty>No results.</CommandEmpty>
         )}
         {res.products.length > 0 && (
           <CommandGroup heading="Products">
             {res.products.map((p) => (
-              <CommandItem key={p.id} onSelect={() => go("/products")} value={[p.name, p.generic_name, p.brand, p.sku, p.barcode].filter(Boolean).join(" ")}>
+              <CommandItem key={p.id} onSelect={() => go("/products", p.sku || p.name)} value={`product-${p.id}`}>
                 <Package className="w-4 h-4 mr-2 text-primary" /> {p.name}
                 <span className="ml-auto text-xs text-slate-400">{peso(p.price)}</span>
               </CommandItem>
@@ -40,7 +68,7 @@ export default function GlobalSearch({ open, setOpen }) {
         {res.customers.length > 0 && (
           <CommandGroup heading="Customers">
             {res.customers.map((c) => (
-              <CommandItem key={c.id} onSelect={() => go("/customers")} value={"cust" + c.id}>
+              <CommandItem key={c.id} onSelect={() => go("/customers", [c.first_name, c.last_name].filter(Boolean).join(" ") || c.phone)} value={`customer-${c.id}`}>
                 <User className="w-4 h-4 mr-2 text-accent" /> {c.first_name} {c.last_name}
                 <span className="ml-auto text-xs text-slate-400">{c.phone}</span>
               </CommandItem>
@@ -50,7 +78,7 @@ export default function GlobalSearch({ open, setOpen }) {
         {res.sales.length > 0 && (
           <CommandGroup heading="Receipts">
             {res.sales.map((s) => (
-              <CommandItem key={s.id} onSelect={() => go("/sales")} value={"sale" + s.id}>
+              <CommandItem key={s.id} onSelect={() => go("/sales", s.number)} value={`sale-${s.id}`}>
                 <Receipt className="w-4 h-4 mr-2 text-emerald-500" /> {s.number}
                 <span className="ml-auto text-xs text-slate-400">{peso(s.total)}</span>
               </CommandItem>
@@ -60,7 +88,7 @@ export default function GlobalSearch({ open, setOpen }) {
         {res.suppliers.length > 0 && (
           <CommandGroup heading="Suppliers">
             {res.suppliers.map((s) => (
-              <CommandItem key={s.id} onSelect={() => go("/suppliers")} value={"sup" + s.id}>
+              <CommandItem key={s.id} onSelect={() => go("/suppliers", s.company)} value={`supplier-${s.id}`}>
                 <Truck className="w-4 h-4 mr-2 text-amber-500" /> {s.company}
               </CommandItem>
             ))}

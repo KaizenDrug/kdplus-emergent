@@ -151,3 +151,54 @@ async def test_ab_bin_finds_abdominal_binder(catalog_db):
     results = await routes_catalog.list_products(q="ab bin", principal=MANAGER)
 
     assert [product["id"] for product in results] == ["binder"]
+
+
+@pytest.mark.asyncio
+async def test_unused_zero_stock_product_can_be_deleted(catalog_db):
+    await catalog_db.products.insert_one({
+        "id": "unused", "org_id": core.ORG_ID, "name": "Unused Product", "sku": "UNUSED-1",
+    })
+    await catalog_db.inventory_levels.insert_one({
+        "id": "level-unused", "org_id": core.ORG_ID, "store_id": "store_main",
+        "product_id": "unused", "quantity": 0,
+    })
+
+    result = await routes_catalog.delete_product("unused", principal=MANAGER)
+
+    assert result == {"ok": True}
+    assert await catalog_db.products.find_one({"id": "unused"}) is None
+    assert await catalog_db.inventory_levels.find_one({"product_id": "unused"}) is None
+
+
+@pytest.mark.asyncio
+async def test_product_with_transaction_history_cannot_be_deleted(catalog_db):
+    await catalog_db.products.insert_one({
+        "id": "sold", "org_id": core.ORG_ID, "name": "Sold Product", "sku": "SOLD-1",
+    })
+    await catalog_db.sales.insert_one({
+        "id": "sale-1", "org_id": core.ORG_ID, "items": [{"product_id": "sold", "qty": 1}],
+    })
+
+    with pytest.raises(routes_catalog.HTTPException) as exc:
+        await routes_catalog.delete_product("sold", principal=MANAGER)
+
+    assert exc.value.status_code == 409
+    assert "sales" in exc.value.detail
+    assert await catalog_db.products.find_one({"id": "sold"}) is not None
+
+
+@pytest.mark.asyncio
+async def test_product_with_stock_cannot_be_deleted(catalog_db):
+    await catalog_db.products.insert_one({
+        "id": "stocked", "org_id": core.ORG_ID, "name": "Stocked Product", "sku": "STOCK-1",
+    })
+    await catalog_db.inventory_levels.insert_one({
+        "id": "level-stocked", "org_id": core.ORG_ID, "store_id": "store_main",
+        "product_id": "stocked", "quantity": 3,
+    })
+
+    with pytest.raises(routes_catalog.HTTPException) as exc:
+        await routes_catalog.delete_product("stocked", principal=MANAGER)
+
+    assert exc.value.status_code == 409
+    assert "stock on hand" in exc.value.detail

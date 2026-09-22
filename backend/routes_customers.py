@@ -25,11 +25,12 @@ class CustomerIn(BaseModel):
 async def list_customers(q: Optional[str] = None, principal=Depends(get_current_principal)):
     query = {"org_id": ORG_ID}
     if q:
-        rx = re.escape(q)
-        query["$or"] = [{"first_name": {"$regex": rx, "$options": "i"}},
-                        {"last_name": {"$regex": rx, "$options": "i"}},
-                        {"phone": {"$regex": rx, "$options": "i"}},
-                        {"email": {"$regex": rx, "$options": "i"}}]
+        terms = [term for term in re.split(r"\s+", q.strip()) if term]
+        query["$and"] = [
+            {"$or": [{field: {"$regex": re.escape(term), "$options": "i"}}
+                     for field in ("first_name", "last_name", "phone", "email")]}
+            for term in terms
+        ]
     return await db.customers.find(query, {"_id": 0}).sort("first_name", 1).to_list(1000)
 
 

@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import api, { peso, apiError } from "@/lib/api";
 import { PageHeader, Card, StatusBadge, Empty } from "@/components/kit";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -9,6 +10,7 @@ import { toast } from "sonner";
 import { matchesSearchTerms } from "@/lib/utils";
 import { sortTableRows } from "@/lib/utils";
 import SortableHeader from "@/components/SortableHeader";
+import { useAuth } from "@/context/AuthContext";
 
 const empty = {
   name: "", generic_name: "", brand: "", category_id: "", supplier_id: "", sku: "", barcode: "",
@@ -19,15 +21,20 @@ const empty = {
 };
 
 export default function Products() {
+  const { user } = useAuth();
+  const [searchParams] = useSearchParams();
+  const urlQuery = searchParams.get("q") || "";
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(urlQuery);
   const [cat, setCat] = useState("all");
   const [editing, setEditing] = useState(null);
   const [preparingProduct, setPreparingProduct] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [catOpen, setCatOpen] = useState(false);
+  const [deleting, setDeleting] = useState(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [sort, setSort] = useState({ key: "name", direction: "asc" });
 
   const load = () => api.get("/products?limit=1000").then((r) => setProducts(r.data));
@@ -37,6 +44,21 @@ export default function Products() {
     loadCats();
     api.get("/suppliers").then((r) => setSuppliers(r.data));
   }, []);
+  useEffect(() => { setQ(urlQuery); }, [urlQuery]);
+
+  const canDelete = (user?.permissions || []).includes("*");
+  const deleteProduct = async () => {
+    if (!deleting) return;
+    setDeleteBusy(true);
+    try {
+      await api.delete(`/products/${deleting.id}`);
+      toast.success("Product deleted");
+      setDeleting(null);
+      await load();
+    } catch (e) {
+      toast.error(apiError(e.response?.data?.detail) || "Product could not be deleted");
+    } finally { setDeleteBusy(false); }
+  };
 
   const catName = (id) => categories.find((c) => c.id === id)?.name || "—";
   const startNewProduct = async () => {
@@ -118,7 +140,12 @@ export default function Products() {
                   <td className="px-4 py-2.5 text-right text-slate-600">{peso(p.average_cost)}</td>
                   <td className="px-4 py-2.5 text-right font-semibold">{peso(p.price)}</td>
                   <td className="px-4 py-2.5 text-right text-slate-500">{p.margin_pct}%</td>
-                  <td className="px-4 py-2.5 text-right"><button onClick={() => setEditing(p)} data-testid={`edit-product-${p.id}`} className="text-primary hover:bg-primary/10 p-1.5 rounded"><Pencil className="w-4 h-4" /></button></td>
+                  <td className="px-4 py-2.5 text-right">
+                    <div className="inline-flex items-center gap-1">
+                      <button onClick={() => setEditing(p)} aria-label={`Edit ${p.name}`} data-testid={`edit-product-${p.id}`} className="text-primary hover:bg-primary/10 p-1.5 rounded"><Pencil className="w-4 h-4" /></button>
+                      {canDelete && <button onClick={() => setDeleting(p)} aria-label={`Delete ${p.name}`} data-testid={`delete-product-${p.id}`} className="text-red-500 hover:bg-red-50 p-1.5 rounded"><Trash2 className="w-4 h-4" /></button>}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -130,6 +157,21 @@ export default function Products() {
       {editing && <ProductDialog product={editing} categories={categories} suppliers={suppliers} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
       {importOpen && <ImportDialog onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); load(); }} />}
       {catOpen && <CategoryDialog products={products} onClose={() => setCatOpen(false)} onChanged={loadCats} />}
+      {deleting && (
+        <Dialog open={true} onOpenChange={(value) => { if (!value && !deleteBusy) setDeleting(null); }}>
+          <DialogContent className="max-w-md" data-testid="delete-product-dialog">
+            <DialogHeader><DialogTitle>Delete product?</DialogTitle></DialogHeader>
+            <div className="space-y-2 text-sm text-slate-600">
+              <p><span className="font-semibold text-slate-900">{deleting.name}</span> ({deleting.sku || "No SKU"}) will be permanently deleted.</p>
+              <p>Products with stock or transaction history cannot be deleted. Make those products inactive instead.</p>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleting(null)} disabled={deleteBusy}>Cancel</Button>
+              <Button variant="destructive" onClick={deleteProduct} disabled={deleteBusy} data-testid="confirm-delete-product">{deleteBusy ? "Deleting…" : "Delete Product"}</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

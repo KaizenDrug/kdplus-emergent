@@ -233,6 +233,50 @@ async def update_product(pid: str, body: ProductIn, principal=Depends(require_pe
     return await db.products.find_one({"id": pid}, {"_id": 0})
 
 
+@router.delete("/products/{pid}")
+async def delete_product(pid: str, principal=Depends(require_perm("*"))):
+    """Delete an unused product without breaking inventory or transaction history."""
+    product = await db.products.find_one({"id": pid, "org_id": ORG_ID}, {"_id": 0})
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    references = (
+        (db.sales, {"org_id": ORG_ID, "items.product_id": pid}, "sales"),
+        (db.refunds, {"org_id": ORG_ID, "items.product_id": pid}, "refunds"),
+        (db.purchase_orders, {"org_id": ORG_ID, "items.product_id": pid}, "purchase orders"),
+        (db.po_receipts, {"org_id": ORG_ID, "product_id": pid}, "delivery receipts"),
+        (db.stock_transfers, {"org_id": ORG_ID, "items.product_id": pid}, "stock transfers"),
+        (db.inventory_counts, {"org_id": ORG_ID, "items.product_id": pid}, "inventory counts"),
+        (db.inventory_movements, {"org_id": ORG_ID, "product_id": pid}, "inventory movements"),
+        (db.prescriptions, {"org_id": ORG_ID, "product_id": pid}, "prescriptions"),
+    )
+    for collection, query, label in references:
+        if await collection.find_one(query, {"_id": 1}):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot delete this product because it is used in {label}. Set it to inactive instead to preserve history.",
+            )
+
+    has_stock = await db.inventory_levels.find_one(
+        {"org_id": ORG_ID, "product_id": pid, "quantity": {"$ne": 0}}, {"_id": 1})
+    has_lot_stock = await db.inventory_lots.find_one(
+        {"org_id": ORG_ID, "product_id": pid, "quantity": {"$ne": 0}}, {"_id": 1})
+    if has_stock or has_lot_stock:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot delete this product while it has stock on hand. Adjust its inventory to zero first.",
+        )
+
+    # Zero-value setup records and price edits are safe to remove with an otherwise unused item.
+    await db.inventory_levels.delete_many({"org_id": ORG_ID, "product_id": pid})
+    await db.inventory_lots.delete_many({"org_id": ORG_ID, "product_id": pid})
+    await db.price_history.delete_many({"org_id": ORG_ID, "product_id": pid})
+    await db.products.delete_one({"id": pid, "org_id": ORG_ID})
+    await audit(principal, "item.deleted", "product", pid,
+                before={"name": product.get("name"), "sku": product.get("sku")})
+    return {"ok": True}
+
+
 class BulkPriceIn(BaseModel):
     product_ids: List[str]
     percent: float

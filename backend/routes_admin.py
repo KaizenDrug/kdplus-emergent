@@ -176,17 +176,22 @@ async def create_prescription(body: PrescriptionIn, principal=Depends(require_pe
 # ---------------- Global search ----------------
 @router.get("/search")
 async def global_search(q: str, principal=Depends(get_current_principal)):
-    rx = re.escape(q)
-    r = {"$regex": rx, "$options": "i"}
     terms = [term for term in re.split(r"\s+", q.strip()) if term]
-    product_query = {"org_id": ORG_ID, "$and": [
-        {"$or": [{field: {"$regex": re.escape(term), "$options": "i"}}
-                 for field in ("name", "generic_name", "brand", "sku", "barcode", "manufacturer")]}
-        for term in terms
-    ]}
+    if not terms:
+        return {"products": [], "customers": [], "sales": [], "suppliers": []}
+
+    def query_for(fields):
+        return {"org_id": ORG_ID, "$and": [
+            {"$or": [{field: {"$regex": re.escape(term), "$options": "i"}} for field in fields]}
+            for term in terms
+        ]}
+
+    product_query = query_for(("name", "generic_name", "brand", "sku", "barcode", "manufacturer"))
     products = await db.products.find(product_query, {"_id": 0}).limit(6).to_list(6)
-    customers = await db.customers.find({"org_id": ORG_ID, "$or": [
-        {"first_name": r}, {"last_name": r}, {"phone": r}]}, {"_id": 0}).limit(6).to_list(6)
-    sales = await db.sales.find({"org_id": ORG_ID, "number": r}, {"_id": 0}).limit(6).to_list(6)
-    suppliers = await db.suppliers.find({"org_id": ORG_ID, "company": r}, {"_id": 0}).limit(6).to_list(6)
+    customers = await db.customers.find(
+        query_for(("first_name", "last_name", "phone", "email")), {"_id": 0}).limit(6).to_list(6)
+    sales = await db.sales.find(
+        query_for(("number", "customer_name", "cashier_name")), {"_id": 0}).limit(6).to_list(6)
+    suppliers = await db.suppliers.find(
+        query_for(("company", "contact_person", "phone", "email")), {"_id": 0}).limit(6).to_list(6)
     return {"products": products, "customers": customers, "sales": sales, "suppliers": suppliers}

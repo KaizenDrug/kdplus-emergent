@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import api, { peso, fmtDate } from "@/lib/api";
 import { PageHeader, Card, StatusBadge, Empty } from "@/components/kit";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -15,11 +15,13 @@ const lineId = (line) => line.sale_line_id || line.product_id;
 export default function Sales({ cashierMode = false }) {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const urlQuery = searchParams.get("q") || "";
   const [rows, setRows] = useState([]);
   const [viewing, setViewing] = useState(null);
   const [refunds, setRefunds] = useState([]);
-  const [query, setQuery] = useState("");
-  const [search, setSearch] = useState("");
+  const [query, setQuery] = useState(urlQuery);
+  const [search, setSearch] = useState(urlQuery);
   const [page, setPage] = useState(1);
   const [meta, setMeta] = useState({ total: 0, pages: 1 });
   const [loading, setLoading] = useState(true);
@@ -44,6 +46,11 @@ export default function Sales({ cashierMode = false }) {
   }, [page, search]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    setQuery(urlQuery);
+    setSearch(urlQuery);
+    setPage(1);
+  }, [urlQuery]);
 
   const openSale = async (sale) => {
     try {

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import api, { peso, fmtDate } from "@/lib/api";
 import { PageHeader, Card, StatusBadge, Empty } from "@/components/kit";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -10,12 +11,15 @@ import { toast } from "sonner";
 const empty = { first_name: "", last_name: "", phone: "", email: "", address: "", allergies: "", senior_pwd_type: "NONE", id_number: "", notes: "" };
 
 export default function Customers() {
+  const [searchParams] = useSearchParams();
+  const urlQuery = searchParams.get("q") || "";
   const [rows, setRows] = useState([]);
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(urlQuery);
   const [editing, setEditing] = useState(null);
   const [viewing, setViewing] = useState(null);
   const load = () => api.get(`/customers${q ? `?q=${encodeURIComponent(q)}` : ""}`).then((r) => setRows(r.data));
   useEffect(() => { const t = setTimeout(load, 250); return () => clearTimeout(t); }, [q]);
+  useEffect(() => { setQ(urlQuery); }, [urlQuery]);
 
   return (
     <div>
