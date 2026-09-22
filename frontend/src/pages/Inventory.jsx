@@ -4,11 +4,13 @@ import { PageHeader, Card, StatusBadge, Empty, StatCard } from "@/components/kit
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
-import { PackagePlus, SlidersHorizontal, CalendarClock, AlertTriangle, PackageX } from "lucide-react";
+import { PackagePlus, SlidersHorizontal, CalendarClock, AlertTriangle, PackageX, Check, ChevronsUpDown } from "lucide-react";
 import { toast } from "sonner";
 import SortableHeader from "@/components/SortableHeader";
-import { sortTableRows } from "@/lib/utils";
+import { matchesSearchTerms, sortTableRows } from "@/lib/utils";
 
 export default function Inventory() {
   const [store, setStore] = useState("store_main");
@@ -243,7 +245,7 @@ function AdjustDialog({ store, products, onClose, onSaved }) {
           </div>
           {lines.map((l, i) => (
             <div key={i} className="grid grid-cols-12 gap-2">
-              <div className="col-span-8"><Select value={l.product_id} onValueChange={(v) => upd(i, "product_id", v)}><SelectTrigger data-testid={`adj-prod-${i}`}><SelectValue placeholder="Product" /></SelectTrigger><SelectContent>{products.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent></Select></div>
+              <div className="col-span-8"><ProductSearchSelect products={products} value={l.product_id} onChange={(v) => upd(i, "product_id", v)} testId={`adj-prod-${i}`} /></div>
               <input className="col-span-4 px-2 py-2 border rounded-lg text-sm" placeholder="+/- Qty" type="number" value={l.quantity} onChange={(e) => upd(i, "quantity", e.target.value)} data-testid={`adj-qty-${i}`} />
             </div>
           ))}
@@ -252,5 +254,53 @@ function AdjustDialog({ store, products, onClose, onSaved }) {
         <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={busy} data-testid="save-adjust" className="bg-primary hover:bg-teal-800">{busy ? "Saving…" : "Post Adjustment"}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ProductSearchSelect({ products, value, onChange, testId }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const selected = products.find((p) => p.id === value);
+  const matches = useMemo(() => products.filter((p) => matchesSearchTerms(query, [
+    p.name, p.generic_name, p.brand, p.sku, p.barcode, p.manufacturer,
+  ])).slice(0, 100), [products, query]);
+
+  const choose = (productId) => {
+    onChange(productId);
+    setQuery("");
+    setOpen(false);
+  };
+
+  return (
+    <Popover open={open} onOpenChange={(next) => { setOpen(next); if (!next) setQuery(""); }}>
+      <PopoverTrigger asChild>
+        <button type="button" role="combobox" aria-expanded={open} data-testid={testId}
+          className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-left text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2">
+          <span className={selected ? "truncate" : "text-muted-foreground"}>
+            {selected ? `${selected.name}${selected.sku ? ` · ${selected.sku}` : ""}` : "Search and select product"}
+          </span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+        <Command shouldFilter={false}>
+          <CommandInput value={query} onValueChange={setQuery} placeholder="Name, generic, SKU, barcode…" data-testid={`${testId}-search`} />
+          <CommandList>
+            {!matches.length && <div className="py-6 text-center text-sm text-slate-400">No products found.</div>}
+            {!!matches.length && <CommandGroup>
+              {matches.map((p) => (
+                <CommandItem key={p.id} value={p.id} onSelect={() => choose(p.id)} data-testid={`${testId}-option-${p.id}`}>
+                  <Check className={`mr-2 h-4 w-4 ${value === p.id ? "opacity-100" : "opacity-0"}`} />
+                  <div className="min-w-0">
+                    <div className="truncate font-medium">{p.name}</div>
+                    <div className="truncate text-xs text-slate-400">{[p.generic_name, p.brand, p.sku, p.barcode].filter(Boolean).join(" · ")}</div>
+                  </div>
+                </CommandItem>
+              ))}
+            </CommandGroup>}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }
