@@ -44,7 +44,8 @@ export default function Settings() {
 
 function PrintingTab({ s, save }) {
   const [printing, setPrinting] = useState({
-    paper_width: "58mm", auto_print_receipt: false, ...(s.printing || {}),
+    paper_width: "58mm", auto_print_receipt: false, android_bluetooth_bridge: true,
+    open_cash_drawer: true, ...(s.printing || {}),
   });
   return (
     <Card className="p-5 max-w-2xl">
@@ -63,8 +64,27 @@ function PrintingTab({ s, save }) {
           <SelectContent><SelectItem value="manual">Tap Print manually</SelectItem><SelectItem value="auto">Open print dialog automatically</SelectItem></SelectContent>
         </Select>
       </Row>
+      <Row label="Android printing">
+        <Select value={printing.android_bluetooth_bridge ? "bridge" : "system"}
+          onValueChange={(value) => setPrinting((x) => ({ ...x, android_bluetooth_bridge: value === "bridge" }))}>
+          <SelectTrigger className={inputCls} data-testid="set-android-printing"><SelectValue /></SelectTrigger>
+          <SelectContent><SelectItem value="bridge">Direct Bluetooth (Android app)</SelectItem><SelectItem value="system">Android system print dialog</SelectItem></SelectContent>
+        </Select>
+      </Row>
+      <Row label="Cash Drawer">
+        <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+          <input type="checkbox" checked={printing.open_cash_drawer}
+            onChange={(e) => setPrinting((x) => ({ ...x, open_cash_drawer: e.target.checked }))}
+            className="w-4 h-4 accent-teal-600" data-testid="set-open-cash-drawer" />
+          Open automatically when printing a cash sale
+        </label>
+      </Row>
       <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
-        In the print dialog, select your Bluetooth thermal printer, choose 58 mm paper, set margins to None, and turn off headers and footers.
+        <div className="font-bold">Android tablet setup</div>
+        Install and configure <a className="underline" target="_blank" rel="noreferrer"
+          href="https://play.google.com/store/apps/details?id=com.loopedlabs.escposprintservice">ESC/POS Bluetooth Print Service</a>,
+        select the paired printer and 58 mm paper, then use its Test Print and Open Drawer tests. KDPLUS will send receipts directly to that app.
+        When using Mac/PC system printing, select 58 mm paper, margins None, and disable browser headers and footers.
       </div>
       <div className="mt-4"><Button onClick={() => save({ printing })} data-testid="save-printing" className="bg-primary hover:bg-teal-800">Save Printing Settings</Button></div>
     </Card>

@@ -90,8 +90,26 @@ export function receiptHtml(sale, settings = {}, refunds = []) {
     </main></body></html>`;
 }
 
+function isAndroid() {
+  return typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent || "");
+}
+
+function printWithAndroidBluetoothService(sale, settings, refunds) {
+  const html = receiptHtml(sale, settings, refunds);
+  const hasCashPayment = (sale.payments || []).some((payment) => payment.method === "Cash");
+  const openDrawer = settings.printing?.open_cash_drawer !== false && hasCashPayment;
+  const link = "print://escpos.org/escpos/bt/print?srcTp=uri&srcObj=html&numCopies=1"
+    + `&openCashDrawer=${openDrawer ? "true" : "false"}`
+    + `&src='data:text/html,${encodeURIComponent(html)}'`;
+  window.location.href = link;
+}
+
 export function printThermalReceipt(sale, settings = {}, refunds = []) {
   if (!sale) return false;
+  if (isAndroid() && settings.printing?.android_bluetooth_bridge !== false) {
+    printWithAndroidBluetoothService(sale, settings, refunds);
+    return true;
+  }
   const frame = document.createElement("iframe");
   frame.setAttribute("aria-hidden", "true");
   frame.style.cssText = "position:fixed;left:-10000px;top:0;width:1px;height:1px;border:0";
