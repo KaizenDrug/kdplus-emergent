@@ -318,6 +318,26 @@ async def senior_pwd_report(period: str = "30d", start: Optional[str] = None, en
     return {"rows": rows, "total_discount": total_disc, "total_vat_exempt": total_exempt, "count": len(rows)}
 
 
+@router.get("/unavailable-items")
+async def unavailable_items_report(period: str = "30d", store_id: Optional[str] = None,
+                                   start: Optional[str] = None, end: Optional[str] = None,
+                                   principal=Depends(get_current_principal)):
+    s, e = parse_range(period, start, end)
+    query = {"org_id": ORG_ID, "created_at": {"$gte": s, "$lte": e}}
+    if store_id:
+        query["store_id"] = store_id
+    rows = await db.unavailable_item_requests.find(
+        query, {"_id": 0}
+    ).sort("created_at", -1).to_list(10000)
+    return {
+        "rows": rows,
+        "count": len(rows),
+        "total_quantity": m(sum(D(row.get("quantity", 0)) for row in rows)),
+        "unique_items": len({row.get("normalized_name") or row.get("item_name", "").casefold()
+                             for row in rows}),
+    }
+
+
 
 @router.get("/cost-variance")
 async def cost_variance_report(period: str = "30d", start: Optional[str] = None, end: Optional[str] = None,

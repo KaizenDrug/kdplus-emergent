@@ -133,6 +133,67 @@ async def test_new_product_gets_automatic_unique_sku(catalog_db):
         )
 
 
+@pytest.mark.asyncio
+async def test_duplicate_barcode_is_rejected(catalog_db):
+    await routes_catalog.create_product(
+        routes_catalog.ProductIn(name="First Product", sku="FIRST-1", barcode="4801234567890"),
+        principal=MANAGER,
+    )
+
+    with pytest.raises(routes_catalog.HTTPException) as exc:
+        await routes_catalog.create_product(
+            routes_catalog.ProductIn(name="Other Product", sku="OTHER-1", barcode="4801234567890"),
+            principal=MANAGER,
+        )
+
+    assert exc.value.status_code == 409
+    assert "Barcode already exists" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_exact_product_variant_is_rejected_but_different_strength_is_allowed(catalog_db):
+    first = routes_catalog.ProductIn(
+        name="Amoxicillin Capsule", generic_name="Amoxicillin", brand="TestBrand",
+        strength="500 mg", dosage_form="Capsule", pack_size="100 capsules", sku="AMOX-500-A",
+    )
+    await routes_catalog.create_product(first, principal=MANAGER)
+
+    with pytest.raises(routes_catalog.HTTPException) as exc:
+        await routes_catalog.create_product(
+            routes_catalog.ProductIn(
+                name="  amoxicillin   capsule ", generic_name="AMOXICILLIN", brand="testbrand",
+                strength="500 MG", dosage_form="capsule", pack_size="100 CAPSULES", sku="AMOX-500-B",
+            ),
+            principal=MANAGER,
+        )
+    assert exc.value.status_code == 409
+    assert "Duplicate product" in exc.value.detail
+
+    created = await routes_catalog.create_product(
+        routes_catalog.ProductIn(
+            name="Amoxicillin Capsule", generic_name="Amoxicillin", brand="TestBrand",
+            strength="250 mg", dosage_form="Capsule", pack_size="100 capsules", sku="AMOX-250",
+        ),
+        principal=MANAGER,
+    )
+    assert created["strength"] == "250 mg"
+
+
+@pytest.mark.asyncio
+async def test_updating_product_does_not_conflict_with_itself(catalog_db):
+    created = await routes_catalog.create_product(
+        routes_catalog.ProductIn(name="Editable Product", sku="EDIT-1", barcode="100200300"),
+        principal=MANAGER,
+    )
+
+    updated = await routes_catalog.update_product(
+        created["id"], routes_catalog.ProductIn(name="Editable Product", sku="EDIT-1", barcode="100200300", price=12),
+        principal=MANAGER,
+    )
+
+    assert updated["price"] == 12
+
+
 def test_product_search_splits_abbreviated_words_into_terms():
     clauses = routes_catalog.product_search_clauses("ab bin")
 

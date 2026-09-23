@@ -45,9 +45,45 @@ class SaleIn(BaseModel):
     client_txn_id: Optional[str] = None       # offline dedupe UUID
 
 
+class UnavailableItemIn(BaseModel):
+    store_id: str
+    item_name: str
+    quantity: float = 1
+    customer_name: Optional[str] = ""
+    notes: Optional[str] = ""
+
+
 async def get_settings():
     s = await db.settings.find_one({"org_id": ORG_ID}, {"_id": 0})
     return s or {}
+
+
+@router.post("/unavailable-items")
+async def record_unavailable_item(body: UnavailableItemIn,
+                                  principal=Depends(require_perm("pos.sell"))):
+    item_name = re.sub(r"\s+", " ", body.item_name).strip()
+    customer_name = re.sub(r"\s+", " ", body.customer_name or "").strip()
+    notes = (body.notes or "").strip()
+    if not item_name:
+        raise HTTPException(status_code=400, detail="Enter the requested item name")
+    if len(item_name) > 200 or len(customer_name) > 200 or len(notes) > 1000:
+        raise HTTPException(status_code=400, detail="Requested item details are too long")
+    if not math.isfinite(body.quantity) or body.quantity <= 0:
+        raise HTTPException(status_code=400, detail="Quantity must be greater than zero")
+    doc = {
+        "id": uid(), "org_id": ORG_ID, "store_id": body.store_id,
+        "item_name": item_name, "normalized_name": item_name.casefold(),
+        "quantity": m(body.quantity), "customer_name": customer_name,
+        "notes": notes, "status": "OPEN",
+        "recorded_by_id": principal.get("id"),
+        "recorded_by_name": principal.get("name"), "created_at": now_iso(),
+    }
+    await db.unavailable_item_requests.insert_one(doc)
+    await audit(principal, "unavailable_item.recorded", "unavailable_item_request", doc["id"],
+                after={"item_name": item_name, "quantity": doc["quantity"]},
+                store_id=body.store_id)
+    doc.pop("_id", None)
+    return doc
 
 
 @router.post("/sales")

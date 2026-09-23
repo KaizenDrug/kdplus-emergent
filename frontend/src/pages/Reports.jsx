@@ -27,10 +27,12 @@ export default function Reports() {
           <TabsTrigger value="sales" data-testid="rtab-sales">Sales & Profit</TabsTrigger>
           <TabsTrigger value="valuation" data-testid="rtab-valuation">Inventory Valuation</TabsTrigger>
           <TabsTrigger value="spwd" data-testid="rtab-spwd">Senior / PWD</TabsTrigger>
+          <TabsTrigger value="unavailable" data-testid="rtab-unavailable">Requested Items</TabsTrigger>
         </TabsList>
         <TabsContent value="sales"><SalesReport /></TabsContent>
         <TabsContent value="valuation"><Valuation /></TabsContent>
         <TabsContent value="spwd"><SeniorPwd /></TabsContent>
+        <TabsContent value="unavailable"><UnavailableItems /></TabsContent>
       </Tabs>
     </div>
   );
@@ -136,6 +138,47 @@ function SeniorPwd() {
           </tbody>
         </table>
         {!d.rows.length && <Empty text="No Senior/PWD transactions in this period." />}
+      </Card>
+    </div>
+  );
+}
+
+function UnavailableItems() {
+  const [period, setPeriod] = useState("30d");
+  const [data, setData] = useState({ rows: [], count: 0, total_quantity: 0, unique_items: 0 });
+  useEffect(() => { api.get(`/reports/unavailable-items?period=${period}`).then((r) => setData(r.data)); }, [period]);
+  const columns = [
+    { key: "created_at", label: "Recorded At" }, { key: "item_name", label: "Requested Item" },
+    { key: "quantity", label: "Qty" }, { key: "customer_name", label: "Customer" },
+    { key: "notes", label: "Notes" }, { key: "recorded_by_name", label: "Recorded By" },
+  ];
+  return (
+    <div>
+      <div className="flex flex-wrap gap-2 mb-4 items-center">
+        <div className="flex gap-1 p-1 bg-slate-100 rounded-lg">{PERIODS.map(([v, l]) => <button key={v} onClick={() => setPeriod(v)} className={`px-3 py-1.5 rounded-md text-xs font-semibold ${period === v ? "bg-white shadow-sm" : "text-slate-500"}`}>{l}</button>)}</div>
+        <Button variant="outline" onClick={() => download("requested-items.csv", toCSV(data.rows, columns))} className="ml-auto" data-testid="export-unavailable-items"><Download className="w-4 h-4 mr-1" />Export CSV</Button>
+      </div>
+      <div className="grid grid-cols-3 gap-4 mb-4">
+        <StatCard label="Requests" value={data.count} tone="primary" />
+        <StatCard label="Unique Items" value={data.unique_items} tone="accent" />
+        <StatCard label="Total Quantity Requested" value={num(data.total_quantity)} tone="warning" />
+      </div>
+      <Card className="overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>
+            <th className="px-4 py-3">Date</th><th className="px-4 py-3">Requested Item</th><th className="px-4 py-3 text-right">Qty</th>
+            <th className="px-4 py-3">Customer</th><th className="px-4 py-3">Notes</th><th className="px-4 py-3">Recorded By</th>
+          </tr></thead>
+          <tbody>{data.rows.map((row) => (
+            <tr key={row.id} className="border-t border-slate-100 hover:bg-slate-50">
+              <td className="px-4 py-2.5 text-xs text-slate-500 whitespace-nowrap">{fmtDate(row.created_at)}</td>
+              <td className="px-4 py-2.5 font-medium">{row.item_name}</td><td className="px-4 py-2.5 text-right">{num(row.quantity)}</td>
+              <td className="px-4 py-2.5 text-slate-500">{row.customer_name || "—"}</td><td className="px-4 py-2.5 text-slate-500">{row.notes || "—"}</td>
+              <td className="px-4 py-2.5 text-slate-500">{row.recorded_by_name}</td>
+            </tr>
+          ))}</tbody>
+        </table>
+        {!data.rows.length && <Empty text="No unavailable item requests in this period." />}
       </Card>
     </div>
   );

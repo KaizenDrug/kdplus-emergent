@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState, useRef } from "react"
 import { useNavigate } from "react-router-dom";
 import {
   Search, Plus, Minus, Trash2, X, ShoppingCart, Wifi, ArrowLeft, Printer, UserPlus, Barcode,
-  RefreshCw, CloudOff, AlertCircle, Receipt,
+  RefreshCw, CloudOff, AlertCircle, Receipt, ClipboardPlus,
 } from "lucide-react";
 import api, { peso, fmtDate } from "@/lib/api";
 import { getCache, saveCache, enqueueSale, queueCount, syncQueue } from "@/lib/offline";
@@ -38,6 +38,7 @@ export default function POS() {
   const [shift, setShift] = useState(null);
   const [shiftLoading, setShiftLoading] = useState(true);
   const [showClose, setShowClose] = useState(false);
+  const [showUnavailable, setShowUnavailable] = useState(false);
   const searchRef = useRef();
 
   const cacheShift = (value) => {
@@ -206,12 +207,21 @@ export default function POS() {
         {/* Products */}
         <div className="flex-1 flex flex-col min-w-0">
           <div className="p-3 bg-white border-b border-slate-200">
-            <div className="relative">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input ref={searchRef} autoFocus value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onSearchKey}
-                data-testid="pos-search" placeholder="Scan barcode or search name, generic, SKU… (Enter to add)"
-                className="w-full pl-9 pr-3 py-2.5 rounded-lg bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
-              <Barcode className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-300" />
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input ref={searchRef} autoFocus value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onSearchKey}
+                  data-testid="pos-search" placeholder="Scan barcode or search name, generic, SKU… (Enter to add)"
+                  className="w-full pl-9 pr-9 py-2.5 rounded-lg bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+                <Barcode className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-300" />
+              </div>
+              {q.trim() && (
+                <button type="button" onClick={() => setShowUnavailable(true)}
+                  data-testid="record-unavailable-item"
+                  className="inline-flex items-center gap-1.5 px-3 rounded-lg border border-primary/30 bg-primary/5 text-primary text-sm font-semibold hover:bg-primary/10">
+                  <ClipboardPlus className="w-4 h-4" />Record unavailable
+                </button>
+              )}
             </div>
           </div>
           <div className="flex-1 overflow-y-auto p-3">
@@ -232,7 +242,7 @@ export default function POS() {
                 );
               })}
             </div>
-            {!filtered.length && <div className="text-center py-16 text-slate-400">No products match.</div>}
+            {!filtered.length && <div className="text-center py-16 text-slate-400">No products match. Use “Record unavailable” to save the customer's request.</div>}
           </div>
         </div>
 
@@ -280,13 +290,73 @@ export default function POS() {
           open={checkout} onClose={() => setCheckout(false)} cart={cart} storeId={storeId} shiftId={shift?.id}
           customers={customers} settings={settings} cashierName={user?.name}
           onOfflineQueued={() => setPending(queueCount())}
-          onComplete={(sale) => { setLastSale(sale); setCart([]); setCheckout(false); refreshLevels(); toast.success(sale._offline ? `Sale queued offline (${sale.number})` : `Sale ${sale.number} completed`); }}
+          onComplete={(sale) => { setLastSale(sale); setCart([]); setQ(""); setCheckout(false); refreshLevels(); toast.success(sale._offline ? `Sale queued offline (${sale.number})` : `Sale ${sale.number} completed`); }}
+        />
+      )}
+      {showUnavailable && (
+        <UnavailableItemDialog
+          initialName={q} storeId={storeId} online={online}
+          onClose={() => setShowUnavailable(false)}
+          onSaved={() => { setShowUnavailable(false); setQ(""); searchRef.current?.focus(); }}
         />
       )}
       {lastSale && <ReceiptDialog sale={lastSale} settings={settings} onClose={() => setLastSale(null)} />}
       {!shiftLoading && !shift && <ShiftStartOverlay online={online} storeId={storeId} onOpened={(sh) => { setShift(sh); cacheShift(sh); }} />}
       {showClose && shift && <ShiftCloseDialog shift={shift} pending={pending} onClose={() => setShowClose(false)} onClosed={finishClosedShift} />}
     </div>
+  );
+}
+
+function UnavailableItemDialog({ initialName, storeId, online, onClose, onSaved }) {
+  const [itemName, setItemName] = useState(initialName.trim());
+  const [quantity, setQuantity] = useState("1");
+  const [customerName, setCustomerName] = useState("");
+  const [notes, setNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (!itemName.trim()) { toast.error("Enter the requested item name"); return; }
+    const qty = Number(quantity);
+    if (!isFinite(qty) || qty <= 0) { toast.error("Quantity must be greater than zero"); return; }
+    if (!online) { toast.error("Connect to the server before recording this request"); return; }
+    setBusy(true);
+    try {
+      await api.post("/pos/unavailable-items", {
+        store_id: storeId, item_name: itemName, quantity: qty,
+        customer_name: customerName, notes,
+      });
+      toast.success(`Recorded request for ${itemName.trim()}`);
+      onSaved();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not record the requested item");
+    } finally { setBusy(false); }
+  };
+  return (
+    <Dialog open={true} onOpenChange={onClose}>
+      <DialogContent className="max-w-md" data-testid="unavailable-item-dialog">
+        <DialogHeader><DialogTitle>Record Unavailable Item</DialogTitle></DialogHeader>
+        <p className="text-sm text-slate-500">Save what the customer requested so it can be reviewed for ordering.</p>
+        <div className="space-y-3">
+          <label className="block"><span className="text-[11px] font-bold uppercase text-slate-500">Requested item</span>
+            <input value={itemName} onChange={(e) => setItemName(e.target.value)} autoFocus data-testid="unavailable-item-name"
+              className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 text-sm" /></label>
+          <div className="grid grid-cols-2 gap-3">
+            <label><span className="text-[11px] font-bold uppercase text-slate-500">Quantity</span>
+              <input type="number" min="0.01" step="any" value={quantity} onChange={(e) => setQuantity(e.target.value)}
+                data-testid="unavailable-item-quantity" className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 text-sm" /></label>
+            <label><span className="text-[11px] font-bold uppercase text-slate-500">Customer (optional)</span>
+              <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} data-testid="unavailable-item-customer"
+                className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 text-sm" /></label>
+          </div>
+          <label className="block"><span className="text-[11px] font-bold uppercase text-slate-500">Notes (optional)</span>
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} data-testid="unavailable-item-notes"
+              className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 text-sm resize-none" /></label>
+        </div>
+        <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={save} disabled={busy || !online} data-testid="save-unavailable-item" className="bg-primary hover:bg-teal-800">
+            {busy ? "Saving…" : "Save Request"}
+          </Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -415,7 +485,9 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
   const [orderDiscount, setOrderDiscount] = useState("");
   const [idNumber, setIdNumber] = useState("");
   const [spName, setSpName] = useState("");
-  const [payments, setPayments] = useState([{ method: "Cash", amount: "" }]);
+  const [payments, setPayments] = useState([{
+    method: "Cash", amount: cart.reduce((sum, item) => sum + item.unit_price * item.qty, 0).toFixed(2),
+  }]);
   const [eligibleQty, setEligibleQty] = useState(() => Object.fromEntries(
     cart.map((i) => [i.product_id, i.discount_eligible !== false ? i.qty : 0])));
   const [busy, setBusy] = useState(false);

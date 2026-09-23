@@ -147,6 +147,57 @@ def compute_margins(p: dict) -> dict:
 
 
 PRODUCT_SEARCH_FIELDS = ("name", "generic_name", "brand", "sku", "barcode", "manufacturer")
+PRODUCT_IDENTITY_FIELDS = ("name", "generic_name", "brand", "strength", "dosage_form", "pack_size")
+
+
+def normalize_product_value(value):
+    """Normalize catalog identifiers without merging legitimate product variants."""
+    return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
+
+
+def product_identity(product: dict):
+    return tuple(normalize_product_value(product.get(field)) for field in PRODUCT_IDENTITY_FIELDS)
+
+
+async def find_product_duplicate(data: dict, exclude_id: Optional[str] = None):
+    """Return (reason, product) for an existing SKU, barcode, or exact product variant."""
+    query = {"org_id": ORG_ID}
+    if exclude_id:
+        query["id"] = {"$ne": exclude_id}
+    fields = {"_id": 0, "id": 1, "name": 1, "sku": 1, "barcode": 1,
+              "generic_name": 1, "brand": 1, "strength": 1, "dosage_form": 1, "pack_size": 1}
+    existing = await db.products.find(query, fields).to_list(10000)
+    sku = normalize_product_value(data.get("sku"))
+    barcode = normalize_product_value(data.get("barcode"))
+    identity = product_identity(data)
+    if sku:
+        for product in existing:
+            if sku == normalize_product_value(product.get("sku")):
+                return "SKU", product
+    if barcode:
+        for product in existing:
+            if barcode == normalize_product_value(product.get("barcode")):
+                return "barcode", product
+    if identity[0]:
+        for product in existing:
+            if identity == product_identity(product):
+                return "product variant", product
+    return None, None
+
+
+async def ensure_unique_product(data: dict, exclude_id: Optional[str] = None):
+    reason, duplicate = await find_product_duplicate(data, exclude_id=exclude_id)
+    if duplicate:
+        label = duplicate.get("name") or "Existing product"
+        sku = duplicate.get("sku")
+        suffix = f" ({sku})" if sku else ""
+        if reason == "SKU":
+            detail = f"SKU already exists: {label}{suffix}"
+        elif reason == "barcode":
+            detail = f"Barcode already exists: {label}{suffix}"
+        else:
+            detail = f"Duplicate product: {label}{suffix} already exists with the same brand, strength, dosage form, and pack size"
+        raise HTTPException(status_code=409, detail=detail)
 
 
 def product_search_clauses(search: str):
@@ -191,12 +242,7 @@ async def get_product(pid: str, principal=Depends(get_current_principal)):
 async def create_product(body: ProductIn, principal=Depends(require_perm("*"))):
     data = body.model_dump()
     data["sku"] = (data.get("sku") or "").strip() or await next_number("SKU")
-    duplicate_sku = await db.products.find_one(
-        {"org_id": ORG_ID, "sku": {"$regex": f"^{re.escape(data['sku'])}$", "$options": "i"}},
-        {"_id": 0, "id": 1},
-    )
-    if duplicate_sku:
-        raise HTTPException(status_code=400, detail="SKU already exists")
+    await ensure_unique_product(data)
     if not data.get("average_cost"):
         data["average_cost"] = data.get("acquisition_cost", 0)
     data = compute_margins(data)
@@ -214,13 +260,7 @@ async def update_product(pid: str, body: ProductIn, principal=Depends(require_pe
         raise HTTPException(status_code=404, detail="Product not found")
     data = body.model_dump()
     data["sku"] = (data.get("sku") or "").strip() or old.get("sku") or await next_number("SKU")
-    duplicate_sku = await db.products.find_one(
-        {"org_id": ORG_ID, "id": {"$ne": pid},
-         "sku": {"$regex": f"^{re.escape(data['sku'])}$", "$options": "i"}},
-        {"_id": 0, "id": 1},
-    )
-    if duplicate_sku:
-        raise HTTPException(status_code=400, detail="SKU already exists")
+    await ensure_unique_product(data, exclude_id=pid)
     data = compute_margins(data)
     data["updated_at"] = now_iso()
     if D(old.get("price")) != D(data.get("price")):
@@ -377,11 +417,12 @@ async def _lookup_maps():
 
 async def _validate_rows(rows):
     cat_by_name, sup_by_name = await _lookup_maps()
-    existing = await db.products.find({"org_id": ORG_ID},
-                                      {"_id": 0, "name": 1, "sku": 1, "barcode": 1}).to_list(5000)
-    by_sku = {p["sku"].lower(): p for p in existing if p.get("sku")}
-    by_bc = {p["barcode"]: p for p in existing if p.get("barcode")}
-    by_name = {p["name"].lower(): p for p in existing if p.get("name")}
+    existing = await db.products.find({"org_id": ORG_ID}, {"_id": 0, "name": 1, "sku": 1,
+        "barcode": 1, "generic_name": 1, "brand": 1, "strength": 1,
+        "dosage_form": 1, "pack_size": 1}).to_list(10000)
+    by_sku = {normalize_product_value(p.get("sku")): p for p in existing if p.get("sku")}
+    by_bc = {normalize_product_value(p.get("barcode")): p for p in existing if p.get("barcode")}
+    by_identity = {product_identity(p): p for p in existing if p.get("name")}
     out = []
     counts = {"new": 0, "duplicate": 0, "error": 0}
     seen = set()
@@ -451,10 +492,15 @@ async def _validate_rows(rows):
         dup = False
         sku = r.get("sku", "").strip()
         bc = r.get("barcode", "").strip()
-        if (sku and sku.lower() in by_sku) or (bc and bc in by_bc) or (name.lower() in by_name):
+        row_identity = product_identity({**r, "name": name})
+        if ((sku and normalize_product_value(sku) in by_sku)
+                or (bc and normalize_product_value(bc) in by_bc)
+                or row_identity in by_identity):
             dup = True
         # duplicate within the file itself
-        dedupe_key = (sku.lower() or bc or name.lower())
+        dedupe_key = (("sku", normalize_product_value(sku)) if sku else
+                      ("barcode", normalize_product_value(bc)) if bc else
+                      ("identity",) + row_identity)
         if dedupe_key in seen:
             dup = True
             messages.append("Duplicate row within file")
@@ -559,9 +605,11 @@ async def import_commit(body: ImportIn, principal=Depends(require_perm("*"))):
     if body.overwrite_duplicates:
         latest = {}
         for row in rows:
-            key = ((row.get("sku") or "").strip().lower()
-                   or (row.get("barcode") or "").strip()
-                   or (row.get("name") or "").strip().lower())
+            sku_key = normalize_product_value(row.get("sku"))
+            barcode_key = normalize_product_value(row.get("barcode"))
+            key = (("sku", sku_key) if sku_key else
+                   ("barcode", barcode_key) if barcode_key else
+                   ("identity",) + product_identity(row))
             latest[key] = row
         rows = list(latest.values())
 
@@ -598,13 +646,7 @@ async def import_commit(body: ImportIn, principal=Depends(require_perm("*"))):
         data = compute_margins(data)
 
         if r["status"] == "duplicate" and body.overwrite_duplicates:
-            clauses = []
-            if r["sku"]:
-                clauses.append({"sku": {"$regex": f"^{re.escape(r['sku'])}$", "$options": "i"}})
-            if r["barcode"]:
-                clauses.append({"barcode": r["barcode"]})
-            clauses.append({"name": {"$regex": f"^{re.escape(r['name'])}$", "$options": "i"}})
-            existing = await db.products.find_one({"org_id": ORG_ID, "$or": clauses}, {"_id": 0})
+            _, existing = await find_product_duplicate(r)
             if existing:
                 # Product fields are overwritten, while stock remains controlled
                 # by inventory movements/counts to preserve the audit trail.

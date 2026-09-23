@@ -53,6 +53,8 @@ async def startup():
     await db.sales.create_index([("org_id", 1), ("client_txn_id", 1)], unique=True,
                                 partialFilterExpression={"client_txn_id": {"$type": "string"}})
     await db.sales.create_index("number")
+    await db.unavailable_item_requests.create_index([("org_id", 1), ("created_at", -1)])
+    await db.unavailable_item_requests.create_index([("org_id", 1), ("normalized_name", 1)])
     await db.refunds.create_index([("org_id", 1), ("client_txn_id", 1)], unique=True,
                                   partialFilterExpression={"client_txn_id": {"$type": "string"}})
     await db.login_attempts.create_index("identifier")

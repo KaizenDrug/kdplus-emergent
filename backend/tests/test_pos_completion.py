@@ -264,3 +264,31 @@ async def test_receipt_search_pagination_and_legacy_line_normalization(pos_db):
     assert result["pages"] == 1
     assert result["items"][0]["items"][0]["sale_line_id"] == f"{sale['id']}-line-1"
     assert result["items"][0]["refund_version"] == 0
+
+
+@pytest.mark.asyncio
+async def test_records_unavailable_item_for_purchasing_review(pos_db):
+    result = await routes_pos.record_unavailable_item(routes_pos.UnavailableItemIn(
+        store_id="store_main", item_name="  Abdominal   Binder XL  ", quantity=2,
+        customer_name="Juan Dela Cruz", notes="Customer will return Friday",
+    ), principal=PRINCIPAL)
+
+    assert result["item_name"] == "Abdominal Binder XL"
+    assert result["normalized_name"] == "abdominal binder xl"
+    assert result["quantity"] == 2
+    assert result["recorded_by_name"] == "Test Cashier"
+    report = await routes_reports.unavailable_items_report(
+        period="30d", store_id="store_main", start=None, end=None, principal=MANAGER,
+    )
+    assert report["count"] == 1
+    assert report["total_quantity"] == 2
+    assert report["unique_items"] == 1
+
+
+@pytest.mark.asyncio
+async def test_rejects_invalid_unavailable_item_quantity(pos_db):
+    with pytest.raises(HTTPException) as exc:
+        await routes_pos.record_unavailable_item(routes_pos.UnavailableItemIn(
+            store_id="store_main", item_name="Requested item", quantity=0,
+        ), principal=PRINCIPAL)
+    assert exc.value.status_code == 400
