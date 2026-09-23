@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft, Ban, ChevronLeft, ChevronRight, Eye, Printer, Search, Undo2 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
+import { printThermalReceipt } from "@/lib/receiptPrint";
 
 const newTxnId = () => (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`);
 const lineId = (line) => line.sale_line_id || line.product_id;
@@ -25,6 +26,7 @@ export default function Sales({ cashierMode = false }) {
   const [page, setPage] = useState(1);
   const [meta, setMeta] = useState({ total: 0, pages: 1 });
   const [loading, setLoading] = useState(true);
+  const [settings, setSettings] = useState({});
 
   const permissions = user?.permissions || [];
   const canRefund = permissions.includes("*") || permissions.includes("pos.refund");
@@ -46,6 +48,7 @@ export default function Sales({ cashierMode = false }) {
   }, [page, search]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { api.get("/settings").then((r) => setSettings(r.data)).catch(() => {}); }, []);
   useEffect(() => {
     setQuery(urlQuery);
     setSearch(urlQuery);
@@ -128,13 +131,13 @@ export default function Sales({ cashierMode = false }) {
         </div>
       </Card>
 
-      {viewing && <SaleView sale={viewing} refunds={refunds} canRefund={canRefund} canCancel={canCancel}
+      {viewing && <SaleView sale={viewing} refunds={refunds} settings={settings} canRefund={canRefund} canCancel={canCancel}
         onClose={() => setViewing(null)} onChanged={refreshViewing} />}
     </div>
   );
 }
 
-function SaleView({ sale, refunds, canRefund, canCancel, onClose, onChanged }) {
+function SaleView({ sale, refunds, settings, canRefund, canCancel, onClose, onChanged }) {
   const [refunding, setRefunding] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [qtys, setQtys] = useState({});
@@ -185,15 +188,7 @@ function SaleView({ sale, refunds, canRefund, canCancel, onClose, onChanged }) {
   };
 
   const printReceipt = () => {
-    const w = window.open("", "_blank", "width=420,height=700");
-    if (!w) { toast.error("Allow pop-ups to print the receipt"); return; }
-    const lines = sale.items.map((i) => `${i.name}\n  ${i.qty} x ${peso(i.unit_price)}  ${peso(i.line_gross)}`).join("\n");
-    const refundsText = refunds.length ? `\nREFUNDS\n${refunds.map((r) => `${r.number}  -${peso(r.total)}`).join("\n")}` : "";
-    const pre = w.document.createElement("pre");
-    pre.style.cssText = "font:12px monospace;width:300px;white-space:pre-wrap";
-    pre.textContent = `KDPLUS PHARMACY\n${sale.number}\n${fmtDate(sale.created_at)}\nCashier: ${sale.cashier_name}\n${sale.customer_name ? `Customer: ${sale.customer_name}\n` : ""}------------------------------\n${lines}\n------------------------------\nTOTAL  ${peso(sale.total)}\nPaid   ${peso(sale.amount_paid)}\nChange ${peso(sale.change)}${refundsText}\n\nThank you.`;
-    w.document.body.appendChild(pre);
-    w.focus(); w.print(); w.close();
+    if (!printThermalReceipt(sale, settings, refunds)) toast.error("Could not prepare the receipt for printing");
   };
 
   const refundable = sale.status !== "REFUNDED" && sale.status !== "CANCELLED";

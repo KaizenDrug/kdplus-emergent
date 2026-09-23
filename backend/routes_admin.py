@@ -110,6 +110,7 @@ async def get_settings(principal=Depends(get_current_principal)):
 
 class SettingsIn(BaseModel):
     business: Optional[dict] = None
+    printing: Optional[dict] = None
     tax: Optional[dict] = None
     senior_pwd: Optional[dict] = None
     loyalty: Optional[dict] = None

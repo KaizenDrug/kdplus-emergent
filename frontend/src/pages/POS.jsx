@@ -13,8 +13,25 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import BrandLogo from "@/components/BrandLogo";
 import { matchesSearchTerms } from "@/lib/utils";
+import { printThermalReceipt } from "@/lib/receiptPrint";
 
 const PAY_METHODS = ["Cash", "GCash", "Maya", "Credit Card", "Debit Card", "Bank Transfer"];
+
+function suggestedCashAmounts(total) {
+  const due = Math.max(0, Number(Number(total || 0).toFixed(2)));
+  const exact = due;
+  const ceilings = due < 100
+    ? [10, 20, 50, 100, 200, 500, 1000]
+    : due < 500
+      ? [10, 50, 100, 200, 500, 1000]
+      : [10, 50, 100, 500, 1000];
+  const amounts = [exact];
+  ceilings.forEach((step) => {
+    const rounded = Math.ceil(due / step) * step;
+    if (rounded >= due && !amounts.some((amount) => Math.abs(amount - rounded) < 0.001)) amounts.push(rounded);
+  });
+  return amounts.slice(0, 5);
+}
 
 export default function POS() {
   const { user, logout } = useAuth();
@@ -519,11 +536,13 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
 
   const paid = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
   const change = paid - total;
+  const cashSuggestions = suggestedCashAmounts(total);
 
   const addPayment = () => setPayments((p) => [...p, { method: "GCash", amount: "" }]);
   const updPayment = (idx, key, val) => setPayments((p) => p.map((x, i) => (i === idx ? { ...x, [key]: val } : x)));
   const removePayment = (idx) => setPayments((p) => p.filter((_, i) => i !== idx));
   const fillExact = () => setPayments([{ method: payments[0].method, amount: total.toFixed(2) }]);
+  const fillCashAmount = (amount) => setPayments([{ method: "Cash", amount: Number(amount).toFixed(2) }]);
 
   const submit = async () => {
     if (!shiftId) { toast.error("Open a shift before completing a sale"); return; }
@@ -651,6 +670,23 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
                 {payments.length > 1 && <button onClick={() => removePayment(idx)} className="text-slate-400 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>}
               </div>
             ))}
+            {payments.length === 1 && payments[0].method === "Cash" && (
+              <div className="mb-2" data-testid="cash-suggestions">
+                <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">Suggested cash received</div>
+                <div className="grid grid-cols-5 gap-1.5">
+                  {cashSuggestions.map((amount, index) => {
+                    const selected = Math.abs((Number(payments[0].amount) || 0) - amount) < 0.001;
+                    return <button type="button" key={amount} onClick={() => fillCashAmount(amount)}
+                      data-testid={`cash-suggestion-${index}`}
+                      className={`rounded-lg border px-1.5 py-2 text-xs font-semibold transition-colors ${selected
+                        ? "border-primary bg-primary text-white"
+                        : "border-slate-200 bg-slate-50 text-slate-700 hover:border-primary hover:text-primary"}`}>
+                      {index === 0 ? "Exact" : peso(amount)}
+                    </button>;
+                  })}
+                </div>
+              </div>
+            )}
             <div className="flex justify-between text-sm mt-1"><span className="text-slate-500">Tendered</span><span className="font-semibold">{peso(paid)}</span></div>
             <div className="flex justify-between text-sm"><span className="text-slate-500">Change</span><span className="font-bold text-emerald-600" data-testid="checkout-change">{peso(change > 0 ? change : 0)}</span></div>
           </div>
@@ -666,18 +702,16 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
 
 function ReceiptDialog({ sale, settings, onClose }) {
   const biz = settings?.business || {};
+  const autoPrintStarted = useRef(false);
   const print = () => {
-    const w = window.open("", "_blank", "width=380,height=640");
-    if (!w) return;
-    const body = document.getElementById("receipt-body");
-    const pre = w.document.createElement("pre");
-    pre.style.fontFamily = "monospace";
-    pre.style.fontSize = "12px";
-    pre.style.width = "280px";
-    pre.textContent = body ? body.innerText : "";
-    w.document.body.appendChild(pre);
-    w.focus(); w.print(); w.close();
+    if (!printThermalReceipt(sale, settings)) toast.error("Could not prepare the receipt for printing");
   };
+  useEffect(() => {
+    if (settings?.printing?.auto_print_receipt && !autoPrintStarted.current) {
+      autoPrintStarted.current = true;
+      print();
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <Dialog open={true} onOpenChange={onClose}>
       <DialogContent className="max-w-sm">

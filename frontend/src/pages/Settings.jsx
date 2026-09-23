@@ -26,17 +26,48 @@ export default function Settings() {
       <Tabs defaultValue="business">
         <TabsList>
           <TabsTrigger value="business" data-testid="stab-business">Business</TabsTrigger>
+          <TabsTrigger value="printing" data-testid="stab-printing">Receipt Printing</TabsTrigger>
           <TabsTrigger value="tax" data-testid="stab-tax">Tax & Senior/PWD</TabsTrigger>
           <TabsTrigger value="loyalty" data-testid="stab-loyalty">Loyalty & Inventory</TabsTrigger>
           {isAdmin && <TabsTrigger value="danger" data-testid="stab-danger" className="data-[state=active]:text-red-600">Danger Zone</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="business"><BusinessTab s={s} save={save} /></TabsContent>
+        <TabsContent value="printing"><PrintingTab s={s} save={save} /></TabsContent>
         <TabsContent value="tax"><TaxTab s={s} save={save} /></TabsContent>
         <TabsContent value="loyalty"><LoyaltyTab s={s} save={save} /></TabsContent>
         {isAdmin && <TabsContent value="danger"><DangerZoneTab /></TabsContent>}
       </Tabs>
     </div>
+  );
+}
+
+function PrintingTab({ s, save }) {
+  const [printing, setPrinting] = useState({
+    paper_width: "58mm", auto_print_receipt: false, ...(s.printing || {}),
+  });
+  return (
+    <Card className="p-5 max-w-2xl">
+      <h3 className="font-heading font-bold text-slate-800 mb-1">Thermal Receipt Printer</h3>
+      <p className="text-sm text-slate-500 mb-4">Pair the Bluetooth printer with this device first. KDPLUS will use the normal system print dialog to select it.</p>
+      <Row label="Paper Width">
+        <Select value={printing.paper_width} onValueChange={(value) => setPrinting((x) => ({ ...x, paper_width: value }))}>
+          <SelectTrigger className={inputCls} data-testid="set-paper-width"><SelectValue /></SelectTrigger>
+          <SelectContent><SelectItem value="58mm">58 mm thermal</SelectItem><SelectItem value="80mm">80 mm thermal</SelectItem></SelectContent>
+        </Select>
+      </Row>
+      <Row label="After each sale">
+        <Select value={printing.auto_print_receipt ? "auto" : "manual"}
+          onValueChange={(value) => setPrinting((x) => ({ ...x, auto_print_receipt: value === "auto" }))}>
+          <SelectTrigger className={inputCls} data-testid="set-auto-print"><SelectValue /></SelectTrigger>
+          <SelectContent><SelectItem value="manual">Tap Print manually</SelectItem><SelectItem value="auto">Open print dialog automatically</SelectItem></SelectContent>
+        </Select>
+      </Row>
+      <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
+        In the print dialog, select your Bluetooth thermal printer, choose 58 mm paper, set margins to None, and turn off headers and footers.
+      </div>
+      <div className="mt-4"><Button onClick={() => save({ printing })} data-testid="save-printing" className="bg-primary hover:bg-teal-800">Save Printing Settings</Button></div>
+    </Card>
   );
 }
 
