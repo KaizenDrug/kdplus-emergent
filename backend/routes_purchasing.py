@@ -125,6 +125,10 @@ async def _build_items(body_items):
     items = []
     for it in body_items:
         p = await db.products.find_one({"id": it.product_id, "org_id": ORG_ID}, {"_id": 0})
+        if not p:
+            raise HTTPException(status_code=404, detail="A selected purchase-order product was not found")
+        if p.get("product_type", "REGULAR") == "PROMO":
+            raise HTTPException(status_code=400, detail=f"Order the regular products included in {p['name']} instead of the promotional SKU")
         items.append({"product_id": it.product_id, "name": it.name or (p or {}).get("name", ""),
                       "qty_ordered": m(it.qty_ordered), "qty_received": 0, "qty_cancelled": 0,
                       "ordered_unit_cost": m(it.unit_cost), "unit_cost": m(it.unit_cost)})

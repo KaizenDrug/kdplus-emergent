@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
+from collections import defaultdict
 import math
 import re
 
@@ -135,6 +136,11 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
     cost_total = D(0)
     net_total = D(0)
 
+    # Resolve all physical stock requirements before pricing any lines. A promotional
+    # SKU is a sellable wrapper: its component products own the stock and lots.
+    prepared_items = []
+    inventory_requirements = defaultdict(lambda: D(0))
+    inventory_products = {}
     for it in body.items:
         p = await db.products.find_one({"id": it.product_id, "org_id": ORG_ID})
         if not p:
@@ -142,6 +148,51 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
         qty = D(it.qty)
         if qty <= 0:
             raise HTTPException(status_code=400, detail=f"Quantity for {p['name']} must be greater than zero")
+        stock_specs = []
+        if p.get("product_type", "REGULAR") == "PROMO":
+            if not p.get("components"):
+                raise HTTPException(status_code=400, detail=f"{p['name']} has no promotional components")
+            for component in p["components"]:
+                cp = await db.products.find_one({"id": component.get("product_id"), "org_id": ORG_ID})
+                if not cp or not cp.get("active", True) or cp.get("product_type", "REGULAR") == "PROMO":
+                    raise HTTPException(status_code=400, detail=f"A component of {p['name']} is unavailable")
+                required = qty * D(component.get("quantity"))
+                stock_specs.append((cp, required, D(component.get("quantity"))))
+        elif p.get("track_inventory", True):
+            stock_specs.append((p, qty, D(1)))
+        for cp, required, _ in stock_specs:
+            if cp.get("track_inventory", True):
+                inventory_requirements[cp["id"]] += required
+                inventory_products[cp["id"]] = cp
+        prepared_items.append((it, p, qty, stock_specs))
+
+    allocation_pools = {}
+    for product_id, required in inventory_requirements.items():
+        product = inventory_products[product_id]
+        available = D(await get_level(body.store_id, product_id))
+        if available < required and neg_policy == "PROHIBIT":
+            raise HTTPException(status_code=400, detail=f"Not enough stock for {product['name']} ({m(available)} available; {m(required)} needed)")
+        allocations = []
+        if product.get("track_lots"):
+            allocations, _, _ = await allocate_fefo(body.store_id, product_id, float(required))
+        allocation_pools[product_id] = [{**a, "remaining": D(a["qty"])} for a in allocations]
+
+    def take_allocations(product_id, required):
+        """Reserve part of the aggregate FEFO allocation for one receipt line."""
+        need = D(required)
+        taken = []
+        for allocation in allocation_pools.get(product_id, []):
+            if need <= 0:
+                break
+            take = min(allocation["remaining"], need)
+            if take <= 0:
+                continue
+            taken.append({k: v for k, v in allocation.items() if k != "remaining"} | {"qty": m(take)})
+            allocation["remaining"] -= take
+            need -= take
+        return taken, need
+
+    for it, p, qty, stock_specs in prepared_items:
         if D(it.line_discount) < 0:
             raise HTTPException(status_code=400, detail=f"Discount for {p['name']} cannot be negative")
         catalog_price = D(p.get("price", 0))
@@ -156,22 +207,28 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
         if line_gross < 0:
             line_gross = D(0)
 
-        # stock check
-        if p.get("track_inventory", True):
-            avail = D(await get_level(body.store_id, it.product_id))
-            if avail < qty and neg_policy == "PROHIBIT":
-                raise HTTPException(status_code=400, detail=f"Not enough stock for {p['name']} ({m(avail)} available)")
-
         tax_mode = p.get("tax_mode", "VAT")
         vatable = tax_mode == "VAT"
 
-        # ---- lot allocation (FEFO) ----
-        allocations, wcost, shortfall = ([], p.get("average_cost", 0), 0)
-        if p.get("track_lots"):
-            allocations, wcost, shortfall = await allocate_fefo(body.store_id, it.product_id, float(qty))
-            if not allocations:
-                wcost = p.get("average_cost", 0)
-        line_cost = D(wcost) * qty
+        # ---- component-aware lot allocation (FEFO) ----
+        inventory_components = []
+        line_cost = D(0)
+        for component, required, qty_per_sale in stock_specs:
+            allocations, unallocated = take_allocations(component["id"], required)
+            fallback_cost = D(component.get("average_cost") or component.get("acquisition_cost") or 0)
+            component_cost = sum(D(a.get("unit_cost", fallback_cost)) * D(a["qty"]) for a in allocations)
+            component_cost += unallocated * fallback_cost
+            line_cost += component_cost
+            inventory_components.append({
+                "product_id": component["id"], "name": component["name"],
+                "sku": component.get("sku"), "qty_per_sale": m(qty_per_sale),
+                "total_qty": m(required),
+                "unit_cost": m(component_cost / required if required > 0 else fallback_cost),
+                "line_cost": m(component_cost), "lot_allocations": allocations,
+                "unallocated_qty": m(unallocated),
+                "track_lots": component.get("track_lots", False), "track_inventory": True,
+            })
+        wcost = m(line_cost / qty) if qty > 0 else 0
         cost_total += line_cost
 
         # ---- senior/PWD vs regular math ----
@@ -214,9 +271,14 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
             "line_gross": m(line_gross), "line_net": m(line_net), "vat": m(line_vat),
             "vat_exempt": m(line_exempt), "spwd_discount": m(line_spwd_disc),
             "unit_cost": m(wcost), "line_cost": m(line_cost),
-            "sale_line_id": uid(), "lot_allocations": allocations, "refunded_qty": 0,
+            "sale_line_id": uid(),
+            "lot_allocations": (inventory_components[0]["lot_allocations"]
+                                if len(inventory_components) == 1 and inventory_components[0]["product_id"] == it.product_id
+                                else []),
+            "refunded_qty": 0,
             "discount_eligible": bool(eligible_qty > 0), "discount_eligible_qty": m(eligible_qty),
-            "track_lots": p.get("track_lots", False), "track_inventory": p.get("track_inventory", True),
+            "track_lots": p.get("track_lots", False),
+            "track_inventory": bool(inventory_components), "inventory_components": inventory_components,
         })
 
     # order-level discount (regular sales only)
@@ -265,15 +327,28 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
     for ln in line_docs:
         if not ln["track_inventory"]:
             continue
-        if ln["track_lots"] and ln["lot_allocations"]:
-            await consume_lots(ln["lot_allocations"], principal)
-            for a in ln["lot_allocations"]:
-                await record_movement(body.store_id, ln["product_id"], "SALE", -float(a["qty"]),
-                                       unit_cost=a["unit_cost"], lot_id=a["lot_id"],
-                                       reference=number, ref_id=sale["id"], principal=principal)
-        else:
-            await record_movement(body.store_id, ln["product_id"], "SALE", -float(ln["qty"]),
-                                   unit_cost=ln["unit_cost"], reference=number, ref_id=sale["id"], principal=principal)
+        components = ln.get("inventory_components") or [{
+            "product_id": ln["product_id"], "name": ln["name"], "total_qty": ln["qty"],
+            "unit_cost": ln["unit_cost"], "lot_allocations": ln.get("lot_allocations", []),
+            "unallocated_qty": 0, "track_lots": ln.get("track_lots", False),
+        }]
+        for component in components:
+            if component.get("track_lots") and component.get("lot_allocations"):
+                await consume_lots(component["lot_allocations"], principal)
+                for allocation in component["lot_allocations"]:
+                    await record_movement(body.store_id, component["product_id"], "SALE", -float(allocation["qty"]),
+                                           unit_cost=allocation["unit_cost"], lot_id=allocation["lot_id"],
+                                           reference=number, ref_id=sale["id"], principal=principal,
+                                           note=f"Component of {ln['name']}" if component["product_id"] != ln["product_id"] else "")
+                if D(component.get("unallocated_qty", 0)) > 0:
+                    await record_movement(body.store_id, component["product_id"], "SALE", -float(component["unallocated_qty"]),
+                                           unit_cost=component["unit_cost"], reference=number, ref_id=sale["id"],
+                                           principal=principal, note=f"Unallocated component of {ln['name']}")
+            else:
+                await record_movement(body.store_id, component["product_id"], "SALE", -float(component["total_qty"]),
+                                       unit_cost=component["unit_cost"], reference=number, ref_id=sale["id"],
+                                       principal=principal,
+                                       note=f"Component of {ln['name']}" if component["product_id"] != ln["product_id"] else "")
 
     # ---- loyalty ----
     if customer:
@@ -416,6 +491,45 @@ async def restore_refunded_lots(sale, sline, qty, already_refunded, number, prin
             ref_id=sale["id"], principal=principal, note=reason,
         )
 
+
+async def restore_sale_line_stock(sale, sline, qty, already_refunded, number, principal, reason, movement_type):
+    """Restore either a regular product or every physical component of a promo SKU."""
+    components = sline.get("inventory_components") or []
+    if not components:
+        if sline.get("track_lots") and sline.get("lot_allocations"):
+            await restore_refunded_lots(
+                sale, sline, qty, already_refunded, number, principal, reason, movement_type,
+            )
+        else:
+            await record_movement(
+                sale["store_id"], sline["product_id"], movement_type, float(qty),
+                unit_cost=sline.get("unit_cost", 0), reference=number,
+                ref_id=sale["id"], principal=principal, note=reason,
+            )
+        return
+
+    for component in components:
+        qty_per_sale = D(component.get("qty_per_sale", 1))
+        component_qty = D(qty) * qty_per_sale
+        component_skip = D(already_refunded) * qty_per_sale
+        stock_line = {
+            "product_id": component["product_id"],
+            "unit_cost": component.get("unit_cost", 0),
+            "lot_allocations": component.get("lot_allocations", []),
+        }
+        component_reason = f"{reason} — component of {sline['name']}"
+        if component.get("track_lots") and component.get("lot_allocations"):
+            await restore_refunded_lots(
+                sale, stock_line, component_qty, component_skip, number, principal,
+                component_reason, movement_type,
+            )
+        else:
+            await record_movement(
+                sale["store_id"], component["product_id"], movement_type, float(component_qty),
+                unit_cost=component.get("unit_cost", 0), reference=number,
+                ref_id=sale["id"], principal=principal, note=component_reason,
+            )
+
 async def _create_refund(body: RefundIn, principal, kind="REFUND", final_status=None):
     sale = await db.sales.find_one({"id": body.sale_id, "org_id": ORG_ID})
     if not sale:
@@ -499,15 +613,10 @@ async def _create_refund(body: RefundIn, principal, kind="REFUND", final_status=
     number = await next_number("VOID" if kind == "VOID" else "RFND")
     for sline, qty, already_refunded, restore_stock in prepared:
         if restore_stock and sline.get("track_inventory", True):
-            if sline.get("track_lots") and sline.get("lot_allocations"):
-                await restore_refunded_lots(
-                    sale, sline, qty, already_refunded, number, principal,
-                    body.reason.strip(), "VOID" if kind == "VOID" else "REFUND",
-                )
-            else:
-                await record_movement(sale["store_id"], sline["product_id"], "VOID" if kind == "VOID" else "REFUND", float(qty),
-                                       unit_cost=sline.get("unit_cost", 0), reference=number,
-                                       ref_id=sale["id"], principal=principal, note=body.reason.strip())
+            await restore_sale_line_stock(
+                sale, sline, qty, already_refunded, number, principal,
+                body.reason.strip(), "VOID" if kind == "VOID" else "REFUND",
+            )
 
     refund_method = (body.refund_method or (sale.get("payments") or [{}])[0].get("method") or "Cash").strip()
     refund = {"id": uid(), "number": number, "org_id": ORG_ID, "sale_id": sale["id"],

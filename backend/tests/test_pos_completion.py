@@ -2,6 +2,7 @@
 import os
 import sys
 from pathlib import Path
+from datetime import datetime, time, timedelta
 
 import pytest
 import pytest_asyncio
@@ -16,6 +17,7 @@ os.environ.setdefault("JWT_SECRET", "test-secret")
 
 import core  # noqa: E402
 import inventory_lib  # noqa: E402
+import routes_catalog  # noqa: E402
 import routes_pos  # noqa: E402
 import routes_reports  # noqa: E402
 
@@ -31,6 +33,7 @@ async def pos_db(monkeypatch):
     monkeypatch.setattr(core, "db", database)
     monkeypatch.setattr(routes_pos, "db", database)
     monkeypatch.setattr(routes_reports, "db", database)
+    monkeypatch.setattr(routes_catalog, "db", database)
     monkeypatch.setattr(inventory_lib, "db", database)
     await database.settings.insert_one({
         "org_id": core.ORG_ID,
@@ -151,6 +154,89 @@ async def test_dashboard_deducts_refunds_and_restored_cost(pos_db):
     assert report["kpi"]["refunds"] == 80
     assert report["kpi"]["cogs"] == 40
     assert report["kpi"]["gross_profit"] == 72
+
+
+@pytest.mark.asyncio
+async def test_dashboard_uses_manila_calendar_day_for_utc_sales(pos_db):
+    today = datetime.now(core.MANILA).date()
+    early_today = datetime.combine(today, time(hour=0, minute=30), tzinfo=core.MANILA).astimezone(core.timezone.utc).isoformat()
+    late_yesterday = datetime.combine(today - timedelta(days=1), time(hour=23, minute=30), tzinfo=core.MANILA).astimezone(core.timezone.utc).isoformat()
+    await pos_db.sales.insert_many([
+        {"id": "sale-today", "org_id": core.ORG_ID, "store_id": "store_main", "created_at": early_today},
+        {"id": "sale-yesterday", "org_id": core.ORG_ID, "store_id": "store_main", "created_at": late_yesterday},
+    ])
+
+    today_sales = await routes_reports.fetch_sales("today", None, None, "store_main")
+    yesterday_sales = await routes_reports.fetch_sales("yesterday", None, None, "store_main")
+
+    assert [sale["id"] for sale in today_sales] == ["sale-today"]
+    assert [sale["id"] for sale in yesterday_sales] == ["sale-yesterday"]
+
+
+@pytest.mark.asyncio
+async def test_promotional_sku_deducts_and_refunds_regular_component_stock(pos_db):
+    await pos_db.products.insert_one({
+        "id": "p_promo", "org_id": core.ORG_ID, "name": "Eligible Medicine (7+1)",
+        "sku": "PROMO-7P1", "barcode": "PROMO-BARCODE", "price": 350,
+        "average_cost": 400, "tax_mode": "VAT", "product_type": "PROMO",
+        "track_inventory": False, "track_lots": False, "discount_eligible": True,
+        "active": True, "components": [{"product_id": "p_med", "quantity": 8}],
+    })
+    sale = await routes_pos.create_sale(routes_pos.SaleIn(
+        store_id="store_main", register_id="reg_1", shift_id="shift1",
+        items=[routes_pos.SaleLine(product_id="p_promo", qty=1)],
+        payments=[routes_pos.PaymentIn(method="Cash", amount=350)],
+        client_txn_id="txn-promo-1",
+    ), principal=PRINCIPAL)
+
+    assert sale["items"][0]["product_id"] == "p_promo"
+    assert sale["items"][0]["inventory_components"][0]["product_id"] == "p_med"
+    assert sale["items"][0]["inventory_components"][0]["total_qty"] == 8
+    assert (await pos_db.inventory_levels.find_one({"product_id": "p_med"}))["quantity"] == 2
+    assert (await pos_db.inventory_lots.find_one({"id": "lot1"}))["quantity"] == 2
+
+    await routes_pos.create_refund(routes_pos.RefundIn(
+        sale_id=sale["id"], reason="Promo returned sealed",
+        lines=[routes_pos.RefundLine(sale_line_id=sale["items"][0]["sale_line_id"], qty=1, restore_stock=True)],
+    ), principal=PRINCIPAL)
+    assert (await pos_db.inventory_levels.find_one({"product_id": "p_med"}))["quantity"] == 10
+    assert (await pos_db.inventory_lots.find_one({"id": "lot1"}))["quantity"] == 10
+
+
+@pytest.mark.asyncio
+async def test_promotional_product_configuration_uses_component_cost(pos_db):
+    data = routes_catalog.ProductIn(
+        name="Eligible Medicine (7+1)", product_type="PROMO", price=350,
+        components=[routes_catalog.ProductComponent(product_id="p_med", quantity=8)],
+    ).model_dump()
+
+    prepared = await routes_catalog.prepare_product_components(data)
+
+    assert prepared["components"] == [{
+        "product_id": "p_med", "quantity": 8.0,
+        "name": "Eligible Medicine", "sku": None,
+    }]
+    assert prepared["average_cost"] == 400
+    assert prepared["track_inventory"] is False
+    assert prepared["track_lots"] is False
+
+
+@pytest.mark.asyncio
+async def test_promotional_and_regular_lines_share_stock_limit(pos_db):
+    await pos_db.products.insert_one({
+        "id": "p_promo", "org_id": core.ORG_ID, "name": "Eligible Medicine (7+1)",
+        "price": 350, "average_cost": 400, "tax_mode": "VAT", "product_type": "PROMO",
+        "track_inventory": False, "track_lots": False, "discount_eligible": True,
+        "active": True, "components": [{"product_id": "p_med", "quantity": 8}],
+    })
+    with pytest.raises(HTTPException) as exc:
+        await routes_pos.create_sale(routes_pos.SaleIn(
+            store_id="store_main", register_id="reg_1", shift_id="shift1",
+            items=[routes_pos.SaleLine(product_id="p_promo", qty=1), routes_pos.SaleLine(product_id="p_med", qty=3)],
+            payments=[routes_pos.PaymentIn(method="Cash", amount=700)],
+        ), principal=PRINCIPAL)
+    assert exc.value.status_code == 400
+    assert "11" in exc.value.detail
 
 
 @pytest.mark.asyncio

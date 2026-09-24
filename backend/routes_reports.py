@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 from typing import Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time, timezone
 from collections import defaultdict
 
 from core import db, ORG_ID, m, D, MANILA, get_current_principal
@@ -10,21 +10,37 @@ router = APIRouter(prefix="/api/reports", tags=["reports"])
 
 def parse_range(period, start, end):
     now = datetime.now(MANILA)
+    def utc_boundary(day_text, end_of_day=False):
+        day = datetime.strptime(day_text, "%Y-%m-%d").date()
+        local_time = time.max if end_of_day else time.min
+        return datetime.combine(day, local_time, tzinfo=MANILA).astimezone(timezone.utc).isoformat()
+
     if start and end:
-        return start, end + "T23:59:59"
+        return utc_boundary(start), utc_boundary(end, end_of_day=True)
     today = now.strftime("%Y-%m-%d")
     if period == "today":
-        return today, today + "T23:59:59"
+        return utc_boundary(today), utc_boundary(today, end_of_day=True)
     if period == "yesterday":
         y = (now - timedelta(days=1)).strftime("%Y-%m-%d")
-        return y, y + "T23:59:59"
+        return utc_boundary(y), utc_boundary(y, end_of_day=True)
     if period == "7d":
-        return (now - timedelta(days=7)).strftime("%Y-%m-%d"), today + "T23:59:59"
+        first = (now - timedelta(days=6)).strftime("%Y-%m-%d")
+        return utc_boundary(first), utc_boundary(today, end_of_day=True)
     if period == "30d":
-        return (now - timedelta(days=30)).strftime("%Y-%m-%d"), today + "T23:59:59"
+        first = (now - timedelta(days=29)).strftime("%Y-%m-%d")
+        return utc_boundary(first), utc_boundary(today, end_of_day=True)
     if period == "month":
-        return now.strftime("%Y-%m-01"), today + "T23:59:59"
-    return (now - timedelta(days=30)).strftime("%Y-%m-%d"), today + "T23:59:59"
+        return utc_boundary(now.strftime("%Y-%m-01")), utc_boundary(today, end_of_day=True)
+    first = (now - timedelta(days=29)).strftime("%Y-%m-%d")
+    return utc_boundary(first), utc_boundary(today, end_of_day=True)
+
+
+def local_day(iso_timestamp):
+    """Return the Philippine calendar date for a stored UTC timestamp."""
+    try:
+        return datetime.fromisoformat(iso_timestamp).astimezone(MANILA).strftime("%Y-%m-%d")
+    except (TypeError, ValueError):
+        return str(iso_timestamp or "")[:10]
 
 
 async def fetch_sales(period, start, end, store_id=None):
@@ -77,11 +93,11 @@ async def dashboard(period: str = "today", store_id: Optional[str] = None,
     # trend (by day)
     trend = defaultdict(lambda: {"sales": D(0), "profit": D(0)})
     for s in sales:
-        day = s["created_at"][:10]
+        day = local_day(s["created_at"])
         trend[day]["sales"] += D(s["total"])
         trend[day]["profit"] += D(s["gross_profit"])
     for r in refunds:
-        day = r["created_at"][:10]
+        day = local_day(r["created_at"])
         trend[day]["sales"] -= D(r.get("total", 0))
         trend[day]["profit"] -= D(r.get("total", 0)) - D(r.get("cost_restored", 0))
     trend_rows = [{"date": k, "sales": m(v["sales"]), "profit": m(v["profit"])} for k, v in sorted(trend.items())]

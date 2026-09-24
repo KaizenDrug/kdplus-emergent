@@ -100,14 +100,14 @@ export default function Inventory() {
               <tbody>
                 {sortedLevels.map((l) => (
                   <tr key={l.product_id} className="border-t border-slate-100 hover:bg-slate-50">
-                    <td className="px-4 py-2.5 font-medium text-slate-800">{l.name}<div className="text-xs text-slate-400">{l.sku}</div></td>
+                    <td className="px-4 py-2.5 font-medium text-slate-800">{l.name}<div className="text-xs text-slate-400">{l.sku}{l.virtual_promo_stock ? " · availability based on components" : ""}</div></td>
                     <td className="px-4 py-2.5 font-mono text-xs">{l.shelf_code}</td>
                     <td className="px-4 py-2.5 text-right font-semibold">{l.quantity} {l.uom}</td>
                     <td className="px-4 py-2.5 text-right text-slate-500">{l.reorder_level}</td>
                     <td className="px-4 py-2.5 text-right">{peso(l.stock_value)}</td>
                     <td className="px-4 py-2.5"><StatusBadge value={l.status} label={l.status === "OK" ? "In Stock" : l.status === "LOW" ? "Low" : "Out"} /></td>
-                    <td className="px-4 py-2.5 text-right"><button type="button" onClick={() => setAdjust(l.product_id)}
-                      className="text-xs font-semibold text-primary hover:underline" data-testid={`adjust-product-${l.product_id}`}>Adjust</button></td>
+                    <td className="px-4 py-2.5 text-right">{!l.virtual_promo_stock && <button type="button" onClick={() => setAdjust(l.product_id)}
+                      className="text-xs font-semibold text-primary hover:underline" data-testid={`adjust-product-${l.product_id}`}>Adjust</button>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -161,8 +161,8 @@ export default function Inventory() {
         <TabsContent value="movements"><LedgerTab store={store} products={products} search={search} /></TabsContent>
       </Tabs>
 
-      {receive && <ReceiveDialog store={store} products={products} onClose={() => setReceive(false)} onSaved={() => { setReceive(false); loadLevels(); loadExpiry(); toast.success("Stock received"); }} />}
-      {adjust && <AdjustDialog store={store} products={products} levels={levels} initialProductId={typeof adjust === "string" ? adjust : ""}
+      {receive && <ReceiveDialog store={store} products={products.filter((p) => (p.product_type || "REGULAR") === "REGULAR")} onClose={() => setReceive(false)} onSaved={() => { setReceive(false); loadLevels(); loadExpiry(); toast.success("Stock received"); }} />}
+      {adjust && <AdjustDialog store={store} products={products.filter((p) => (p.product_type || "REGULAR") === "REGULAR")} levels={levels} initialProductId={typeof adjust === "string" ? adjust : ""}
         onClose={() => setAdjust(false)} onSaved={() => { setAdjust(false); loadLevels(); loadExpiry(); }} />}
     </div>
   );

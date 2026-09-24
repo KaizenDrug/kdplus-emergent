@@ -38,7 +38,13 @@ async def inventory_levels(store_id: Optional[str] = None, low_only: bool = Fals
         lmap[l["product_id"]] += float(l["quantity"])
     rows = []
     for p in products:
-        qty = lmap.get(p["id"], 0)
+        is_promo = p.get("product_type", "REGULAR") == "PROMO"
+        if is_promo and p.get("components"):
+            possible = [int(lmap.get(c.get("product_id"), 0) // float(c.get("quantity") or 1))
+                        for c in p["components"]]
+            qty = min(possible) if possible else 0
+        else:
+            qty = lmap.get(p["id"], 0)
         status = "OUT" if qty <= 0 else ("LOW" if qty <= float(p.get("reorder_level", 0)) else "OK")
         if low_only and status == "OK":
             continue
@@ -48,7 +54,8 @@ async def inventory_levels(store_id: Optional[str] = None, low_only: bool = Fals
                      "reorder_qty": p.get("reorder_qty", 0), "uom": p.get("uom"),
                      "average_cost": p.get("average_cost", 0), "price": p.get("price", 0),
                      "supplier_id": p.get("supplier_id"), "status": status,
-                     "stock_value": m(D(qty) * D(p.get("average_cost", 0)))})
+                     "virtual_promo_stock": is_promo,
+                     "stock_value": 0 if is_promo else m(D(qty) * D(p.get("average_cost", 0)))})
     return rows
 
 
@@ -107,6 +114,8 @@ async def receive_stock(body: ReceiveIn, principal=Depends(require_perm("invento
         p = await db.products.find_one({"id": ln.product_id, "org_id": ORG_ID})
         if not p:
             continue
+        if p.get("product_type", "REGULAR") == "PROMO":
+            raise HTTPException(status_code=400, detail=f"Receive stock under the regular products included in {p['name']}")
         lot_id = None
         if p.get("track_lots") or p.get("track_expiry"):
             lot_id = uid()
@@ -156,6 +165,8 @@ async def adjust_stock(body: AdjustIn, principal=Depends(require_perm("inventory
         p = await db.products.find_one({"id": ln.product_id, "org_id": ORG_ID})
         if not p:
             raise HTTPException(status_code=404, detail=f"Product {ln.product_id} was not found")
+        if p.get("product_type", "REGULAR") == "PROMO":
+            raise HTTPException(status_code=400, detail=f"Adjust the regular component products instead of {p['name']}")
         before = await get_level(body.store_id, ln.product_id)
         if ln.new_quantity is not None:
             if ln.new_quantity < 0:

@@ -18,6 +18,7 @@ const empty = {
   conversion_factor: 100, acquisition_cost: 0, average_cost: 0, price: 0, reorder_level: 20, reorder_qty: 100,
   max_stock: 500, track_inventory: true, track_lots: true, track_expiry: true, tax_mode: "VAT",
   vat_inclusive: true, discount_eligible: true, shelf_code: "", storage: "", refrigerated: false, controlled: false, active: true,
+  product_type: "REGULAR", components: [],
 };
 
 export default function Products() {
@@ -132,7 +133,7 @@ export default function Products() {
               {sortedProducts.map((p) => (
                 <tr key={p.id} className="border-t border-slate-100 hover:bg-slate-50" data-testid={`product-row-${p.id}`}>
                   <td className="px-4 py-2.5">
-                    <div className="font-semibold text-slate-800">{p.name}</div>
+                    <div className="font-semibold text-slate-800 flex items-center gap-2">{p.name}{p.product_type === "PROMO" && <span className="text-[10px] rounded-full bg-fuchsia-100 text-fuchsia-700 px-2 py-0.5">PROMO</span>}</div>
                     <div className="text-xs text-slate-400">{p.generic_name} · {p.sku} · {p.shelf_code}</div>
                   </td>
                   <td className="px-4 py-2.5 text-slate-600">{catName(p.category_id)}</td>
@@ -154,7 +155,7 @@ export default function Products() {
         {!filtered.length && <Empty text="No products match your search." />}
       </Card>
 
-      {editing && <ProductDialog product={editing} categories={categories} suppliers={suppliers} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
+      {editing && <ProductDialog product={editing} products={products} categories={categories} suppliers={suppliers} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
       {importOpen && <ImportDialog onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); load(); }} />}
       {catOpen && <CategoryDialog products={products} onClose={() => setCatOpen(false)} onChanged={loadCats} />}
       {deleting && (
@@ -327,8 +328,8 @@ function ImportDialog({ onClose, onDone }) {
   );
 }
 
-function ProductDialog({ product, categories, suppliers, onClose, onSaved }) {
-  const [f, setF] = useState(product);
+function ProductDialog({ product, products, categories, suppliers, onClose, onSaved }) {
+  const [f, setF] = useState({ ...empty, ...product, components: product.components || [] });
   const [busy, setBusy] = useState(false);
   const isNew = !product.id;
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
@@ -337,12 +338,24 @@ function ProductDialog({ product, categories, suppliers, onClose, onSaved }) {
   const price = Number(f.price || 0);
   const margin = price > 0 ? (((price - cost) / price) * 100).toFixed(1) : 0;
   const markup = cost > 0 ? (((price - cost) / cost) * 100).toFixed(1) : 0;
+  const regularProducts = products.filter((p) => p.id !== product.id && (p.product_type || "REGULAR") === "REGULAR" && p.active !== false && p.track_inventory !== false);
+  const addComponent = () => {
+    const candidate = regularProducts.find((p) => !(f.components || []).some((c) => c.product_id === p.id));
+    if (!candidate) { toast.error("No more regular inventory products are available"); return; }
+    set("components", [...(f.components || []), { product_id: candidate.id, quantity: 1 }]);
+  };
+  const updateComponent = (index, key, value) => set("components", (f.components || []).map((c, i) => i === index ? { ...c, [key]: value } : c));
+  const removeComponent = (index) => set("components", (f.components || []).filter((_, i) => i !== index));
 
   const save = async () => {
     if (!f.name) { toast.error("Name is required"); return; }
+    if (f.product_type === "PROMO" && !(f.components || []).length) { toast.error("Add at least one regular product to this promotion"); return; }
     setBusy(true);
     try {
-      const body = { ...f, acquisition_cost: Number(f.acquisition_cost) || 0, average_cost: Number(f.average_cost) || Number(f.acquisition_cost) || 0, price: Number(f.price) || 0, conversion_factor: Number(f.conversion_factor) || 1, reorder_level: Number(f.reorder_level) || 0, reorder_qty: Number(f.reorder_qty) || 0, max_stock: Number(f.max_stock) || 0 };
+      const promo = f.product_type === "PROMO";
+      const body = { ...f, acquisition_cost: Number(f.acquisition_cost) || 0, average_cost: Number(f.average_cost) || Number(f.acquisition_cost) || 0, price: Number(f.price) || 0, conversion_factor: Number(f.conversion_factor) || 1, reorder_level: Number(f.reorder_level) || 0, reorder_qty: Number(f.reorder_qty) || 0, max_stock: Number(f.max_stock) || 0,
+        components: promo ? (f.components || []).map((c) => ({ product_id: c.product_id, quantity: Number(c.quantity) || 0 })) : [],
+        track_inventory: promo ? false : f.track_inventory, track_lots: promo ? false : f.track_lots, track_expiry: promo ? false : f.track_expiry };
       if (isNew) await api.post("/products", body); else await api.put(`/products/${f.id}`, body);
       toast.success("Product saved"); onSaved();
     } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); } finally { setBusy(false); }
@@ -364,6 +377,35 @@ function ProductDialog({ product, categories, suppliers, onClose, onSaved }) {
         <DialogHeader><DialogTitle>{isNew ? "New Product" : "Edit Product"}</DialogTitle></DialogHeader>
         <div className="grid grid-cols-2 gap-3">
           <div className="col-span-2">{inp("name", "Product Name")}</div>
+          <label className="block col-span-2"><span className="text-[11px] font-bold uppercase text-slate-500">Product Type</span>
+            <Select value={f.product_type || "REGULAR"} onValueChange={(v) => setF((current) => ({ ...current, product_type: v, components: v === "PROMO" ? current.components || [] : [] }))}>
+              <SelectTrigger className="mt-1" data-testid="pf-product-type"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="REGULAR">Regular product</SelectItem><SelectItem value="PROMO">Promotional SKU (uses regular product stock)</SelectItem></SelectContent>
+            </Select>
+          </label>
+          {f.product_type === "PROMO" && (
+            <div className="col-span-2 rounded-xl border border-fuchsia-200 bg-fuchsia-50/60 p-3 space-y-2" data-testid="promo-components">
+              <div className="flex items-center justify-between gap-3">
+                <div><div className="text-sm font-bold text-slate-800">Products included</div><div className="text-xs text-slate-500">Selling one promo deducts these quantities from the regular SKUs.</div></div>
+                <Button type="button" variant="outline" size="sm" onClick={addComponent} data-testid="add-promo-component"><Plus className="w-4 h-4 mr-1" />Add</Button>
+              </div>
+              {(f.components || []).map((component, index) => (
+                <div key={`${component.product_id}-${index}`} className="grid grid-cols-[1fr_110px_36px] gap-2 items-end">
+                  <label><span className="text-[10px] font-bold uppercase text-slate-500">Regular product</span>
+                    <Select value={component.product_id} onValueChange={(v) => updateComponent(index, "product_id", v)}>
+                      <SelectTrigger className="mt-1 bg-white" data-testid={`promo-component-${index}`}><SelectValue placeholder="Select product" /></SelectTrigger>
+                      <SelectContent>{regularProducts.map((p) => <SelectItem key={p.id} value={p.id} disabled={(f.components || []).some((c, i) => i !== index && c.product_id === p.id)}>{p.name} · {p.sku}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </label>
+                  <label><span className="text-[10px] font-bold uppercase text-slate-500">Qty deducted</span>
+                    <input type="number" min="0.01" step="0.01" value={component.quantity} onChange={(e) => updateComponent(index, "quantity", e.target.value)} data-testid={`promo-quantity-${index}`} className="w-full mt-1 px-3 py-2 rounded-lg bg-white border border-slate-200 text-sm" />
+                  </label>
+                  <button type="button" onClick={() => removeComponent(index)} aria-label="Remove component" className="h-10 text-red-500 hover:bg-red-100 rounded-lg"><Trash2 className="w-4 h-4 mx-auto" /></button>
+                </div>
+              ))}
+              {!(f.components || []).length && <div className="text-xs text-fuchsia-700">Add the regular item and enter 8 for an ImmunPro 7+1 promotion.</div>}
+            </div>
+          )}
           {inp("generic_name", "Generic Name")}{inp("brand", "Brand")}
           <label className="block"><span className="text-[11px] font-bold uppercase text-slate-500">Category</span>
             <Select value={f.category_id || ""} onValueChange={(v) => set("category_id", v)}><SelectTrigger className="mt-1" data-testid="pf-category"><SelectValue placeholder="Select" /></SelectTrigger>
@@ -379,12 +421,12 @@ function ProductDialog({ product, categories, suppliers, onClose, onSaved }) {
           <label className="block"><span className="text-[11px] font-bold uppercase text-slate-500">Tax Mode</span>
             <Select value={f.tax_mode} onValueChange={(v) => set("tax_mode", v)}><SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
               <SelectContent><SelectItem value="VAT">VATable (12%)</SelectItem><SelectItem value="EXEMPT">VAT-Exempt</SelectItem><SelectItem value="ZERO">Zero-Rated</SelectItem></SelectContent></Select></label>
-          {inp("acquisition_cost", "Cost (₱)", { type: "number" })}{inp("price", "Selling Price (₱)", { type: "number" })}
+          {f.product_type !== "PROMO" ? inp("acquisition_cost", "Cost (₱)", { type: "number" }) : <div className="text-xs text-slate-500 rounded-lg bg-slate-50 p-3 self-end">Cost is calculated from the regular products.</div>}{inp("price", "Selling Price (₱)", { type: "number" })}
           <div className="col-span-2 text-xs text-slate-500 bg-slate-50 rounded-lg p-2.5">Markup: <b className="text-slate-700">{markup}%</b> · Gross Margin: <b className="text-slate-700">{margin}%</b></div>
           {inp("reorder_level", "Reorder Level", { type: "number" })}{inp("reorder_qty", "Reorder Qty", { type: "number" })}
           {inp("shelf_code", "Shelf Code", { ph: "A1" })}{inp("storage", "Storage", { ph: "Store below 30°C" })}
           <div className="col-span-2 flex flex-wrap gap-4 pt-1">
-            {[["track_lots", "Track Lots"], ["track_expiry", "Track Expiry"], ["track_inventory", "Track Inventory"], ["discount_eligible", "Discount Eligible"], ["refrigerated", "Refrigerated"]].map(([k, l]) => (
+            {[["track_lots", "Track Lots"], ["track_expiry", "Track Expiry"], ["track_inventory", "Track Inventory"], ["discount_eligible", "Discount Eligible"], ["refrigerated", "Refrigerated"]].filter(([k]) => f.product_type !== "PROMO" || !["track_lots", "track_expiry", "track_inventory"].includes(k)).map(([k, l]) => (
               <label key={k} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!f[k]} onChange={(e) => set(k, e.target.checked)} data-testid={`pf-${k}`} className="w-4 h-4 accent-teal-600" />{l}</label>
             ))}
           </div>

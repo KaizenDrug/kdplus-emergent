@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 import re
 import csv
@@ -82,6 +82,11 @@ async def update_supplier(sid: str, body: SupplierIn, principal=Depends(require_
 
 
 # ---------------- Products ----------------
+class ProductComponent(BaseModel):
+    product_id: str
+    quantity: float
+
+
 class ProductIn(BaseModel):
     name: str
     generic_name: Optional[str] = ""
@@ -130,6 +135,8 @@ class ProductIn(BaseModel):
     vat_inclusive: bool = True
     shelf_code: Optional[str] = ""
     active: bool = True
+    product_type: str = "REGULAR"          # REGULAR / PROMO
+    components: List[ProductComponent] = Field(default_factory=list)
 
 
 def compute_margins(p: dict) -> dict:
@@ -200,6 +207,55 @@ async def ensure_unique_product(data: dict, exclude_id: Optional[str] = None):
         raise HTTPException(status_code=409, detail=detail)
 
 
+async def prepare_product_components(data: dict, product_id: Optional[str] = None):
+    """Validate a promotional SKU and snapshot its component names and costs."""
+    product_type = (data.get("product_type") or "REGULAR").upper()
+    if product_type not in ("REGULAR", "PROMO"):
+        raise HTTPException(status_code=400, detail="Product type must be REGULAR or PROMO")
+    data["product_type"] = product_type
+    if product_type == "REGULAR":
+        data["components"] = []
+        return data
+
+    raw_components = data.get("components") or []
+    if not raw_components:
+        raise HTTPException(status_code=400, detail="Add at least one regular product to the promotional SKU")
+    seen = set()
+    components = []
+    total_cost = D(0)
+    for raw in raw_components:
+        component = raw.model_dump() if hasattr(raw, "model_dump") else dict(raw)
+        component_id = (component.get("product_id") or "").strip()
+        quantity = D(component.get("quantity"))
+        if not component_id or quantity <= 0:
+            raise HTTPException(status_code=400, detail="Every promotional component needs a product and a quantity greater than zero")
+        if component_id == product_id:
+            raise HTTPException(status_code=400, detail="A promotional SKU cannot contain itself")
+        if component_id in seen:
+            raise HTTPException(status_code=400, detail="A product can only appear once in a promotional SKU")
+        product = await db.products.find_one({"id": component_id, "org_id": ORG_ID}, {"_id": 0})
+        if not product or not product.get("active", True):
+            raise HTTPException(status_code=400, detail="A selected promotional component is unavailable")
+        if product.get("product_type", "REGULAR") == "PROMO":
+            raise HTTPException(status_code=400, detail="Promotional SKUs may only contain regular products")
+        if not product.get("track_inventory", True):
+            raise HTTPException(status_code=400, detail=f"{product['name']} does not track inventory and cannot be a promotional component")
+        seen.add(component_id)
+        unit_cost = D(product.get("average_cost") or product.get("acquisition_cost") or 0)
+        total_cost += unit_cost * quantity
+        components.append({"product_id": component_id, "quantity": m(quantity),
+                           "name": product["name"], "sku": product.get("sku")})
+
+    data["components"] = components
+    data["track_inventory"] = False
+    data["track_lots"] = False
+    data["track_expiry"] = False
+    data["acquisition_cost"] = m(total_cost)
+    data["average_cost"] = m(total_cost)
+    data["latest_cost"] = m(total_cost)
+    return data
+
+
 def product_search_clauses(search: str):
     """Return AND-of-terms clauses, with each term matching any product field."""
     terms = [term for term in re.split(r"\s+", (search or "").strip()) if term]
@@ -242,6 +298,7 @@ async def get_product(pid: str, principal=Depends(get_current_principal)):
 async def create_product(body: ProductIn, principal=Depends(require_perm("*"))):
     data = body.model_dump()
     data["sku"] = (data.get("sku") or "").strip() or await next_number("SKU")
+    data = await prepare_product_components(data)
     await ensure_unique_product(data)
     if not data.get("average_cost"):
         data["average_cost"] = data.get("acquisition_cost", 0)
@@ -260,6 +317,18 @@ async def update_product(pid: str, body: ProductIn, principal=Depends(require_pe
         raise HTTPException(status_code=404, detail="Product not found")
     data = body.model_dump()
     data["sku"] = (data.get("sku") or "").strip() or old.get("sku") or await next_number("SKU")
+    data = await prepare_product_components(data, product_id=pid)
+    if data["product_type"] == "PROMO" and old.get("product_type", "REGULAR") != "PROMO":
+        used_by = await db.products.find_one(
+            {"org_id": ORG_ID, "components.product_id": pid}, {"_id": 0, "name": 1})
+        if used_by:
+            raise HTTPException(status_code=409, detail=f"This product is already used by promotional SKU {used_by['name']}")
+        stock = await db.inventory_levels.find_one(
+            {"org_id": ORG_ID, "product_id": pid, "quantity": {"$ne": 0}}, {"_id": 1})
+        lot_stock = await db.inventory_lots.find_one(
+            {"org_id": ORG_ID, "product_id": pid, "quantity": {"$ne": 0}}, {"_id": 1})
+        if stock or lot_stock:
+            raise HTTPException(status_code=409, detail="Adjust this product's stock to zero before converting it to a promotional SKU")
     await ensure_unique_product(data, exclude_id=pid)
     data = compute_margins(data)
     data["updated_at"] = now_iso()
@@ -281,6 +350,7 @@ async def delete_product(pid: str, principal=Depends(require_perm("*"))):
         raise HTTPException(status_code=404, detail="Product not found")
 
     references = (
+        (db.products, {"org_id": ORG_ID, "components.product_id": pid}, "promotional SKUs"),
         (db.sales, {"org_id": ORG_ID, "items.product_id": pid}, "sales"),
         (db.refunds, {"org_id": ORG_ID, "items.product_id": pid}, "refunds"),
         (db.purchase_orders, {"org_id": ORG_ID, "items.product_id": pid}, "purchase orders"),
