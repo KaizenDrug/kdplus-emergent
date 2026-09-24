@@ -1,16 +1,17 @@
 import React, { useEffect, useState, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import api, { peso, apiError } from "@/lib/api";
-import { PageHeader, Card, StatusBadge, Empty } from "@/components/kit";
+import { PageHeader, Card, Empty } from "@/components/kit";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Plus, Search, Pencil, Upload, FileDown, Tags, Trash2 } from "lucide-react";
+import { Plus, Search, Pencil, Upload, FileDown, Tags, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { matchesSearchTerms } from "@/lib/utils";
 import { sortTableRows } from "@/lib/utils";
 import SortableHeader from "@/components/SortableHeader";
 import { useAuth } from "@/context/AuthContext";
+import { ACTIVE_STORES } from "@/lib/stores";
 
 const empty = {
   name: "", generic_name: "", brand: "", category_id: "", supplier_id: "", sku: "", barcode: "",
@@ -28,8 +29,11 @@ export default function Products() {
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
+  const [store, setStore] = useState("store_main");
+  const [levels, setLevels] = useState([]);
   const [q, setQ] = useState(urlQuery);
   const [cat, setCat] = useState("all");
+  const [stockFilter, setStockFilter] = useState("all");
   const [editing, setEditing] = useState(null);
   const [preparingProduct, setPreparingProduct] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -40,11 +44,13 @@ export default function Products() {
 
   const load = () => api.get("/products?limit=1000").then((r) => setProducts(r.data));
   const loadCats = () => api.get("/categories").then((r) => setCategories(r.data));
+  const loadLevels = () => api.get(`/inventory/levels?store_id=${store}`).then((r) => setLevels(r.data));
   useEffect(() => {
     load();
     loadCats();
     api.get("/suppliers").then((r) => setSuppliers(r.data));
   }, []);
+  useEffect(() => { loadLevels(); }, [store]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setQ(urlQuery); }, [urlQuery]);
 
   const canDelete = (user?.permissions || []).includes("*");
@@ -59,6 +65,43 @@ export default function Products() {
     } catch (e) {
       toast.error(apiError(e.response?.data?.detail) || "Product could not be deleted");
     } finally { setDeleteBusy(false); }
+  };
+  const levelByProduct = useMemo(() => Object.fromEntries(levels.map((level) => [level.product_id, level])), [levels]);
+  const updateProductValue = async (product, field, value) => {
+    const amount = Number(value);
+    if (!Number.isFinite(amount) || amount < 0) {
+      toast.error("Enter a valid amount of zero or more");
+      throw new Error("Invalid amount");
+    }
+    const body = field === "cost"
+      ? { ...product, acquisition_cost: amount, average_cost: amount, latest_cost: amount }
+      : { ...product, price: amount };
+    try {
+      const { data } = await api.put(`/products/${product.id}`, body);
+      setProducts((items) => items.map((item) => item.id === product.id ? data : item));
+      toast.success(`${product.name} ${field === "cost" ? "cost" : "price"} updated`);
+    } catch (e) {
+      toast.error(apiError(e.response?.data?.detail || e.message) || "Update failed");
+      throw e;
+    }
+  };
+  const updateStockOnHand = async (product, value) => {
+    const quantity = Number(value);
+    if (!Number.isFinite(quantity) || quantity < 0) {
+      toast.error("Stock on hand cannot be negative");
+      throw new Error("Invalid stock quantity");
+    }
+    try {
+      await api.post("/inventory/adjust", {
+        store_id: store, reason: "correction", notes: "Edited from Products page",
+        lines: [{ product_id: product.id, new_quantity: quantity }],
+      });
+      await loadLevels();
+      toast.success(`${product.name} stock updated`);
+    } catch (e) {
+      toast.error(apiError(e.response?.data?.detail || e.message) || "Stock update failed");
+      throw e;
+    }
   };
 
   const catName = (id) => categories.find((c) => c.id === id)?.name || "—";
@@ -85,16 +128,20 @@ export default function Products() {
   };
   const filtered = useMemo(() => products.filter((p) => {
     if (cat !== "all" && p.category_id !== cat) return false;
+    const level = levelByProduct[p.id];
+    if (stockFilter === "low" && level?.status !== "LOW") return false;
+    if (stockFilter === "out" && level?.status !== "OUT") return false;
     if (!q) return true;
     return matchesSearchTerms(q, [p.name, p.generic_name, p.brand, p.sku, p.barcode, p.manufacturer]);
-  }), [products, q, cat]);
+  }), [products, q, cat, stockFilter, levelByProduct]);
   const sortedProducts = useMemo(() => sortTableRows(filtered, sort, {
     category: (p) => catName(p.category_id),
     class: (p) => p.rx_classification,
     cost: (p) => Number(p.average_cost || 0),
     price: (p) => Number(p.price || 0),
     margin: (p) => Number(p.margin_pct || 0),
-  }), [filtered, sort, categories]); // eslint-disable-line react-hooks/exhaustive-deps
+    stock: (p) => Number(levelByProduct[p.id]?.quantity || 0),
+  }), [filtered, sort, categories, levelByProduct]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div>
@@ -115,6 +162,14 @@ export default function Products() {
           <SelectTrigger className="w-56" data-testid="filter-category"><SelectValue /></SelectTrigger>
           <SelectContent><SelectItem value="all">All Categories</SelectItem>{categories.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
         </Select>
+        <Select value={stockFilter} onValueChange={setStockFilter}>
+          <SelectTrigger className="w-40" data-testid="filter-stock"><SelectValue /></SelectTrigger>
+          <SelectContent><SelectItem value="all">All Stock</SelectItem><SelectItem value="low">Low Stock</SelectItem><SelectItem value="out">Out of Stock</SelectItem></SelectContent>
+        </Select>
+        <Select value={store} onValueChange={setStore}>
+          <SelectTrigger className="w-44" data-testid="product-store"><SelectValue /></SelectTrigger>
+          <SelectContent>{ACTIVE_STORES.map((branch) => <SelectItem key={branch.id} value={branch.id}>{branch.name}</SelectItem>)}</SelectContent>
+        </Select>
       </Card>
 
       <Card className="overflow-hidden">
@@ -123,10 +178,10 @@ export default function Products() {
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
               <tr><SortableHeader column="name" label="Product" sort={sort} onSort={setSort} />
                 <SortableHeader column="category" label="Category" sort={sort} onSort={setSort} />
-                <SortableHeader column="class" label="Class" sort={sort} onSort={setSort} />
-                <SortableHeader column="cost" label="Cost" sort={sort} onSort={setSort} numeric />
                 <SortableHeader column="price" label="Price" sort={sort} onSort={setSort} numeric />
+                <SortableHeader column="cost" label="Cost" sort={sort} onSort={setSort} numeric />
                 <SortableHeader column="margin" label="Margin" sort={sort} onSort={setSort} numeric />
+                <SortableHeader column="stock" label="In Stock" sort={sort} onSort={setSort} numeric />
                 <th className="px-4 py-3"></th></tr>
             </thead>
             <tbody>
@@ -134,13 +189,19 @@ export default function Products() {
                 <tr key={p.id} className="border-t border-slate-100 hover:bg-slate-50" data-testid={`product-row-${p.id}`}>
                   <td className="px-4 py-2.5">
                     <div className="font-semibold text-slate-800 flex items-center gap-2">{p.name}{p.product_type === "PROMO" && <span className="text-[10px] rounded-full bg-fuchsia-100 text-fuchsia-700 px-2 py-0.5">PROMO</span>}</div>
-                    <div className="text-xs text-slate-400">{p.generic_name} · {p.sku} · {p.shelf_code}</div>
+                    <div className="text-xs text-slate-400">{p.generic_name} · {p.sku} · {p.shelf_code} · {p.rx_classification}</div>
                   </td>
                   <td className="px-4 py-2.5 text-slate-600">{catName(p.category_id)}</td>
-                  <td className="px-4 py-2.5"><StatusBadge value={p.rx_classification} /></td>
-                  <td className="px-4 py-2.5 text-right text-slate-600">{peso(p.average_cost)}</td>
-                  <td className="px-4 py-2.5 text-right font-semibold">{peso(p.price)}</td>
+                  <td className="px-4 py-2.5 text-right"><InlineNumber value={p.price} currency testId={`inline-price-${p.id}`} onSave={(value) => updateProductValue(p, "price", value)} /></td>
+                  <td className="px-4 py-2.5 text-right"><InlineNumber value={p.average_cost} currency disabled={p.product_type === "PROMO"} testId={`inline-cost-${p.id}`} onSave={(value) => updateProductValue(p, "cost", value)} /></td>
                   <td className="px-4 py-2.5 text-right text-slate-500">{p.margin_pct}%</td>
+                  <td className="px-4 py-2.5 text-right">
+                    <InlineNumber value={levelByProduct[p.id]?.quantity || 0} disabled={p.product_type === "PROMO" || p.track_inventory === false}
+                      testId={`inline-stock-${p.id}`} onSave={(value) => updateStockOnHand(p, value)} />
+                    {levelByProduct[p.id]?.status === "LOW" && <div className="text-[11px] font-semibold text-amber-600">Low stock</div>}
+                    {levelByProduct[p.id]?.status === "OUT" && <div className="text-[11px] font-semibold text-red-600">Out of stock</div>}
+                    {p.product_type === "PROMO" && <div className="text-[10px] text-fuchsia-600">From components</div>}
+                  </td>
                   <td className="px-4 py-2.5 text-right">
                     <div className="inline-flex items-center gap-1">
                       <button onClick={() => setEditing(p)} aria-label={`Edit ${p.name}`} data-testid={`edit-product-${p.id}`} className="text-primary hover:bg-primary/10 p-1.5 rounded"><Pencil className="w-4 h-4" /></button>
@@ -173,6 +234,37 @@ export default function Products() {
           </DialogContent>
         </Dialog>
       )}
+    </div>
+  );
+}
+
+function InlineNumber({ value, onSave, currency = false, disabled = false, testId }) {
+  const [draft, setDraft] = useState(String(Number(value || 0)));
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { if (!saving) setDraft(String(Number(value || 0))); }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const commit = async () => {
+    if (disabled || saving) return;
+    const numeric = Number(draft);
+    if (Number.isFinite(numeric) && numeric === Number(value || 0)) return;
+    setSaving(true);
+    try { await onSave(draft); }
+    catch { setDraft(String(Number(value || 0))); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className={`relative ml-auto inline-flex w-28 items-center border-b ${disabled ? "border-transparent text-slate-400" : "border-slate-300 focus-within:border-primary"}`}>
+      {currency && <span className="pl-1 text-sm">₱</span>}
+      <input type="number" min="0" step="0.01" value={draft} disabled={disabled || saving}
+        onChange={(e) => setDraft(e.target.value)} onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") { setDraft(String(Number(value || 0))); e.currentTarget.blur(); }
+        }}
+        aria-label={testId} data-testid={testId}
+        className="w-full bg-transparent px-1 py-1 text-right text-sm font-medium outline-none disabled:cursor-default" />
+      {saving && <Loader2 className="absolute -right-5 h-3.5 w-3.5 animate-spin text-primary" />}
     </div>
   );
 }
@@ -330,11 +422,13 @@ function ImportDialog({ onClose, onDone }) {
 
 function ProductDialog({ product, products, categories, suppliers, onClose, onSaved }) {
   const [f, setF] = useState({ ...empty, ...product, components: product.components || [] });
+  const [manualCost, setManualCost] = useState(product.average_cost ?? product.acquisition_cost ?? 0);
+  const [costEdited, setCostEdited] = useState(false);
   const [busy, setBusy] = useState(false);
   const isNew = !product.id;
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
 
-  const cost = Number(f.average_cost || f.acquisition_cost || 0);
+  const cost = Number(manualCost || 0);
   const price = Number(f.price || 0);
   const margin = price > 0 ? (((price - cost) / price) * 100).toFixed(1) : 0;
   const markup = cost > 0 ? (((price - cost) / cost) * 100).toFixed(1) : 0;
@@ -353,7 +447,12 @@ function ProductDialog({ product, products, categories, suppliers, onClose, onSa
     setBusy(true);
     try {
       const promo = f.product_type === "PROMO";
-      const body = { ...f, acquisition_cost: Number(f.acquisition_cost) || 0, average_cost: Number(f.average_cost) || Number(f.acquisition_cost) || 0, price: Number(f.price) || 0, conversion_factor: Number(f.conversion_factor) || 1, reorder_level: Number(f.reorder_level) || 0, reorder_qty: Number(f.reorder_qty) || 0, max_stock: Number(f.max_stock) || 0,
+      const enteredCost = Number(manualCost) || 0;
+      const body = { ...f,
+        acquisition_cost: costEdited ? enteredCost : Number(f.acquisition_cost) || 0,
+        average_cost: costEdited ? enteredCost : Number(f.average_cost) || Number(f.acquisition_cost) || 0,
+        latest_cost: costEdited ? enteredCost : Number(f.latest_cost) || Number(f.average_cost) || Number(f.acquisition_cost) || 0,
+        price: Number(f.price) || 0, conversion_factor: Number(f.conversion_factor) || 1, reorder_level: Number(f.reorder_level) || 0, reorder_qty: Number(f.reorder_qty) || 0, max_stock: Number(f.max_stock) || 0,
         components: promo ? (f.components || []).map((c) => ({ product_id: c.product_id, quantity: Number(c.quantity) || 0 })) : [],
         track_inventory: promo ? false : f.track_inventory, track_lots: promo ? false : f.track_lots, track_expiry: promo ? false : f.track_expiry };
       if (isNew) await api.post("/products", body); else await api.put(`/products/${f.id}`, body);
@@ -421,7 +520,12 @@ function ProductDialog({ product, products, categories, suppliers, onClose, onSa
           <label className="block"><span className="text-[11px] font-bold uppercase text-slate-500">Tax Mode</span>
             <Select value={f.tax_mode} onValueChange={(v) => set("tax_mode", v)}><SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
               <SelectContent><SelectItem value="VAT">VATable (12%)</SelectItem><SelectItem value="EXEMPT">VAT-Exempt</SelectItem><SelectItem value="ZERO">Zero-Rated</SelectItem></SelectContent></Select></label>
-          {f.product_type !== "PROMO" ? inp("acquisition_cost", "Cost (₱)", { type: "number" }) : <div className="text-xs text-slate-500 rounded-lg bg-slate-50 p-3 self-end">Cost is calculated from the regular products.</div>}{inp("price", "Selling Price (₱)", { type: "number" })}
+          {f.product_type !== "PROMO" ? (
+            <label className="block"><span className="text-[11px] font-bold uppercase text-slate-500">Cost (₱)</span>
+              <input type="number" value={manualCost} onChange={(e) => { setManualCost(e.target.value); setCostEdited(true); }} data-testid="pf-acquisition_cost"
+                className="w-full mt-1 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+            </label>
+          ) : <div className="text-xs text-slate-500 rounded-lg bg-slate-50 p-3 self-end">Cost is calculated from the regular products.</div>}{inp("price", "Selling Price (₱)", { type: "number" })}
           <div className="col-span-2 text-xs text-slate-500 bg-slate-50 rounded-lg p-2.5">Markup: <b className="text-slate-700">{markup}%</b> · Gross Margin: <b className="text-slate-700">{margin}%</b></div>
           {inp("reorder_level", "Reorder Level", { type: "number" })}{inp("reorder_qty", "Reorder Qty", { type: "number" })}
           {inp("shelf_code", "Shelf Code", { ph: "A1" })}{inp("storage", "Storage", { ph: "Store below 30°C" })}

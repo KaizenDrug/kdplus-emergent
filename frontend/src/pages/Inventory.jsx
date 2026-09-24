@@ -11,6 +11,7 @@ import { PackagePlus, SlidersHorizontal, CalendarClock, AlertTriangle, PackageX,
 import { toast } from "sonner";
 import SortableHeader from "@/components/SortableHeader";
 import { matchesSearchTerms, sortTableRows } from "@/lib/utils";
+import { ACTIVE_STORES } from "@/lib/stores";
 
 export default function Inventory() {
   const [store, setStore] = useState("store_main");
@@ -55,7 +56,7 @@ export default function Inventory() {
       <PageHeader title="Inventory & Expiry" subtitle="Store-specific stock, lots & FEFO expiry monitoring">
         <Select value={store} onValueChange={setStore}>
           <SelectTrigger className="w-44" data-testid="inv-store"><SelectValue /></SelectTrigger>
-          <SelectContent><SelectItem value="store_main">KDPLUS Main</SelectItem><SelectItem value="store_annex">KDPLUS Annex</SelectItem></SelectContent>
+          <SelectContent>{ACTIVE_STORES.map((branch) => <SelectItem key={branch.id} value={branch.id}>{branch.name}</SelectItem>)}</SelectContent>
         </Select>
         <Button variant="outline" onClick={() => setAdjust(true)} data-testid="adjust-btn"><SlidersHorizontal className="w-4 h-4 mr-1" />Adjust</Button>
         <Button onClick={() => setReceive(true)} data-testid="receive-btn" className="bg-primary hover:bg-teal-800"><PackagePlus className="w-4 h-4 mr-1" />Receive Stock</Button>

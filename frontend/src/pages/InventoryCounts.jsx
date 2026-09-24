@@ -6,8 +6,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Plus, ClipboardCheck, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
+import { ACTIVE_STORES, STORE_NAMES } from "@/lib/stores";
 
-const STORES = { store_main: "KDPLUS Main", store_annex: "KDPLUS Annex" };
+const STORES = STORE_NAMES;
 
 export default function InventoryCounts() {
   const [rows, setRows] = useState([]);
@@ -64,7 +65,7 @@ function CountCreate({ categories, onClose, onSaved }) {
         <div className="space-y-3">
           <label className="block"><span className="text-[11px] font-bold uppercase text-slate-500">Store</span>
             <Select value={store} onValueChange={setStore}><SelectTrigger className="mt-1" data-testid="count-store"><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="store_main">KDPLUS Main</SelectItem><SelectItem value="store_annex">KDPLUS Annex</SelectItem></SelectContent></Select></label>
+              <SelectContent>{ACTIVE_STORES.map((branch) => <SelectItem key={branch.id} value={branch.id}>{branch.name}</SelectItem>)}</SelectContent></Select></label>
           <label className="block"><span className="text-[11px] font-bold uppercase text-slate-500">Scope</span>
             <Select value={category} onValueChange={setCategory}><SelectTrigger className="mt-1" data-testid="count-scope"><SelectValue /></SelectTrigger>
               <SelectContent><SelectItem value="all">Full count (all items)</SelectItem>{categories.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent></Select></label>

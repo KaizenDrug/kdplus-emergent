@@ -94,20 +94,35 @@ function isAndroid() {
   return typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent || "");
 }
 
-function printWithAndroidBluetoothService(sale, settings, refunds) {
-  const html = receiptHtml(sale, settings, refunds);
-  const hasCashPayment = (sale.payments || []).some((payment) => payment.method === "Cash");
-  const openDrawer = settings.printing?.open_cash_drawer !== false && hasCashPayment;
-  const link = "print://escpos.org/escpos/bt/print?srcTp=uri&srcObj=html&numCopies=1"
+function androidBluetoothLink(html, openDrawer) {
+  return "print://escpos.org/escpos/bt/print?srcTp=uri&srcObj=html&numCopies=1"
     + `&openCashDrawer=${openDrawer ? "true" : "false"}`
     + `&src='data:text/html,${encodeURIComponent(html)}'`;
-  window.location.href = link;
 }
 
-export function printThermalReceipt(sale, settings = {}, refunds = []) {
+function printWithAndroidBluetoothService(sale, settings, refunds, openDrawer = false) {
+  const html = receiptHtml(sale, settings, refunds);
+  window.location.href = androidBluetoothLink(html, openDrawer);
+}
+
+export function openCashDrawerForSale(sale, settings = {}) {
+  const hasCashPayment = (sale?.payments || []).some((payment) => payment.method === "Cash");
+  if (!sale || !hasCashPayment || settings.printing?.open_cash_drawer === false) return false;
+  if (!isAndroid() || settings.printing?.android_bluetooth_bridge === false) return false;
+  // The bridge requires a source document even for a drawer-only request. A zero-size
+  // page sends no receipt content while openCashDrawer issues the printer pulse.
+  const blank = "<!doctype html><html><head><style>@page{size:58mm 0;margin:0}html,body{width:0;height:0;margin:0;padding:0;overflow:hidden}</style></head><body></body></html>";
+  window.location.href = androidBluetoothLink(blank, true);
+  return true;
+}
+
+export function printThermalReceipt(sale, settings = {}, refunds = [], options = {}) {
   if (!sale) return false;
   if (isAndroid() && settings.printing?.android_bluetooth_bridge !== false) {
-    printWithAndroidBluetoothService(sale, settings, refunds);
+    const hasCashPayment = (sale.payments || []).some((payment) => payment.method === "Cash");
+    const openDrawer = options.openDrawer === true
+      && settings.printing?.open_cash_drawer !== false && hasCashPayment;
+    printWithAndroidBluetoothService(sale, settings, refunds, openDrawer);
     return true;
   }
   const frame = document.createElement("iframe");

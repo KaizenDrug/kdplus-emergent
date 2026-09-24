@@ -13,12 +13,17 @@ router = APIRouter(prefix="/api", tags=["inventory"])
 # ---------------- Stores & Registers ----------------
 @router.get("/stores")
 async def list_stores(principal=Depends(get_current_principal)):
-    return await db.stores.find({"org_id": ORG_ID}, {"_id": 0}).to_list(100)
+    return await db.stores.find(
+        {"org_id": ORG_ID, "id": {"$ne": "store_annex"}, "active": {"$ne": False}},
+        {"_id": 0},
+    ).to_list(100)
 
 @router.get("/registers")
 async def list_registers(store_id: Optional[str] = None, principal=Depends(get_current_principal)):
-    q = {"org_id": ORG_ID}
+    q = {"org_id": ORG_ID, "store_id": {"$ne": "store_annex"}, "active": {"$ne": False}}
     if store_id:
+        if store_id == "store_annex":
+            return []
         q["store_id"] = store_id
     return await db.registers.find(q, {"_id": 0}).to_list(100)
 
@@ -181,7 +186,64 @@ async def adjust_stock(body: AdjustIn, principal=Depends(require_perm("inventory
     results = []
     for ln, p, before, change in planned:
         if ln.lot_id:
-            await db.inventory_lots.update_one({"id": ln.lot_id}, {"$inc": {"quantity": float(change)}})
+            lot = await db.inventory_lots.find_one({
+                "id": ln.lot_id, "org_id": ORG_ID, "store_id": body.store_id,
+                "product_id": ln.product_id,
+            })
+            if not lot:
+                raise HTTPException(status_code=404, detail=f"{p.get('name')}: inventory lot was not found")
+            lot_after = m(D(lot.get("quantity")) + D(change))
+            if lot_after < 0:
+                raise HTTPException(status_code=400, detail=f"{p.get('name')}: lot quantity cannot be negative")
+            await db.inventory_lots.update_one(
+                {"id": ln.lot_id},
+                {"$set": {"quantity": lot_after,
+                          "status": "DEPLETED" if lot_after == 0 else "ACTIVE",
+                          "updated_at": now_iso()}},
+            )
+        elif ln.new_quantity is not None and D(ln.new_quantity) == 0:
+            # Product-level corrections must clear the lot balances too; otherwise the
+            # visible on-hand quantity is zero while expiry/FEFO still sees hidden stock.
+            await db.inventory_lots.update_many(
+                {"org_id": ORG_ID, "store_id": body.store_id,
+                 "product_id": ln.product_id, "quantity": {"$ne": 0}},
+                {"$set": {"quantity": 0, "status": "DEPLETED", "updated_at": now_iso()}},
+            )
+        elif (p.get("track_lots") or p.get("track_expiry")) and D(change) < 0:
+            # A product-level count must reconcile the FEFO lot balances as well as
+            # the aggregate level. Reduce the oldest-expiring lots first.
+            remaining = -D(change)
+            lots = await db.inventory_lots.find(
+                {"org_id": ORG_ID, "store_id": body.store_id,
+                 "product_id": ln.product_id, "quantity": {"$gt": 0}},
+                {"_id": 0},
+            ).to_list(10000)
+            lots.sort(key=lambda lot: lot.get("expiry_date") or "9999-12-31")
+            for lot in lots:
+                if remaining <= 0:
+                    break
+                available = D(lot.get("quantity"))
+                deducted = min(available, remaining)
+                lot_after = m(available - deducted)
+                await db.inventory_lots.update_one(
+                    {"id": lot["id"]},
+                    {"$set": {"quantity": lot_after,
+                              "status": "DEPLETED" if lot_after == 0 else "ACTIVE",
+                              "updated_at": now_iso()}},
+                )
+                remaining -= deducted
+        elif (p.get("track_lots") or p.get("track_expiry")) and D(change) > 0:
+            # Stock-count increases have no supplier lot. Keep FEFO totals aligned
+            # by creating a clearly identified adjustment lot without an expiry.
+            await db.inventory_lots.insert_one({
+                "id": uid(), "org_id": ORG_ID, "store_id": body.store_id,
+                "product_id": ln.product_id, "lot_number": number,
+                "expiry_date": None, "quantity": m(change),
+                "unit_cost": m(p.get("average_cost", 0)), "supplier_id": None,
+                "status": "ACTIVE", "received_date": now_iso(),
+                "created_at": now_iso(), "updated_at": now_iso(),
+                "source": "STOCK_ADJUSTMENT",
+            })
         after = await record_movement(body.store_id, ln.product_id, "ADJUSTMENT", change,
                                       unit_cost=p.get("average_cost", 0), lot_id=ln.lot_id,
                                       reference=number, principal=principal,

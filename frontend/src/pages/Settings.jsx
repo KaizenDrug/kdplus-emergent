@@ -76,7 +76,7 @@ function PrintingTab({ s, save }) {
           <input type="checkbox" checked={printing.open_cash_drawer}
             onChange={(e) => setPrinting((x) => ({ ...x, open_cash_drawer: e.target.checked }))}
             className="w-4 h-4 accent-teal-600" data-testid="set-open-cash-drawer" />
-          Open automatically when printing a cash sale
+          Open automatically after every cash sale, even without printing
         </label>
       </Row>
       <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
@@ -84,6 +84,7 @@ function PrintingTab({ s, save }) {
         Install and configure <a className="underline" target="_blank" rel="noreferrer"
           href="https://play.google.com/store/apps/details?id=com.loopedlabs.escposprintservice">ESC/POS Bluetooth Print Service</a>,
         select the paired printer and 58 mm paper, then use its Test Print and Open Drawer tests. KDPLUS will send receipts directly to that app.
+        With Cash Drawer enabled, completing a cash sale opens the drawer even when receipt printing is set to manual.
         When using Mac/PC system printing, select 58 mm paper, margins None, and disable browser headers and footers.
       </div>
       <div className="mt-4"><Button onClick={() => save({ printing })} data-testid="save-printing" className="bg-primary hover:bg-teal-800">Save Printing Settings</Button></div>

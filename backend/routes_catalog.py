@@ -318,6 +318,16 @@ async def update_product(pid: str, body: ProductIn, principal=Depends(require_pe
     data = body.model_dump()
     data["sku"] = (data.get("sku") or "").strip() or old.get("sku") or await next_number("SKU")
     data = await prepare_product_components(data, product_id=pid)
+    # The product editor exposes one manual Cost field. Older clients changed the
+    # acquisition cost but sent the previous average cost back unchanged, making
+    # the edit appear to have been ignored on the Products page. Treat that
+    # pattern as an explicit manual cost correction. Goods receiving still uses
+    # the weighted-moving-average calculation in routes_inventory.
+    if (data["product_type"] == "REGULAR"
+            and D(data.get("acquisition_cost")) != D(old.get("acquisition_cost"))
+            and D(data.get("average_cost")) == D(old.get("average_cost"))):
+        data["average_cost"] = m(data["acquisition_cost"])
+        data["latest_cost"] = m(data["acquisition_cost"])
     if data["product_type"] == "PROMO" and old.get("product_type", "REGULAR") != "PROMO":
         used_by = await db.products.find_one(
             {"org_id": ORG_ID, "components.product_id": pid}, {"_id": 0, "name": 1})
@@ -325,10 +335,15 @@ async def update_product(pid: str, body: ProductIn, principal=Depends(require_pe
             raise HTTPException(status_code=409, detail=f"This product is already used by promotional SKU {used_by['name']}")
         stock = await db.inventory_levels.find_one(
             {"org_id": ORG_ID, "product_id": pid, "quantity": {"$ne": 0}}, {"_id": 1})
-        lot_stock = await db.inventory_lots.find_one(
-            {"org_id": ORG_ID, "product_id": pid, "quantity": {"$ne": 0}}, {"_id": 1})
-        if stock or lot_stock:
+        if stock:
             raise HTTPException(status_code=409, detail="Adjust this product's stock to zero before converting it to a promotional SKU")
+        # Older product-level adjustments changed the inventory level without updating
+        # the underlying lot rows. Once every store level is genuinely zero, those lot
+        # quantities are stale and can be reconciled safely during conversion.
+        await db.inventory_lots.update_many(
+            {"org_id": ORG_ID, "product_id": pid, "quantity": {"$ne": 0}},
+            {"$set": {"quantity": 0, "status": "DEPLETED", "updated_at": now_iso()}},
+        )
     await ensure_unique_product(data, exclude_id=pid)
     data = compute_margins(data)
     data["updated_at"] = now_iso()
@@ -338,7 +353,11 @@ async def update_product(pid: str, body: ProductIn, principal=Depends(require_pe
             "new_price": data["price"], "change_pct": m(((D(data["price"]) - D(old.get("price"))) / D(old.get("price") or 1)) * 100),
             "user_id": principal.get("id"), "user_name": principal.get("name"), "created_at": now_iso()})
     await db.products.update_one({"id": pid}, {"$set": data})
-    await audit(principal, "item.updated", "product", pid, before={"price": old.get("price")}, after={"price": data.get("price")})
+    await audit(
+        principal, "item.updated", "product", pid,
+        before={"price": old.get("price"), "average_cost": old.get("average_cost")},
+        after={"price": data.get("price"), "average_cost": data.get("average_cost")},
+    )
     return await db.products.find_one({"id": pid}, {"_id": 0})
 
 

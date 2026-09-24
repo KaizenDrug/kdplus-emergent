@@ -6,9 +6,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Plus, Pencil } from "lucide-react";
 import { toast } from "sonner";
+import { ACTIVE_STORES } from "@/lib/stores";
 
 const ROLES = ["owner", "admin", "manager", "pharmacist", "cashier", "inventory"];
-const empty = { name: "", role: "cashier", email: "", pin: "", store_ids: ["store_main", "store_annex"], active: true };
+const empty = { name: "", role: "cashier", email: "", pin: "", store_ids: ACTIVE_STORES.map((store) => store.id), active: true };
 
 export default function Employees() {
   const [rows, setRows] = useState([]);
@@ -29,7 +30,7 @@ export default function Employees() {
               <tr key={e.id} className="border-t border-slate-100 hover:bg-slate-50">
                 <td className="px-4 py-2.5 font-medium">{e.name}</td>
                 <td className="px-4 py-2.5"><span className="uppercase text-xs font-semibold text-slate-600">{e.role}</span></td>
-                <td className="px-4 py-2.5 text-slate-500 text-xs">{(e.store_ids || []).length} store(s)</td>
+                <td className="px-4 py-2.5 text-slate-500 text-xs">{(e.store_ids || []).filter((id) => ACTIVE_STORES.some((store) => store.id === id)).length} active store(s)</td>
                 <td className="px-4 py-2.5"><StatusBadge value={e.active ? "OK" : "OUT"} label={e.active ? "Active" : "Inactive"} /></td>
                 <td className="px-4 py-2.5 text-right"><button onClick={() => setEditing({ ...e, pin: "" })} className="text-primary p-1.5 rounded hover:bg-primary/10" data-testid={`edit-employee-${e.id}`}><Pencil className="w-4 h-4" /></button></td>
               </tr>
@@ -51,7 +52,7 @@ function EmpDialog({ e, onClose, onSaved }) {
     if (!f.name) { toast.error("Name required"); return; }
     setBusy(true);
     try {
-      const body = { name: f.name, role: f.role, email: f.email || "", pin: f.pin || null, store_ids: f.store_ids || [], active: f.active };
+      const body = { name: f.name, role: f.role, email: f.email || "", pin: f.pin || null, store_ids: ACTIVE_STORES.map((store) => store.id), active: f.active };
       if (f.id) await api.put(`/employees/${f.id}`, body); else await api.post("/employees", body);
       toast.success("Employee saved"); onSaved();
     } catch (err) { toast.error(err.response?.data?.detail || "Failed"); } finally { setBusy(false); }

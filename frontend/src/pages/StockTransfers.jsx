@@ -6,8 +6,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Plus, Trash2, ArrowLeftRight, Eye, Send, PackageCheck, Ban } from "lucide-react";
 import { toast } from "sonner";
+import { BRANCH_TRANSFERS_ENABLED, STORE_NAMES } from "@/lib/stores";
 
-const STORES = { store_main: "KDPLUS Main", store_annex: "KDPLUS Annex" };
+const STORES = STORE_NAMES;
 
 export default function StockTransfers() {
   const [rows, setRows] = useState([]);
@@ -20,8 +21,9 @@ export default function StockTransfers() {
   return (
     <div>
       <PageHeader title="Stock Transfers" subtitle="Move inventory between branches — stock never exists in both at once">
-        <Button onClick={() => setCreating(true)} data-testid="add-transfer-btn" className="bg-primary hover:bg-teal-800"><Plus className="w-4 h-4 mr-1" />New Transfer</Button>
+        <Button onClick={() => setCreating(true)} disabled={!BRANCH_TRANSFERS_ENABLED} data-testid="add-transfer-btn" className="bg-primary hover:bg-teal-800"><Plus className="w-4 h-4 mr-1" />New Transfer</Button>
       </PageHeader>
+      {!BRANCH_TRANSFERS_ENABLED && <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">Stock transfers are unavailable while KDPLUS Main is the only active branch.</div>}
       <Card className="overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>

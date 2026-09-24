@@ -13,7 +13,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import BrandLogo from "@/components/BrandLogo";
 import { matchesSearchTerms } from "@/lib/utils";
-import { printThermalReceipt } from "@/lib/receiptPrint";
+import { openCashDrawerForSale, printThermalReceipt } from "@/lib/receiptPrint";
+import { ACTIVE_STORES } from "@/lib/stores";
 
 const PAY_METHODS = ["Cash", "GCash", "Maya", "Credit Card", "Debit Card", "Bank Transfer"];
 
@@ -172,8 +173,7 @@ export default function POS() {
         }}>
           <SelectTrigger className="w-44 h-9" data-testid="pos-store"><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="store_main">KDPLUS Main Branch</SelectItem>
-            <SelectItem value="store_annex">KDPLUS Annex</SelectItem>
+            {ACTIVE_STORES.map((store) => <SelectItem key={store.id} value={store.id}>{store.name}</SelectItem>)}
           </SelectContent>
         </Select>
         <div className="ml-auto flex items-center gap-2">
@@ -210,7 +210,7 @@ export default function POS() {
 
       <div className="flex-1 flex min-h-0">
         {/* Categories */}
-        <div className="w-44 bg-white border-r border-slate-200 overflow-y-auto py-2 shrink-0 hidden md:block">
+        <div className="w-44 bg-white border-r border-slate-200 overflow-y-auto py-2 shrink-0 hidden 2xl:block">
           <button onClick={() => setCat("all")} data-testid="cat-all"
             className={`w-full text-left px-4 py-2.5 text-sm font-medium ${cat === "all" ? "bg-primary/10 text-primary border-r-2 border-primary" : "text-slate-600 hover:bg-slate-50"}`}>All Items</button>
           {categories.map((c) => (
@@ -224,8 +224,21 @@ export default function POS() {
         {/* Products */}
         <div className="flex-1 flex flex-col min-w-0">
           <div className="p-3 bg-white border-b border-slate-200">
-            <div className="flex gap-2">
-              <div className="relative flex-1">
+            <div className="flex flex-wrap gap-2">
+              <Select value={cat} onValueChange={setCat}>
+                <SelectTrigger className="w-full sm:w-44 h-10 2xl:hidden" data-testid="pos-category-select">
+                  <SelectValue placeholder="All Items" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Items</SelectItem>
+                  {categories.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.shelf_code ? `${c.shelf_code} · ` : ""}{c.name.split(" / ")[0]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="relative flex-1 min-w-[220px]">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input ref={searchRef} autoFocus value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onSearchKey}
                   data-testid="pos-search" placeholder="Scan barcode or search name, generic, SKU… (Enter to add)"
@@ -242,19 +255,20 @@ export default function POS() {
             </div>
           </div>
           <div className="flex-1 overflow-y-auto p-3">
-            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3">
               {filtered.map((p) => {
                 const stk = levels[p.id] ?? 0;
                 return (
                   <button key={p.id} onClick={() => addToCart(p)} data-testid={`product-tile-${p.id}`}
-                    className="text-left bg-white border border-slate-200 rounded-xl p-3 hover:border-primary hover:shadow-md transition-all active:scale-[0.98]">
+                    title={p.name}
+                    className="text-left bg-white border border-slate-200 rounded-xl p-3.5 hover:border-primary hover:shadow-md transition-all active:scale-[0.98]">
                     <div className="flex items-start justify-between">
                       <span className="text-[10px] font-mono text-slate-400">{p.shelf_code}</span>
                       <span className={`text-[10px] font-bold px-1.5 rounded ${stk <= 0 ? "bg-red-100 text-red-600" : stk <= p.reorder_level ? "bg-amber-100 text-amber-600" : "bg-emerald-100 text-emerald-600"}`}>{stk} {p.uom}</span>
                     </div>
-                    <div className="text-sm font-semibold text-slate-800 leading-tight mt-1.5 line-clamp-2 min-h-[2.5rem]">{p.name}</div>
-                    <div className="text-xs text-slate-400 mt-0.5">{p.strength}</div>
-                    <div className="text-primary font-bold mt-1.5">{peso(p.price)}</div>
+                    <div className="text-base font-semibold text-slate-800 leading-snug mt-2 line-clamp-3 min-h-[4rem] break-words">{p.name}</div>
+                    <div className="text-sm text-slate-400 mt-1 min-h-5">{p.strength}</div>
+                    <div className="text-primary text-lg font-bold mt-1.5">{peso(p.price)}</div>
                   </button>
                 );
               })}
@@ -264,7 +278,7 @@ export default function POS() {
         </div>
 
         {/* Cart */}
-        <div className="w-[360px] bg-white border-l border-slate-200 flex flex-col shrink-0">
+        <div className="w-[300px] md:w-[320px] 2xl:w-[360px] bg-white border-l border-slate-200 flex flex-col shrink-0">
           <div className="p-4 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center gap-2 font-heading font-bold text-slate-800"><ShoppingCart className="w-5 h-5 text-primary" />Current Ticket</div>
             {cart.length > 0 && <button onClick={() => setCart([])} className="text-xs text-red-500 hover:underline" data-testid="clear-cart">Clear</button>}
@@ -307,7 +321,11 @@ export default function POS() {
           open={checkout} onClose={() => setCheckout(false)} cart={cart} storeId={storeId} shiftId={shift?.id}
           customers={customers} settings={settings} cashierName={user?.name}
           onOfflineQueued={() => setPending(queueCount())}
-          onComplete={(sale) => { setLastSale(sale); setCart([]); setQ(""); setCheckout(false); refreshLevels(); toast.success(sale._offline ? `Sale queued offline (${sale.number})` : `Sale ${sale.number} completed`); }}
+          onComplete={(sale) => {
+            setLastSale(sale); setCart([]); setQ(""); setCheckout(false); refreshLevels();
+            if (!settings?.printing?.auto_print_receipt) openCashDrawerForSale(sale, settings);
+            toast.success(sale._offline ? `Sale queued offline (${sale.number})` : `Sale ${sale.number} completed`);
+          }}
         />
       )}
       {showUnavailable && (
@@ -703,13 +721,13 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
 function ReceiptDialog({ sale, settings, onClose }) {
   const biz = settings?.business || {};
   const autoPrintStarted = useRef(false);
-  const print = () => {
-    if (!printThermalReceipt(sale, settings)) toast.error("Could not prepare the receipt for printing");
+  const print = (openDrawer = false) => {
+    if (!printThermalReceipt(sale, settings, [], { openDrawer })) toast.error("Could not prepare the receipt for printing");
   };
   useEffect(() => {
     if (settings?.printing?.auto_print_receipt && !autoPrintStarted.current) {
       autoPrintStarted.current = true;
-      print();
+      print(true);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return (
@@ -741,7 +759,7 @@ function ReceiptDialog({ sale, settings, onClose }) {
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} data-testid="receipt-close">New Sale</Button>
-          <Button onClick={print} className="bg-primary hover:bg-teal-800" data-testid="receipt-print"><Printer className="w-4 h-4 mr-1" />Print</Button>
+          <Button onClick={() => print(false)} className="bg-primary hover:bg-teal-800" data-testid="receipt-print"><Printer className="w-4 h-4 mr-1" />Print</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

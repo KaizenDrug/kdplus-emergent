@@ -222,6 +222,37 @@ async def test_promotional_product_configuration_uses_component_cost(pos_db):
 
 
 @pytest.mark.asyncio
+async def test_zero_level_product_with_stale_lots_can_convert_to_promo(pos_db):
+    await pos_db.products.insert_one({
+        "id": "p_candidate", "org_id": core.ORG_ID, "name": "Old Promo Shell",
+        "sku": "OLD-PROMO", "price": 10, "average_cost": 2,
+        "product_type": "REGULAR", "track_inventory": True, "track_lots": True,
+    })
+    await pos_db.inventory_levels.insert_one({
+        "id": "candidate-level", "org_id": core.ORG_ID, "store_id": "store_main",
+        "product_id": "p_candidate", "quantity": 0,
+    })
+    await pos_db.inventory_lots.insert_one({
+        "id": "stale-lot", "org_id": core.ORG_ID, "store_id": "store_main",
+        "product_id": "p_candidate", "quantity": 5, "status": "ACTIVE",
+    })
+
+    updated = await routes_catalog.update_product(
+        "p_candidate",
+        routes_catalog.ProductIn(
+            name="Old Promo Shell", sku="OLD-PROMO", product_type="PROMO", price=350,
+            components=[routes_catalog.ProductComponent(product_id="p_med", quantity=8)],
+        ),
+        principal=MANAGER,
+    )
+
+    assert updated["product_type"] == "PROMO"
+    stale_lot = await pos_db.inventory_lots.find_one({"id": "stale-lot"})
+    assert stale_lot["quantity"] == 0
+    assert stale_lot["status"] == "DEPLETED"
+
+
+@pytest.mark.asyncio
 async def test_promotional_and_regular_lines_share_stock_limit(pos_db):
     await pos_db.products.insert_one({
         "id": "p_promo", "org_id": core.ORG_ID, "name": "Eligible Medicine (7+1)",

@@ -9,12 +9,13 @@ import { useAuth } from "@/context/AuthContext";
 import GlobalSearch from "@/components/GlobalSearch";
 import { Button } from "@/components/ui/button";
 import BrandLogo from "@/components/BrandLogo";
+import { BRANCH_TRANSFERS_ENABLED } from "@/lib/stores";
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true, full: true },
   { to: "/products", label: "Products", icon: Package },
   { to: "/inventory", label: "Inventory & Expiry", icon: Boxes },
-  { to: "/transfers", label: "Stock Transfers", icon: ArrowLeftRight },
+  { to: "/transfers", label: "Stock Transfers", icon: ArrowLeftRight, requiresMultipleBranches: true },
   { to: "/counts", label: "Inventory Counts", icon: ClipboardCheck },
   { to: "/reorder", label: "Reorder Suggestions", icon: TrendingDown },
   { to: "/purchase-orders", label: "Purchase Orders", icon: ClipboardList },
@@ -34,7 +35,8 @@ export default function Layout() {
   const [searchOpen, setSearchOpen] = useState(false);
   const navigate = useNavigate();
   const isFull = (user?.permissions || []).includes("*");
-  const navItems = NAV.filter((n) => (!n.full || isFull) && (!n.permission || isFull || (user?.permissions || []).includes(n.permission)));
+  const navItems = NAV.filter((n) => (!n.requiresMultipleBranches || BRANCH_TRANSFERS_ENABLED)
+    && (!n.full || isFull) && (!n.permission || isFull || (user?.permissions || []).includes(n.permission)));
 
   React.useEffect(() => {
     const h = (e) => {

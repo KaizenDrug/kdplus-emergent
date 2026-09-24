@@ -135,12 +135,12 @@ async def _seed_stores_registers():
              "active": True, "created_at": now_iso()}
     store2 = {"id": "store_annex", "org_id": ORG_ID, "name": "KDPLUS Annex",
               "address": "45 Mabini St, Manila", "phone": "02-8123-9999", "tin": "123-456-789-001",
-              "active": True, "created_at": now_iso()}
+              "active": False, "created_at": now_iso()}
     await db.stores.insert_many([store, store2])
     await db.registers.insert_many([
         {"id": "reg_1", "org_id": ORG_ID, "store_id": "store_main", "name": "Register 1", "active": True},
         {"id": "reg_2", "org_id": ORG_ID, "store_id": "store_main", "name": "Register 2", "active": True},
-        {"id": "reg_3", "org_id": ORG_ID, "store_id": "store_annex", "name": "Annex Register", "active": True},
+        {"id": "reg_3", "org_id": ORG_ID, "store_id": "store_annex", "name": "Annex Register", "active": False},
     ])
 
 
@@ -151,7 +151,7 @@ async def _seed_master_and_txn():
     emps = []
     for name, role, pin in EMPLOYEES:
         emps.append({"id": uid(), "org_id": ORG_ID, "name": name, "role": role, "email": "",
-                     "pin_hash": hash_secret(pin), "store_ids": ["store_main", "store_annex"],
+                     "pin_hash": hash_secret(pin), "store_ids": ["store_main"],
                      "active": True, "token_version": 0, "created_at": now_iso()})
     await db.employees.insert_many(emps)
 

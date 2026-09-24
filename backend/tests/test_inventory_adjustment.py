@@ -73,3 +73,71 @@ async def test_adjustment_rejects_unknown_product(inventory_db):
         )
 
     assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_adjustment_to_zero_clears_hidden_lot_balances(inventory_db):
+    await inventory_db.inventory_lots.insert_many([
+        {"id": "lot-1", "org_id": core.ORG_ID, "store_id": "store_main",
+         "product_id": "p1", "quantity": 6, "status": "ACTIVE"},
+        {"id": "lot-2", "org_id": core.ORG_ID, "store_id": "store_main",
+         "product_id": "p1", "quantity": 4, "status": "ACTIVE"},
+    ])
+
+    await routes_inventory.adjust_stock(
+        routes_inventory.AdjustIn(
+            store_id="store_main", reason="correction",
+            lines=[routes_inventory.AdjustLine(product_id="p1", new_quantity=0)],
+        ),
+        principal=MANAGER,
+    )
+
+    lots = await inventory_db.inventory_lots.find({"product_id": "p1"}, {"_id": 0}).to_list(10)
+    assert all(lot["quantity"] == 0 for lot in lots)
+    assert all(lot["status"] == "DEPLETED" for lot in lots)
+
+
+@pytest.mark.asyncio
+async def test_product_level_decrease_reconciles_lots_fefo(inventory_db):
+    await inventory_db.products.update_one(
+        {"id": "p1"}, {"$set": {"track_lots": True, "track_expiry": True}},
+    )
+    await inventory_db.inventory_lots.insert_many([
+        {"id": "later", "org_id": core.ORG_ID, "store_id": "store_main",
+         "product_id": "p1", "quantity": 6, "status": "ACTIVE", "expiry_date": "2028-01-01"},
+        {"id": "sooner", "org_id": core.ORG_ID, "store_id": "store_main",
+         "product_id": "p1", "quantity": 4, "status": "ACTIVE", "expiry_date": "2027-01-01"},
+    ])
+
+    await routes_inventory.adjust_stock(
+        routes_inventory.AdjustIn(
+            store_id="store_main", reason="correction",
+            lines=[routes_inventory.AdjustLine(product_id="p1", new_quantity=7)],
+        ),
+        principal=MANAGER,
+    )
+
+    sooner = await inventory_db.inventory_lots.find_one({"id": "sooner"})
+    later = await inventory_db.inventory_lots.find_one({"id": "later"})
+    assert sooner["quantity"] == 1
+    assert later["quantity"] == 6
+
+
+@pytest.mark.asyncio
+async def test_product_level_increase_creates_adjustment_lot(inventory_db):
+    await inventory_db.products.update_one(
+        {"id": "p1"}, {"$set": {"track_lots": True, "track_expiry": True}},
+    )
+
+    await routes_inventory.adjust_stock(
+        routes_inventory.AdjustIn(
+            store_id="store_main", reason="correction",
+            lines=[routes_inventory.AdjustLine(product_id="p1", new_quantity=14)],
+        ),
+        principal=MANAGER,
+    )
+
+    lot = await inventory_db.inventory_lots.find_one({"product_id": "p1", "source": "STOCK_ADJUSTMENT"})
+    assert lot["quantity"] == 4
+    assert lot["expiry_date"] is None
+    assert lot["status"] == "ACTIVE"

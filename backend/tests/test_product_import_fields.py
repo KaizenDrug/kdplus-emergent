@@ -194,6 +194,32 @@ async def test_updating_product_does_not_conflict_with_itself(catalog_db):
     assert updated["price"] == 12
 
 
+@pytest.mark.asyncio
+async def test_manual_cost_edit_updates_displayed_average_cost(catalog_db):
+    created = await routes_catalog.create_product(
+        routes_catalog.ProductIn(
+            name="Cost Correction Product", sku="COST-EDIT-1",
+            acquisition_cost=10, average_cost=10, latest_cost=10, price=20,
+        ),
+        principal=MANAGER,
+    )
+
+    payload = routes_catalog.ProductIn(**{
+        key: value for key, value in created.items()
+        if key in routes_catalog.ProductIn.model_fields
+    })
+    payload.acquisition_cost = 12.5
+    # Reproduce an older client sending the unchanged average cost.
+    assert payload.average_cost == 10
+
+    updated = await routes_catalog.update_product(created["id"], payload, principal=MANAGER)
+
+    assert updated["acquisition_cost"] == 12.5
+    assert updated["average_cost"] == 12.5
+    assert updated["latest_cost"] == 12.5
+    assert updated["margin_pct"] == 37.5
+
+
 def test_product_search_splits_abbreviated_words_into_terms():
     clauses = routes_catalog.product_search_clauses("ab bin")
 
