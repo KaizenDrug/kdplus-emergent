@@ -11,6 +11,7 @@ from core import db, client
 import routes_auth, routes_catalog, routes_inventory, routes_pos
 import routes_purchasing, routes_customers, routes_reports, routes_admin, routes_stock
 from seed import seed_all
+from data_migrations import run_data_migrations
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -64,6 +65,8 @@ async def startup():
     try:
         await seed_all()
         logger.info("Seed complete")
+        migration_results = await run_data_migrations()
+        logger.info(f"Data migrations complete: {migration_results}")
     except Exception as e:
         logger.error(f"Seed error: {e}")
 
