@@ -4,31 +4,29 @@ import { AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tool
 import { DollarSign, Receipt, TrendingUp, Percent, AlertTriangle, PackageX, CalendarClock, ShoppingBag } from "lucide-react";
 import api, { peso, num, fmtDate } from "@/lib/api";
 import { PageHeader, Card, StatCard, StatusBadge, Empty } from "@/components/kit";
+import DateRangeFilter, { buildReportQuery } from "@/components/DateRangeFilter";
 
-const PERIODS = [["today", "Today"], ["yesterday", "Yesterday"], ["7d", "7 Days"], ["30d", "30 Days"], ["month", "This Month"]];
 const COLORS = ["#0F766E", "#0EA5E9", "#F59E0B", "#10B981", "#8B5CF6", "#EF4444"];
 
 export default function Dashboard() {
   const [period, setPeriod] = useState("30d");
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
   const [d, setD] = useState(null);
 
   useEffect(() => {
-    api.get(`/reports/dashboard?period=${period}`).then((r) => setD(r.data)).catch(() => {});
-  }, [period]);
+    api.get(`/reports/dashboard?${buildReportQuery(period, start, end)}`).then((r) => setD(r.data)).catch(() => {});
+  }, [period, start, end]);
 
   if (!d) return <div className="text-slate-400">Loading dashboard…</div>;
   const k = d.kpi;
 
   return (
     <div>
-      <PageHeader title="Executive Dashboard" subtitle="KDPLUS Pharmacy — consolidated performance">
-        <div className="flex gap-1 p-1 bg-slate-100 rounded-lg">
-          {PERIODS.map(([v, l]) => (
-            <button key={v} onClick={() => setPeriod(v)} data-testid={`period-${v}`}
-              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${period === v ? "bg-white shadow-sm text-slate-900" : "text-slate-500 hover:text-slate-700"}`}>{l}</button>
-          ))}
-        </div>
-      </PageHeader>
+      <PageHeader title="Executive Dashboard" subtitle="KDPLUS Pharmacy — consolidated performance" />
+      <DateRangeFilter period={period} start={start} end={end}
+        onPreset={(value) => { setPeriod(value); setStart(""); setEnd(""); }}
+        onApply={(from, to) => { setStart(from); setEnd(to); }} className="mb-4" />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Net Sales" value={peso(k.net_sales)} sub={`Gross ${peso(k.gross_sales)}`} icon={DollarSign} tone="primary" />

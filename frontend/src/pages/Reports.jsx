@@ -5,6 +5,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
+import DateRangeFilter, { buildReportQuery } from "@/components/DateRangeFilter";
 
 function toCSV(rows, cols) {
   const head = cols.map((c) => c.label).join(",");
@@ -16,33 +17,39 @@ function download(name, csv) {
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click();
 }
 
-const PERIODS = [["today", "Today"], ["7d", "7 Days"], ["30d", "30 Days"], ["month", "This Month"]];
-
 export default function Reports() {
+  const [tab, setTab] = useState("sales");
+  const [period, setPeriod] = useState("30d");
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
   return (
     <div>
       <PageHeader title="Reports" subtitle="Sales, profitability, valuation & regulatory reports" />
-      <Tabs defaultValue="sales">
+      {tab !== "valuation" && <DateRangeFilter period={period} start={start} end={end}
+        onPreset={(value) => { setPeriod(value); setStart(""); setEnd(""); }}
+        onApply={(from, to) => { setStart(from); setEnd(to); }} className="mb-4" />}
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="sales" data-testid="rtab-sales">Sales & Profit</TabsTrigger>
           <TabsTrigger value="valuation" data-testid="rtab-valuation">Inventory Valuation</TabsTrigger>
           <TabsTrigger value="spwd" data-testid="rtab-spwd">Senior / PWD</TabsTrigger>
           <TabsTrigger value="unavailable" data-testid="rtab-unavailable">Requested Items</TabsTrigger>
         </TabsList>
-        <TabsContent value="sales"><SalesReport /></TabsContent>
+        <TabsContent value="sales"><SalesReport period={period} start={start} end={end} /></TabsContent>
         <TabsContent value="valuation"><Valuation /></TabsContent>
-        <TabsContent value="spwd"><SeniorPwd /></TabsContent>
-        <TabsContent value="unavailable"><UnavailableItems /></TabsContent>
+        <TabsContent value="spwd"><SeniorPwd period={period} start={start} end={end} /></TabsContent>
+        <TabsContent value="unavailable"><UnavailableItems period={period} start={start} end={end} /></TabsContent>
       </Tabs>
     </div>
   );
 }
 
-function SalesReport() {
-  const [period, setPeriod] = useState("30d");
+function SalesReport({ period, start, end }) {
   const [group, setGroup] = useState("item");
   const [rows, setRows] = useState([]);
-  useEffect(() => { api.get(`/reports/sales-summary?period=${period}&group=${group}`).then((r) => setRows(r.data)); }, [period, group]);
+  useEffect(() => {
+    api.get(`/reports/sales-summary?${buildReportQuery(period, start, end, { group })}`).then((r) => setRows(r.data));
+  }, [period, start, end, group]);
   const totalNet = rows.reduce((s, r) => s + r.net, 0);
   const totalProfit = rows.reduce((s, r) => s + r.profit, 0);
   return (
@@ -50,7 +57,6 @@ function SalesReport() {
       <div className="flex flex-wrap gap-2 mb-4 items-center">
         <Select value={group} onValueChange={setGroup}><SelectTrigger className="w-44" data-testid="report-group"><SelectValue /></SelectTrigger>
           <SelectContent><SelectItem value="item">By Item</SelectItem><SelectItem value="category">By Category</SelectItem><SelectItem value="employee">By Employee</SelectItem><SelectItem value="payment">By Payment</SelectItem><SelectItem value="store">By Store</SelectItem></SelectContent></Select>
-        <div className="flex gap-1 p-1 bg-slate-100 rounded-lg">{PERIODS.map(([v, l]) => <button key={v} onClick={() => setPeriod(v)} className={`px-3 py-1.5 rounded-md text-xs font-semibold ${period === v ? "bg-white shadow-sm" : "text-slate-500"}`}>{l}</button>)}</div>
         <Button variant="outline" onClick={() => download(`sales-${group}.csv`, toCSV(rows, [{ key: "key", label: group }, { key: "qty", label: "Qty" }, { key: "net", label: "Net" }, { key: "cogs", label: "COGS" }, { key: "profit", label: "Profit" }, { key: "margin", label: "Margin%" }]))} className="ml-auto" data-testid="export-csv"><Download className="w-4 h-4 mr-1" />Export CSV</Button>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
@@ -110,9 +116,9 @@ function Valuation() {
   );
 }
 
-function SeniorPwd() {
+function SeniorPwd({ period, start, end }) {
   const [d, setD] = useState(null);
-  useEffect(() => { api.get("/reports/senior-pwd?period=30d").then((r) => setD(r.data)); }, []);
+  useEffect(() => { api.get(`/reports/senior-pwd?${buildReportQuery(period, start, end)}`).then((r) => setD(r.data)); }, [period, start, end]);
   if (!d) return <div className="text-slate-400">Loading…</div>;
   return (
     <div>
@@ -143,10 +149,9 @@ function SeniorPwd() {
   );
 }
 
-function UnavailableItems() {
-  const [period, setPeriod] = useState("30d");
+function UnavailableItems({ period, start, end }) {
   const [data, setData] = useState({ rows: [], count: 0, total_quantity: 0, unique_items: 0 });
-  useEffect(() => { api.get(`/reports/unavailable-items?period=${period}`).then((r) => setData(r.data)); }, [period]);
+  useEffect(() => { api.get(`/reports/unavailable-items?${buildReportQuery(period, start, end)}`).then((r) => setData(r.data)); }, [period, start, end]);
   const columns = [
     { key: "created_at", label: "Recorded At" }, { key: "item_name", label: "Requested Item" },
     { key: "quantity", label: "Qty" }, { key: "customer_name", label: "Customer" },
@@ -155,7 +160,6 @@ function UnavailableItems() {
   return (
     <div>
       <div className="flex flex-wrap gap-2 mb-4 items-center">
-        <div className="flex gap-1 p-1 bg-slate-100 rounded-lg">{PERIODS.map(([v, l]) => <button key={v} onClick={() => setPeriod(v)} className={`px-3 py-1.5 rounded-md text-xs font-semibold ${period === v ? "bg-white shadow-sm" : "text-slate-500"}`}>{l}</button>)}</div>
         <Button variant="outline" onClick={() => download("requested-items.csv", toCSV(data.rows, columns))} className="ml-auto" data-testid="export-unavailable-items"><Download className="w-4 h-4 mr-1" />Export CSV</Button>
       </div>
       <div className="grid grid-cols-3 gap-4 mb-4">
