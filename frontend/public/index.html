@@ -9,6 +9,27 @@
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@600&display=swap" rel="stylesheet" />
+        <script>
+            // Safari and browser extensions can inject helpers into text fields. If one
+            // of those cross-origin helpers fails, the browser deliberately hides its
+            // source and reports only "Script error." React's development overlay would
+            // otherwise cover KDPLUS even though the application itself is still fine.
+            // Keep genuine KDPLUS errors visible by ignoring only this opaque external
+            // error signature.
+            window.addEventListener("error", function (event) {
+                var source = String(event.filename || "");
+                var externalExtension =
+                    !source ||
+                    source.indexOf("safari-extension://") === 0 ||
+                    source.indexOf("chrome-extension://") === 0 ||
+                    source.indexOf("moz-extension://") === 0;
+
+                if (event.message === "Script error." && !event.error && externalExtension) {
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                }
+            }, true);
+        </script>
         <!--
         manifest.json provides metadata used when your web app is installed on a
         user's mobile device or desktop. See https://developers.google.com/web/fundamentals/web-app-manifest/

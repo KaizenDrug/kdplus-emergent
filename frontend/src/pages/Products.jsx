@@ -478,7 +478,7 @@ function ProductDialog({ product, products, categories, suppliers, onClose, onSa
         track_inventory: promo ? false : f.track_inventory, track_lots: promo ? false : f.track_lots, track_expiry: promo ? false : f.track_expiry };
       if (isNew) await api.post("/products", body); else await api.put(`/products/${f.id}`, body);
       toast.success("Product saved"); onSaved();
-    } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); } finally { setBusy(false); }
+    } catch (e) { toast.error(apiError(e.response?.data?.detail || e.message) || "Save failed"); } finally { setBusy(false); }
   };
 
   // NOTE: `inp` is a plain render helper that is CALLED (not used as a JSX
