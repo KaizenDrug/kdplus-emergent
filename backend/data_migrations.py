@@ -6,6 +6,7 @@ from core import db, ORG_ID, D, m, now_iso
 
 
 GASAIDE_RECEIPT_FIX = "fix-po-20260917-00001-gasaide-received-200-v1"
+NISSIN_BEEF_DUPLICATE_FIX = "remove-duplicate-nissin-cup-mini-beef-40g-v1"
 
 
 def _po_status(items):
@@ -193,5 +194,94 @@ async def correct_gasaide_receipt():
     return {"status": "corrected", "delta": m(delta), "po_status": status}
 
 
+async def remove_duplicate_nissin_beef():
+    """Keep the original SKU10980 record and remove its duplicate setup data."""
+    completed = await db.data_migrations.find_one({
+        "id": NISSIN_BEEF_DUPLICATE_FIX, "status": "DONE",
+    })
+    if completed:
+        return {"status": "already_applied", "removed": completed.get("removed", 0)}
+
+    products = await db.products.find({"org_id": ORG_ID}, {
+        "id": 1, "org_id": 1, "name": 1, "sku": 1, "created_at": 1,
+    }).to_list(10000)
+    matches = [
+        product for product in products
+        if str(product.get("sku") or "").strip().casefold() == "sku10980"
+        and str(product.get("name") or "").strip().casefold() == "nissin cup mini beef 40g"
+    ]
+    if len(matches) <= 1:
+        return {"status": "already_clean", "removed": 0}
+
+    business_references = (
+        (db.products, lambda pid: {"org_id": ORG_ID, "components.product_id": pid}),
+        (db.sales, lambda pid: {"org_id": ORG_ID, "items.product_id": pid}),
+        (db.refunds, lambda pid: {"org_id": ORG_ID, "items.product_id": pid}),
+        (db.purchase_orders, lambda pid: {"org_id": ORG_ID, "items.product_id": pid}),
+        (db.po_receipts, lambda pid: {"org_id": ORG_ID, "product_id": pid}),
+        (db.stock_transfers, lambda pid: {"org_id": ORG_ID, "items.product_id": pid}),
+        (db.inventory_counts, lambda pid: {"org_id": ORG_ID, "items.product_id": pid}),
+        (db.prescriptions, lambda pid: {"org_id": ORG_ID, "product_id": pid}),
+    )
+
+    async def reference_count(product_id):
+        return sum([
+            await collection.count_documents(query(product_id))
+            for collection, query in business_references
+        ])
+
+    for product in matches:
+        product["reference_count"] = await reference_count(product.get("id"))
+
+    # Prefer the record already used by transactions. Otherwise keep the oldest
+    # record and remove the later import duplicate shown in the catalog.
+    matches.sort(key=lambda product: (
+        -product["reference_count"],
+        str(product.get("created_at") or ""),
+        str(product.get("_id") or ""),
+    ))
+    keeper, duplicates = matches[0], matches[1:]
+    referenced_duplicates = [product for product in duplicates if product["reference_count"]]
+    if referenced_duplicates:
+        raise RuntimeError(
+            "Duplicate SKU10980 records are both used in business transactions; automatic removal was stopped"
+        )
+
+    removed_ids = []
+    for duplicate in duplicates:
+        duplicate_id = duplicate.get("id")
+        # Separate product IDs have separate duplicate stock/setup records. If a
+        # legacy duplicate shares the same ID, those records belong to the keeper.
+        if duplicate_id != keeper.get("id"):
+            await db.inventory_levels.delete_many({"org_id": ORG_ID, "product_id": duplicate_id})
+            await db.inventory_lots.delete_many({"org_id": ORG_ID, "product_id": duplicate_id})
+            await db.inventory_movements.delete_many({"org_id": ORG_ID, "product_id": duplicate_id})
+            await db.price_history.delete_many({"org_id": ORG_ID, "product_id": duplicate_id})
+        await db.products.delete_one({"_id": duplicate["_id"]})
+        removed_ids.append(duplicate_id)
+
+    await db.audit_logs.update_one(
+        {"id": f"{NISSIN_BEEF_DUPLICATE_FIX}-audit"},
+        {"$setOnInsert": {
+            "id": f"{NISSIN_BEEF_DUPLICATE_FIX}-audit", "org_id": ORG_ID,
+            "event": "item.duplicate_removed", "record_type": "product",
+            "record_id": keeper.get("id"),
+            "before": {"matches": len(matches), "removed_ids": removed_ids},
+            "after": {"matches": 1, "kept_id": keeper.get("id")},
+            "user_id": "system", "user_name": "System data correction",
+            "created_at": now_iso(),
+        }}, upsert=True,
+    )
+    await db.data_migrations.update_one(
+        {"id": NISSIN_BEEF_DUPLICATE_FIX},
+        {"$set": {
+            "id": NISSIN_BEEF_DUPLICATE_FIX, "org_id": ORG_ID, "status": "DONE",
+            "kept_id": keeper.get("id"), "removed_ids": removed_ids,
+            "removed": len(removed_ids), "completed_at": now_iso(),
+        }}, upsert=True,
+    )
+    return {"status": "corrected", "removed": len(removed_ids), "kept_id": keeper.get("id")}
+
+
 async def run_data_migrations():
-    return [await correct_gasaide_receipt()]
+    return [await correct_gasaide_receipt(), await remove_duplicate_nissin_beef()]

@@ -2,13 +2,13 @@
 const path = require("path");
 require("dotenv").config();
 
-// Check if we're in development/preview mode (not production build)
-// Craco sets NODE_ENV=development for start, NODE_ENV=production for build
-const isDevServer = process.env.NODE_ENV !== "production";
-
 // Environment variable overrides
 const config = {
   enableHealthCheck: process.env.ENABLE_HEALTH_CHECK === "true",
+  // Emergent's visual editor is useful only inside the hosted builder. Keeping
+  // it off by default prevents its injected cross-origin overlay from crashing
+  // locally served/Tailscale sessions with an unhelpful "Script error".
+  enableVisualEdits: process.env.ENABLE_VISUAL_EDITS === "true",
 };
 
 function makeDevServerV5Compatible(devServerConfig) {
@@ -128,8 +128,8 @@ webpackConfig.devServer = (devServerConfig) => {
   return devServerConfig;
 };
 
-// Wrap with visual edits (automatically adds babel plugin, dev server, and overlay in dev mode)
-if (isDevServer) {
+// Opt in only when intentionally running inside the Emergent visual builder.
+if (config.enableVisualEdits) {
   try {
     const { withVisualEdits } = require("@emergentbase/visual-edits/craco");
     webpackConfig = withVisualEdits(webpackConfig);

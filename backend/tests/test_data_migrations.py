@@ -83,3 +83,43 @@ async def test_gasaide_receipt_correction_is_complete_and_idempotent(migration_d
     assert level["quantity"] == 200
     assert lot["quantity"] == 200
     assert await migration_db.inventory_movements.count_documents({"product_id": "gasaide"}) == 1
+
+
+@pytest.mark.asyncio
+async def test_duplicate_nissin_beef_removes_only_later_duplicate(migration_db):
+    await migration_db.products.insert_many([
+        {"id": "nissin-original", "org_id": core.ORG_ID,
+         "name": "NISSIN CUP MINI BEEF 40G", "sku": "SKU10980",
+         "created_at": "2026-09-17T08:00:00+00:00"},
+        {"id": "nissin-duplicate", "org_id": core.ORG_ID,
+         "name": "NISSIN CUP MINI BEEF 40G", "sku": "SKU10980",
+         "created_at": "2026-09-17T09:00:00+00:00"},
+    ])
+    await migration_db.inventory_levels.insert_many([
+        {"id": "level-original", "org_id": core.ORG_ID, "store_id": "store_main",
+         "product_id": "nissin-original", "quantity": 2},
+        {"id": "level-duplicate", "org_id": core.ORG_ID, "store_id": "store_main",
+         "product_id": "nissin-duplicate", "quantity": 2},
+    ])
+    await migration_db.inventory_lots.insert_one({
+        "id": "lot-duplicate", "org_id": core.ORG_ID, "store_id": "store_main",
+        "product_id": "nissin-duplicate", "quantity": 2,
+    })
+    await migration_db.inventory_movements.insert_one({
+        "id": "movement-duplicate", "org_id": core.ORG_ID,
+        "product_id": "nissin-duplicate", "type": "INITIAL_BALANCE", "qty_change": 2,
+    })
+
+    result = await data_migrations.remove_duplicate_nissin_beef()
+
+    assert result == {"status": "corrected", "removed": 1, "kept_id": "nissin-original"}
+    remaining = await migration_db.products.find({"sku": "SKU10980"}).to_list(10)
+    assert [product["id"] for product in remaining] == ["nissin-original"]
+    assert (await migration_db.inventory_levels.find_one(
+        {"product_id": "nissin-original"}))["quantity"] == 2
+    assert await migration_db.inventory_levels.find_one({"product_id": "nissin-duplicate"}) is None
+    assert await migration_db.inventory_lots.find_one({"product_id": "nissin-duplicate"}) is None
+    assert await migration_db.inventory_movements.find_one({"product_id": "nissin-duplicate"}) is None
+
+    second = await data_migrations.remove_duplicate_nissin_beef()
+    assert second == {"status": "already_applied", "removed": 1}
