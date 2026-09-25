@@ -110,12 +110,12 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      <Card className="mt-4 overflow-hidden">
+      <Card className="mt-4 overflow-x-auto">
         <div className="p-5 pb-3 flex items-center justify-between">
           <h3 className="font-heading font-bold text-slate-800">Recent Transactions</h3>
           <Link to="/sales" className="text-sm text-primary hover:underline">View all</Link>
         </div>
-        <table className="w-full text-sm">
+        <table className="w-full min-w-[760px] text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
             <tr><th className="px-5 py-2.5">Receipt</th><th className="px-5 py-2.5">Cashier</th><th className="px-5 py-2.5">Customer</th><th className="px-5 py-2.5">Time</th><th className="px-5 py-2.5">Status</th><th className="px-5 py-2.5 text-right">Total</th></tr>
           </thead>

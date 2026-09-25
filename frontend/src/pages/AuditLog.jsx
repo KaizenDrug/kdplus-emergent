@@ -8,8 +8,8 @@ export default function AuditLog() {
   return (
     <div>
       <PageHeader title="Audit Log" subtitle="Immutable record of key actions" />
-      <Card className="overflow-hidden">
-        <table className="w-full text-sm">
+      <Card className="overflow-x-auto">
+        <table className="w-full min-w-[760px] text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>
             <th className="px-4 py-3">Time</th><th className="px-4 py-3">User</th><th className="px-4 py-3">Event</th><th className="px-4 py-3">Record</th><th className="px-4 py-3">Details</th></tr></thead>
           <tbody>

@@ -64,19 +64,19 @@ export default function ReorderSuggestions() {
           <SelectContent><SelectItem value="all">All Suppliers</SelectItem>{suppliers.map((s) => <SelectItem key={s.id} value={s.id}>{s.company}</SelectItem>)}</SelectContent></Select>
       </PageHeader>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 mb-4">
         <StatCard label="Items Needing Reorder" value={num(rows.length)} icon={TrendingDown} tone="warning" />
         <StatCard label="Suppliers Involved" value={groupList.length} icon={ClipboardList} tone="accent" />
         <StatCard label="Est. Purchase Cost" value={peso(totalCost)} tone="primary" />
       </div>
 
       {groupList.map((g) => (
-        <Card key={g.supplier_id || "none"} className="mb-4 overflow-hidden">
+        <Card key={g.supplier_id || "none"} className="mb-4 overflow-x-auto">
           <div className="p-4 flex items-center justify-between bg-slate-50 border-b border-slate-100">
             <div className="font-heading font-bold text-slate-800">{g.name} <span className="text-sm font-normal text-slate-400">· {g.items.length} item(s)</span></div>
             <Button onClick={() => createPO(g)} disabled={busy || !g.supplier_id} data-testid={`create-po-${g.supplier_id || "none"}`} className="bg-primary hover:bg-teal-800"><ClipboardList className="w-4 h-4 mr-1" />Create Draft PO</Button>
           </div>
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[820px] text-sm">
             <thead className="text-left text-xs uppercase text-slate-500"><tr>
               <th className="px-4 py-2.5">Product</th><th className="px-4 py-2.5 text-right">On Hand</th><th className="px-4 py-2.5 text-right">Incoming</th><th className="px-4 py-2.5 text-right">Avg/Day</th><th className="px-4 py-2.5 text-right">Days Left</th><th className="px-4 py-2.5 text-right">Order Qty</th><th className="px-4 py-2.5 text-right">Est. Cost</th></tr></thead>
             <tbody>

@@ -23,8 +23,8 @@ export default function InventoryCounts() {
       <PageHeader title="Inventory Counts" subtitle="Physical stock counts that auto-post corrections on approval">
         <Button onClick={() => setCreating(true)} data-testid="add-count-btn" className="bg-primary hover:bg-teal-800"><Plus className="w-4 h-4 mr-1" />New Count</Button>
       </PageHeader>
-      <Card className="overflow-hidden">
-        <table className="w-full text-sm">
+      <Card className="overflow-x-auto">
+        <table className="w-full min-w-[780px] text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>
             <th className="px-4 py-3">Count #</th><th className="px-4 py-3">Store</th><th className="px-4 py-3">Scope</th><th className="px-4 py-3">Created</th><th className="px-4 py-3 text-right">Variance</th><th className="px-4 py-3">Status</th><th className="px-4 py-3"></th></tr></thead>
           <tbody>
@@ -98,7 +98,7 @@ function CountSheet({ count, onClose, onChanged }) {
     <Dialog open={true} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader><DialogTitle>{count.number} — {STORES[count.store_id]} <StatusBadge value={count.status} /></DialogTitle></DialogHeader>
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto"><table className="w-full min-w-[520px] text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500 sticky top-0"><tr>
             <th className="px-3 py-2">Product</th><th className="px-3 py-2 text-right">Expected</th><th className="px-3 py-2 text-right">Counted</th><th className="px-3 py-2 text-right">Diff</th></tr></thead>
           <tbody>
@@ -116,7 +116,7 @@ function CountSheet({ count, onClose, onChanged }) {
               );
             })}
           </tbody>
-        </table>
+        </table></div>
         {!readOnly && (
           <DialogFooter>
             <Button variant="outline" onClick={save} disabled={busy} data-testid="save-count-items">Save Progress</Button>

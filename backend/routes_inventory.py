@@ -32,7 +32,7 @@ async def list_registers(store_id: Optional[str] = None, principal=Depends(get_c
 @router.get("/inventory/levels")
 async def inventory_levels(store_id: Optional[str] = None, low_only: bool = False,
                            principal=Depends(get_current_principal)):
-    products = await db.products.find({"org_id": ORG_ID, "active": True}, {"_id": 0}).to_list(2000)
+    products = await db.products.find({"org_id": ORG_ID, "active": True}, {"_id": 0}).to_list(10000)
     lq = {"org_id": ORG_ID}
     if store_id:
         lq["store_id"] = store_id

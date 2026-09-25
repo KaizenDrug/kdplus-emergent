@@ -164,28 +164,28 @@ export default function Products() {
       </PageHeader>
 
       <Card className="p-3 mb-4 flex flex-wrap gap-3 items-center">
-        <div className="relative flex-1 min-w-[220px]">
+        <div className="relative w-full sm:min-w-[220px] sm:flex-1">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input value={q} onChange={(e) => setQ(e.target.value)} data-testid="product-search" placeholder="Search name, generic, SKU, barcode…"
             className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
         </div>
         <Select value={cat} onValueChange={setCat}>
-          <SelectTrigger className="w-56" data-testid="filter-category"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-full sm:w-56" data-testid="filter-category"><SelectValue /></SelectTrigger>
           <SelectContent><SelectItem value="all">All Categories</SelectItem>{categories.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
         </Select>
         <Select value={stockFilter} onValueChange={setStockFilter}>
-          <SelectTrigger className="w-40" data-testid="filter-stock"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-[calc(50%-0.375rem)] sm:w-40" data-testid="filter-stock"><SelectValue /></SelectTrigger>
           <SelectContent><SelectItem value="all">All Stock</SelectItem><SelectItem value="low">Low Stock</SelectItem><SelectItem value="out">Out of Stock</SelectItem></SelectContent>
         </Select>
         <Select value={store} onValueChange={setStore}>
-          <SelectTrigger className="w-44" data-testid="product-store"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-[calc(50%-0.375rem)] sm:w-44" data-testid="product-store"><SelectValue /></SelectTrigger>
           <SelectContent>{ACTIVE_STORES.map((branch) => <SelectItem key={branch.id} value={branch.id}>{branch.name}</SelectItem>)}</SelectContent>
         </Select>
       </Card>
 
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[980px] text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
               <tr><SortableHeader column="name" label="Product" sort={sort} onSort={setSort} />
                 <SortableHeader column="category" label="Category" sort={sort} onSort={setSort} />
@@ -414,8 +414,8 @@ function ImportDialog({ onClose, onDone }) {
               <span className="px-2.5 py-1 rounded-full bg-red-100 text-red-700 font-semibold">{preview.summary.error} error</span>
               <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 font-semibold">{preview.summary.total} total</span>
             </div>
-            <div className="max-h-[45vh] overflow-y-auto border border-slate-200 rounded-lg">
-              <table className="w-full text-sm">
+            <div className="max-h-[45vh] overflow-auto border border-slate-200 rounded-lg">
+              <table className="w-full min-w-[680px] text-sm">
                 <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500 sticky top-0"><tr>
                   <th className="px-3 py-2">Status</th><th className="px-3 py-2">Name</th><th className="px-3 py-2">SKU</th><th className="px-3 py-2 text-right">Price</th><th className="px-3 py-2 text-right">Stock</th><th className="px-3 py-2">Notes</th></tr></thead>
                 <tbody>
@@ -495,22 +495,22 @@ function ProductDialog({ product, products, categories, suppliers, onClose, onSa
     <Dialog open={true} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto">
         <DialogHeader><DialogTitle>{isNew ? "New Product" : "Edit Product"}</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="col-span-2">{inp("name", "Product Name")}</div>
-          <label className="block col-span-2"><span className="text-[11px] font-bold uppercase text-slate-500">Product Type</span>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="sm:col-span-2">{inp("name", "Product Name")}</div>
+          <label className="block sm:col-span-2"><span className="text-[11px] font-bold uppercase text-slate-500">Product Type</span>
             <Select value={f.product_type || "REGULAR"} onValueChange={(v) => setF((current) => ({ ...current, product_type: v, components: v === "PROMO" ? current.components || [] : [] }))}>
               <SelectTrigger className="mt-1" data-testid="pf-product-type"><SelectValue /></SelectTrigger>
               <SelectContent><SelectItem value="REGULAR">Regular product</SelectItem><SelectItem value="PROMO">Promotional SKU (uses regular product stock)</SelectItem></SelectContent>
             </Select>
           </label>
           {f.product_type === "PROMO" && (
-            <div className="col-span-2 rounded-xl border border-fuchsia-200 bg-fuchsia-50/60 p-3 space-y-2" data-testid="promo-components">
+            <div className="sm:col-span-2 rounded-xl border border-fuchsia-200 bg-fuchsia-50/60 p-3 space-y-2" data-testid="promo-components">
               <div className="flex items-center justify-between gap-3">
                 <div><div className="text-sm font-bold text-slate-800">Products included</div><div className="text-xs text-slate-500">Selling one promo deducts these quantities from the regular SKUs.</div></div>
                 <Button type="button" variant="outline" size="sm" onClick={addComponent} data-testid="add-promo-component"><Plus className="w-4 h-4 mr-1" />Add</Button>
               </div>
               {(f.components || []).map((component, index) => (
-                <div key={`${component.product_id}-${index}`} className="grid grid-cols-[1fr_110px_36px] gap-2 items-end">
+                <div key={`${component.product_id}-${index}`} className="grid grid-cols-[minmax(0,1fr)_78px_36px] gap-2 items-end sm:grid-cols-[minmax(0,1fr)_110px_36px]">
                   <label><span className="text-[10px] font-bold uppercase text-slate-500">Regular product</span>
                     <Select value={component.product_id} onValueChange={(v) => updateComponent(index, "product_id", v)}>
                       <SelectTrigger className="mt-1 bg-white" data-testid={`promo-component-${index}`}><SelectValue placeholder="Select product" /></SelectTrigger>
@@ -547,10 +547,10 @@ function ProductDialog({ product, products, categories, suppliers, onClose, onSa
                 className="w-full mt-1 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
             </label>
           ) : <div className="text-xs text-slate-500 rounded-lg bg-slate-50 p-3 self-end">Cost is calculated from the regular products.</div>}{inp("price", "Selling Price (₱)", { type: "number" })}
-          <div className="col-span-2 text-xs text-slate-500 bg-slate-50 rounded-lg p-2.5">Markup: <b className="text-slate-700">{markup}%</b> · Gross Margin: <b className="text-slate-700">{margin}%</b></div>
+          <div className="sm:col-span-2 text-xs text-slate-500 bg-slate-50 rounded-lg p-2.5">Markup: <b className="text-slate-700">{markup}%</b> · Gross Margin: <b className="text-slate-700">{margin}%</b></div>
           {inp("reorder_level", "Reorder Level", { type: "number" })}{inp("reorder_qty", "Reorder Qty", { type: "number" })}
           {inp("shelf_code", "Shelf Code", { ph: "A1" })}{inp("storage", "Storage", { ph: "Store below 30°C" })}
-          <div className="col-span-2 flex flex-wrap gap-4 pt-1">
+          <div className="sm:col-span-2 flex flex-wrap gap-4 pt-1">
             {[["track_lots", "Track Lots"], ["track_expiry", "Track Expiry"], ["track_inventory", "Track Inventory"], ["discount_eligible", "Discount Eligible"], ["refrigerated", "Refrigerated"]].filter(([k]) => f.product_type !== "PROMO" || !["track_lots", "track_expiry", "track_inventory"].includes(k)).map(([k, l]) => (
               <label key={k} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!f[k]} onChange={(e) => set(k, e.target.checked)} data-testid={`pf-${k}`} className="w-4 h-4 accent-teal-600" />{l}</label>
             ))}

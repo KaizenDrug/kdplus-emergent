@@ -52,6 +52,7 @@ export default function POS() {
   const [syncStatus, setSyncStatus] = useState("idle"); // idle | syncing | error
   const [pending, setPending] = useState(queueCount());
   const [checkout, setCheckout] = useState(false);
+  const [mobileCartOpen, setMobileCartOpen] = useState(false);
   const [lastSale, setLastSale] = useState(null);
   const [shift, setShift] = useState(null);
   const [shiftLoading, setShiftLoading] = useState(true);
@@ -162,24 +163,24 @@ export default function POS() {
   const subtotal = cart.reduce((s, i) => s + i.unit_price * i.qty, 0);
 
   return (
-    <div className="h-screen flex flex-col bg-slate-100">
+    <div className="h-[100dvh] flex flex-col bg-slate-100 overflow-hidden">
       {/* Top bar */}
-      <div className="h-14 bg-white border-b border-slate-200 flex items-center px-4 gap-3 shrink-0">
+      <div className="min-h-14 bg-white border-b border-slate-200 flex flex-wrap items-center px-2 sm:px-4 py-2 gap-2 sm:gap-3 shrink-0">
         <button onClick={goBack} data-testid="pos-back" title={canBack ? "Back to office" : "Exit / sign out"} className="p-2 rounded-lg hover:bg-slate-100"><ArrowLeft className="w-5 h-5" /></button>
-        <BrandLogo className="h-9 w-auto" />
+        <BrandLogo className="h-8 sm:h-9 w-auto max-w-28 sm:max-w-none" />
         <Select value={storeId} onValueChange={(v) => {
           if (cart.length) { toast.error("Clear the current ticket before changing stores"); return; }
           setShift(null); setStoreId(v);
         }}>
-          <SelectTrigger className="w-44 h-9" data-testid="pos-store"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-36 sm:w-44 h-9" data-testid="pos-store"><SelectValue /></SelectTrigger>
           <SelectContent>
             {ACTIVE_STORES.map((store) => <SelectItem key={store.id} value={store.id}>{store.name}</SelectItem>)}
           </SelectContent>
         </Select>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-1 sm:gap-2">
           <button onClick={() => navigate("/receipts")} data-testid="pos-receipts"
             className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200">
-            <Receipt className="w-3.5 h-3.5" />Receipts
+            <Receipt className="w-3.5 h-3.5" /><span className="hidden sm:inline">Receipts</span>
           </button>
           {pending > 0 && (
             <button onClick={doSync} data-testid="pos-sync-btn"
@@ -192,14 +193,14 @@ export default function POS() {
               : online ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
             {syncStatus === "error" ? <><AlertCircle className="w-3.5 h-3.5" />Sync Error</>
               : syncStatus === "syncing" ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" />Syncing</>
-              : online ? <><Wifi className="w-3.5 h-3.5" />Online</>
-              : <><CloudOff className="w-3.5 h-3.5" />Offline</>}
+              : online ? <><Wifi className="w-3.5 h-3.5" /><span className="hidden sm:inline">Online</span></>
+              : <><CloudOff className="w-3.5 h-3.5" /><span className="hidden sm:inline">Offline</span></>}
           </div>
         </div>
-        <div className="text-sm text-slate-600">Cashier: <span className="font-semibold">{user?.name}</span></div>
+        <div className="hidden xl:block text-sm text-slate-600">Cashier: <span className="font-semibold">{user?.name}</span></div>
         {shift && (
           <div className="flex items-center gap-2 pl-3 ml-1 border-l border-slate-200">
-            <span data-testid="shift-banner" className="text-xs font-semibold px-2.5 py-1.5 rounded-full bg-emerald-100 text-emerald-700">
+            <span data-testid="shift-banner" className="hidden 2xl:inline text-xs font-semibold px-2.5 py-1.5 rounded-full bg-emerald-100 text-emerald-700">
               Shift open · Opening {peso(shift.opening_cash)}
             </span>
             <button onClick={() => setShowClose(true)} data-testid="close-shift-btn"
@@ -252,6 +253,11 @@ export default function POS() {
                   <ClipboardPlus className="w-4 h-4" />Record unavailable
                 </button>
               )}
+              <button type="button" onClick={() => setMobileCartOpen(true)} data-testid="open-mobile-cart"
+                className="lg:hidden relative inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-bold text-white">
+                <ShoppingCart className="h-4 w-4" /> Ticket
+                {cart.length > 0 && <span className="rounded-full bg-white px-1.5 py-0.5 text-[10px] text-primary">{cart.reduce((sum, item) => sum + item.qty, 0)}</span>}
+              </button>
             </div>
           </div>
           <div className="flex-1 overflow-y-auto p-3">
@@ -278,10 +284,14 @@ export default function POS() {
         </div>
 
         {/* Cart */}
-        <div className="w-[300px] md:w-[320px] 2xl:w-[360px] bg-white border-l border-slate-200 flex flex-col shrink-0">
+        {mobileCartOpen && <button type="button" aria-label="Close ticket" className="fixed inset-0 z-40 bg-slate-900/40 lg:hidden" onClick={() => setMobileCartOpen(false)} />}
+        <div className={`${mobileCartOpen ? "fixed inset-y-0 right-0 z-50 flex w-[min(92vw,380px)] shadow-2xl" : "hidden"} lg:static lg:z-auto lg:flex lg:w-[320px] 2xl:w-[360px] bg-white border-l border-slate-200 flex-col shrink-0`}>
           <div className="p-4 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center gap-2 font-heading font-bold text-slate-800"><ShoppingCart className="w-5 h-5 text-primary" />Current Ticket</div>
-            {cart.length > 0 && <button onClick={() => setCart([])} className="text-xs text-red-500 hover:underline" data-testid="clear-cart">Clear</button>}
+            <div className="flex items-center gap-3">
+              {cart.length > 0 && <button onClick={() => setCart([])} className="text-xs text-red-500 hover:underline" data-testid="clear-cart">Clear</button>}
+              <button type="button" onClick={() => setMobileCartOpen(false)} aria-label="Close ticket" className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 lg:hidden"><X className="h-5 w-5" /></button>
+            </div>
           </div>
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
             {cart.length === 0 && <div className="text-center py-20 text-slate-300"><ShoppingCart className="w-12 h-12 mx-auto mb-2" /><p className="text-sm">Cart is empty</p></div>}
@@ -308,7 +318,7 @@ export default function POS() {
           <div className="p-4 border-t border-slate-200 bg-white">
             <div className="flex justify-between text-sm mb-1"><span className="text-slate-500">Subtotal</span><span className="font-semibold" data-testid="cart-subtotal">{peso(subtotal)}</span></div>
             <div className="flex justify-between text-sm mb-3"><span className="text-slate-500">Items</span><span className="font-semibold">{cart.reduce((s, i) => s + i.qty, 0)}</span></div>
-            <button onClick={() => setCheckout(true)} disabled={!cart.length || !shift} data-testid="checkout-btn"
+            <button onClick={() => { setCheckout(true); setMobileCartOpen(false); }} disabled={!cart.length || !shift} data-testid="checkout-btn"
               className="w-full py-3.5 rounded-xl bg-primary text-white font-bold text-lg hover:bg-teal-800 transition-colors active:scale-[0.99] disabled:opacity-40">
               {shift ? `Charge ${peso(subtotal)}` : "Start Shift to Charge"}
             </button>
@@ -322,7 +332,7 @@ export default function POS() {
           customers={customers} settings={settings} cashierName={user?.name}
           onOfflineQueued={() => setPending(queueCount())}
           onComplete={(sale) => {
-            setLastSale(sale); setCart([]); setQ(""); setCheckout(false); refreshLevels();
+            setLastSale(sale); setCart([]); setQ(""); setCheckout(false); setMobileCartOpen(false); refreshLevels();
             if (!settings?.printing?.auto_print_receipt) openCashDrawerForSale(sale, settings);
             toast.success(sale._offline ? `Sale queued offline (${sale.number})` : `Sale ${sale.number} completed`);
           }}
@@ -374,7 +384,7 @@ function UnavailableItemDialog({ initialName, storeId, online, onClose, onSaved 
           <label className="block"><span className="text-[11px] font-bold uppercase text-slate-500">Requested item</span>
             <input value={itemName} onChange={(e) => setItemName(e.target.value)} autoFocus data-testid="unavailable-item-name"
               className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 text-sm" /></label>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label><span className="text-[11px] font-bold uppercase text-slate-500">Quantity</span>
               <input type="number" min="0.01" step="any" value={quantity} onChange={(e) => setQuantity(e.target.value)}
                 data-testid="unavailable-item-quantity" className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 text-sm" /></label>
@@ -612,7 +622,7 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
       <DialogContent className="max-w-lg">
         <DialogHeader><DialogTitle>Payment</DialogTitle></DialogHeader>
         <div className="space-y-4 max-h-[65vh] overflow-y-auto pr-1">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label className="text-[11px] font-bold uppercase text-slate-500">Discount Type</label>
               <Select value={discountType} onValueChange={setDiscountType}>
@@ -638,7 +648,7 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
 
           {discountType !== "REGULAR" && (
             <div className="space-y-3 p-3 bg-teal-50 rounded-lg">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div><label className="text-[11px] font-bold uppercase text-slate-500">ID Number</label>
                   <input value={idNumber} onChange={(e) => setIdNumber(e.target.value)} data-testid="spwd-id" className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 text-sm" placeholder="OSCA/PWD ID" /></div>
                 <div><label className="text-[11px] font-bold uppercase text-slate-500">Name</label>

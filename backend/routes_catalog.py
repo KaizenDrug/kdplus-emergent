@@ -298,7 +298,8 @@ async def next_product_sku() -> str:
 @router.get("/products")
 async def list_products(principal=Depends(get_current_principal),
                         q: Optional[str] = None, category_id: Optional[str] = None,
-                        active: Optional[bool] = None, limit: int = 500):
+                        active: Optional[bool] = None,
+                        limit: int = Query(default=500, ge=1, le=10000)):
     query = {"org_id": ORG_ID}
     if category_id:
         query["category_id"] = category_id

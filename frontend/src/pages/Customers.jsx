@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import api, { peso, fmtDate } from "@/lib/api";
 import { PageHeader, Card, StatusBadge, Empty } from "@/components/kit";
@@ -17,8 +17,8 @@ export default function Customers() {
   const [q, setQ] = useState(urlQuery);
   const [editing, setEditing] = useState(null);
   const [viewing, setViewing] = useState(null);
-  const load = () => api.get(`/customers${q ? `?q=${encodeURIComponent(q)}` : ""}`).then((r) => setRows(r.data));
-  useEffect(() => { const t = setTimeout(load, 250); return () => clearTimeout(t); }, [q]);
+  const load = useCallback(() => api.get(`/customers${q ? `?q=${encodeURIComponent(q)}` : ""}`).then((r) => setRows(r.data)), [q]);
+  useEffect(() => { const t = setTimeout(load, 250); return () => clearTimeout(t); }, [load]);
   useEffect(() => { setQ(urlQuery); }, [urlQuery]);
 
   return (
@@ -31,7 +31,7 @@ export default function Customers() {
           <input value={q} onChange={(e) => setQ(e.target.value)} data-testid="customer-search" placeholder="Search name or phone…" className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-sm" /></div>
       </Card>
       <Card className="overflow-hidden">
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto"><table className="w-full min-w-[700px] text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>
             <th className="px-4 py-3">Name</th><th className="px-4 py-3">Phone</th><th className="px-4 py-3">Type</th><th className="px-4 py-3 text-right">Points</th><th className="px-4 py-3 text-right">Lifetime</th><th className="px-4 py-3"></th></tr></thead>
           <tbody>
@@ -49,7 +49,7 @@ export default function Customers() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
         {!rows.length && <Empty />}
       </Card>
       {editing && <CustDialog c={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
@@ -74,15 +74,15 @@ function CustDialog({ c, onClose, onSaved }) {
     <Dialog open={true} onOpenChange={onClose}>
       <DialogContent className="max-w-lg">
         <DialogHeader><DialogTitle>{f.id ? "Edit" : "New"} Customer</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {inp("first_name", "First Name")}{inp("last_name", "Last Name")}
           {inp("phone", "Phone")}{inp("email", "Email")}
-          <div className="col-span-2">{inp("address", "Address")}</div>
+          <div className="sm:col-span-2">{inp("address", "Address")}</div>
           <label><span className="text-[11px] font-bold uppercase text-slate-500">Classification</span>
             <Select value={f.senior_pwd_type} onValueChange={(v) => set("senior_pwd_type", v)}><SelectTrigger className="mt-1" data-testid="cf-type"><SelectValue /></SelectTrigger>
               <SelectContent><SelectItem value="NONE">Regular</SelectItem><SelectItem value="SENIOR">Senior Citizen</SelectItem><SelectItem value="PWD">PWD</SelectItem></SelectContent></Select></label>
           {inp("id_number", "OSCA/PWD ID")}
-          <div className="col-span-2">{inp("allergies", "Allergies (optional)")}</div>
+          <div className="sm:col-span-2">{inp("allergies", "Allergies (optional)")}</div>
         </div>
         <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={busy} data-testid="save-customer" className="bg-primary hover:bg-teal-800">Save</Button></DialogFooter>
       </DialogContent>
@@ -93,15 +93,15 @@ function CustDialog({ c, onClose, onSaved }) {
 function CustView({ id, onClose, onChanged }) {
   const [c, setC] = useState(null);
   const [pts, setPts] = useState("");
-  const load = () => api.get(`/customers/${id}`).then((r) => setC(r.data));
-  useEffect(() => { load(); }, [id]);
+  const load = useCallback(() => api.get(`/customers/${id}`).then((r) => setC(r.data)), [id]);
+  useEffect(() => { load(); }, [load]);
   const adjust = async () => { if (!pts) return; await api.post(`/customers/${id}/loyalty-adjust`, { points: Number(pts), note: "Manual" }); setPts(""); load(); onChanged(); toast.success("Points adjusted"); };
   if (!c) return null;
   return (
     <Dialog open={true} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader><DialogTitle>{c.first_name} {c.last_name}</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-3 gap-3 mb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
           <Card className="p-3"><div className="text-[11px] uppercase text-slate-400 font-bold">Points</div><div className="text-2xl font-extrabold text-primary">{c.loyalty_points}</div></Card>
           <Card className="p-3"><div className="text-[11px] uppercase text-slate-400 font-bold">Lifetime</div><div className="text-2xl font-extrabold">{peso(c.lifetime_spend)}</div></Card>
           <Card className="p-3"><div className="text-[11px] uppercase text-slate-400 font-bold">Visits</div><div className="text-2xl font-extrabold">{c.visit_count}</div></Card>

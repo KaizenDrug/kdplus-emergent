@@ -33,7 +33,7 @@ export default function Suppliers() {
           <input value={q} onChange={(e) => setQ(e.target.value)} data-testid="supplier-search" placeholder="Search company, contact, phone…" className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-sm" /></div>
       </Card>
       <Card className="overflow-hidden">
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>
             <th className="px-4 py-3">Company</th><th className="px-4 py-3">Contact</th><th className="px-4 py-3">Phone</th><th className="px-4 py-3">Terms</th><th className="px-4 py-3">Status</th><th className="px-4 py-3"></th></tr></thead>
           <tbody>
@@ -48,7 +48,7 @@ export default function Suppliers() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
         {!filtered.length && <Empty text={q ? "No suppliers match your search." : "No suppliers found."} />}
       </Card>
       {editing && <SupplierDialog s={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
@@ -72,11 +72,11 @@ function SupplierDialog({ s, onClose, onSaved }) {
     <Dialog open={true} onOpenChange={onClose}>
       <DialogContent className="max-w-lg">
         <DialogHeader><DialogTitle>{f.id ? "Edit" : "New"} Supplier</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="col-span-2">{inp("company", "Company")}</div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="sm:col-span-2">{inp("company", "Company")}</div>
           {inp("contact_person", "Contact Person")}{inp("phone", "Phone")}
           {inp("email", "Email")}{inp("tin", "TIN")}
-          <div className="col-span-2">{inp("address", "Address")}</div>
+          <div className="sm:col-span-2">{inp("address", "Address")}</div>
           {inp("payment_terms", "Payment Terms")}{inp("notes", "Notes")}
         </div>
         <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={busy} data-testid="save-supplier" className="bg-primary hover:bg-teal-800">Save</Button></DialogFooter>

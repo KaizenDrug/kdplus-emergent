@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import api, { peso, fmtDate } from "@/lib/api";
 import { PageHeader, Card, StatusBadge, Empty, StatCard } from "@/components/kit";
 import { Button } from "@/components/ui/button";
@@ -13,11 +13,11 @@ export default function Shifts() {
   const [counted, setCounted] = useState("");
   const [move, setMove] = useState({ type: "IN", amount: "", reason: "" });
 
-  const load = () => {
+  const load = useCallback(() => {
     api.get(`/pos/shifts/current?store_id=${store}&register_id=reg_1`).then((r) => setCurrent(r.data));
     api.get("/pos/shifts?limit=30").then((r) => setShifts(r.data));
-  };
-  useEffect(() => { load(); }, []);
+  }, [store]);
+  useEffect(() => { load(); }, [load]);
 
   const open = async () => { await api.post("/pos/shifts/open", { store_id: store, register_id: "reg_1", opening_cash: Number(opening) || 0 }); toast.success("Shift opened"); setOpening(""); load(); };
   const close = async () => { if (counted === "") { toast.error("Enter counted cash"); return; } await api.post("/pos/shifts/close", { shift_id: current.id, counted_cash: Number(counted) }); toast.success("Shift closed"); setCounted(""); load(); };
@@ -59,8 +59,8 @@ export default function Shifts() {
       )}
 
       <h3 className="font-heading font-bold text-slate-800 mb-3">Shift History</h3>
-      <Card className="overflow-hidden">
-        <table className="w-full text-sm">
+      <Card className="overflow-x-auto">
+        <table className="w-full min-w-[900px] text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>
             <th className="px-4 py-3">Cashier</th><th className="px-4 py-3">Opened</th><th className="px-4 py-3">Closed</th><th className="px-4 py-3 text-right">Sales</th><th className="px-4 py-3 text-right">Expected</th><th className="px-4 py-3 text-right">Counted</th><th className="px-4 py-3 text-right">Diff</th><th className="px-4 py-3">Status</th></tr></thead>
           <tbody>

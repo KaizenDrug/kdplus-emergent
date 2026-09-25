@@ -39,18 +39,18 @@ export default function DateRangeFilter({ period, start, end, onPreset, onApply,
           </button>
         ))}
       </div>
-      <label className="text-xs font-semibold text-slate-500">
+      <label className="min-w-0 flex-1 text-xs font-semibold text-slate-500 sm:flex-none">
         From
         <input type="date" value={draftStart} onChange={(event) => setDraftStart(event.target.value)} data-testid="range-start"
-          className="mt-1 block h-9 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm font-normal text-slate-800" />
+          className="mt-1 block h-9 w-full rounded-lg border border-slate-200 bg-slate-50 px-2 text-sm font-normal text-slate-800 sm:w-auto sm:px-3" />
       </label>
-      <label className="text-xs font-semibold text-slate-500">
+      <label className="min-w-0 flex-1 text-xs font-semibold text-slate-500 sm:flex-none">
         To
         <input type="date" value={draftEnd} min={draftStart || undefined} onChange={(event) => setDraftEnd(event.target.value)} data-testid="range-end"
-          className="mt-1 block h-9 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm font-normal text-slate-800" />
+          className="mt-1 block h-9 w-full rounded-lg border border-slate-200 bg-slate-50 px-2 text-sm font-normal text-slate-800 sm:w-auto sm:px-3" />
       </label>
       <Button type="button" variant={start && end ? "default" : "outline"} disabled={invalid}
-        onClick={() => onApply(draftStart, draftEnd)} data-testid="apply-date-range" className="h-9">
+        onClick={() => onApply(draftStart, draftEnd)} data-testid="apply-date-range" className="h-9 w-full sm:w-auto">
         Apply Range
       </Button>
       {draftStart && draftEnd && draftStart > draftEnd && <span className="pb-2 text-xs font-medium text-red-600">From date must be before To date.</span>}

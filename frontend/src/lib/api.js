@@ -2,10 +2,12 @@ import axios from "axios";
 
 export const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-const api = axios.create({ baseURL: API, withCredentials: true });
+const api = axios.create({ baseURL: API, withCredentials: true, timeout: 30000 });
 
-// auto-refresh on 401 once
-let refreshing = false;
+// Share one refresh request between all API calls that fail together. Without
+// this, a page that loads several widgets can retry some requests before the
+// refresh cookie has actually been renewed and show a wall of 401 errors.
+let refreshPromise = null;
 api.interceptors.response.use(
   (r) => r,
   async (error) => {
@@ -13,15 +15,10 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && !original._retry && !original.url.includes("/auth/")) {
       original._retry = true;
       try {
-        if (!refreshing) {
-          refreshing = true;
-          await api.post("/auth/refresh");
-          refreshing = false;
-        }
+        if (!refreshPromise) refreshPromise = api.post("/auth/refresh").finally(() => { refreshPromise = null; });
+        await refreshPromise;
         return api(original);
-      } catch (e) {
-        refreshing = false;
-      }
+      } catch (e) { /* Preserve the original unauthorized response. */ }
     }
     return Promise.reject(error);
   }

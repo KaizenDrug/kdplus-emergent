@@ -24,8 +24,8 @@ export default function StockTransfers() {
         <Button onClick={() => setCreating(true)} disabled={!BRANCH_TRANSFERS_ENABLED} data-testid="add-transfer-btn" className="bg-primary hover:bg-teal-800"><Plus className="w-4 h-4 mr-1" />New Transfer</Button>
       </PageHeader>
       {!BRANCH_TRANSFERS_ENABLED && <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">Stock transfers are unavailable while KDPLUS Main is the only active branch.</div>}
-      <Card className="overflow-hidden">
-        <table className="w-full text-sm">
+      <Card className="overflow-x-auto">
+        <table className="w-full min-w-[620px] text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>
             <th className="px-4 py-3">Transfer #</th><th className="px-4 py-3">Route</th><th className="px-4 py-3">Items</th><th className="px-4 py-3">Status</th><th className="px-4 py-3"></th></tr></thead>
           <tbody>
@@ -66,7 +66,7 @@ function TransferCreate({ products, onClose, onSaved }) {
     <Dialog open={true} onOpenChange={onClose}>
       <DialogContent className="max-w-xl">
         <DialogHeader><DialogTitle>New Stock Transfer</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-2 gap-3 mb-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
           <label><span className="text-[11px] font-bold uppercase text-slate-500">From</span>
             <Select value={source} onValueChange={setSource}><SelectTrigger className="mt-1" data-testid="transfer-source"><SelectValue /></SelectTrigger>
               <SelectContent><SelectItem value="store_main">KDPLUS Main</SelectItem><SelectItem value="store_annex">KDPLUS Annex</SelectItem></SelectContent></Select></label>

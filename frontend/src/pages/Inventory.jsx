@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import api, { peso, fmtDay, fmtDate } from "@/lib/api";
 import { PageHeader, Card, StatusBadge, Empty, StatCard } from "@/components/kit";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -24,9 +24,10 @@ export default function Inventory() {
   const [levelSort, setLevelSort] = useState({ key: "name", direction: "asc" });
   const [expirySort, setExpirySort] = useState({ key: "expiry_date", direction: "asc" });
 
-  const loadLevels = () => api.get(`/inventory/levels?store_id=${store}`).then((r) => setLevels(r.data));
-  const loadExpiry = () => api.get(`/inventory/expiry?store_id=${store}`).then((r) => setExpiry(r.data));
-  useEffect(() => { loadLevels(); loadExpiry(); api.get("/products?limit=1000").then((r) => setProducts(r.data)); }, [store]);
+  const loadLevels = useCallback(() => api.get(`/inventory/levels?store_id=${store}`).then((r) => setLevels(r.data)), [store]);
+  const loadExpiry = useCallback(() => api.get(`/inventory/expiry?store_id=${store}`).then((r) => setExpiry(r.data)), [store]);
+  useEffect(() => { api.get("/products?limit=1000").then((r) => setProducts(r.data)); }, []);
+  useEffect(() => { loadLevels(); loadExpiry(); }, [loadLevels, loadExpiry]);
 
   const low = levels.filter((l) => l.status === "LOW").length;
   const out = levels.filter((l) => l.status === "OUT").length;
@@ -88,8 +89,8 @@ export default function Inventory() {
         </TabsList>
 
         <TabsContent value="levels">
-          <Card className="overflow-hidden">
-            <table className="w-full text-sm">
+          <Card className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>
                 <SortableHeader column="name" label="Product" sort={levelSort} onSort={setLevelSort} />
                 <SortableHeader column="shelf_code" label="Shelf" sort={levelSort} onSort={setLevelSort} />
@@ -129,8 +130,8 @@ export default function Inventory() {
                   </Card>
                 ))}
               </div>
-              <Card className="overflow-hidden">
-                <table className="w-full text-sm">
+              <Card className="overflow-x-auto">
+                <table className="w-full min-w-[820px] text-sm">
                   <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>
                     <SortableHeader column="product_name" label="Product" sort={expirySort} onSort={setExpirySort} />
                     <SortableHeader column="lot_number" label="Lot" sort={expirySort} onSort={setExpirySort} />
@@ -185,8 +186,8 @@ function LedgerTab({ store, products, search }) {
     qty_after: (row) => Number(row.qty_after || 0),
   }), [filteredRows, sort, products]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
-    <Card className="overflow-hidden">
-      <table className="w-full text-sm">
+    <Card className="overflow-x-auto">
+      <table className="w-full min-w-[900px] text-sm">
         <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>
           <SortableHeader column="created_at" label="Time" sort={sort} onSort={setSort} />
           <SortableHeader column="product" label="Product" sort={sort} onSort={setSort} />
@@ -233,12 +234,12 @@ function ReceiveDialog({ store, products, onClose, onSaved }) {
         <DialogHeader><DialogTitle>Receive Stock (Goods Receiving)</DialogTitle></DialogHeader>
         <div className="space-y-2 max-h-[55vh] overflow-y-auto">
           {lines.map((l, i) => (
-            <div key={i} className="grid grid-cols-12 gap-2 items-center">
-              <div className="col-span-4"><Select value={l.product_id} onValueChange={(v) => upd(i, "product_id", v)}><SelectTrigger data-testid={`recv-prod-${i}`}><SelectValue placeholder="Product" /></SelectTrigger><SelectContent>{products.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent></Select></div>
-              <input className="col-span-2 px-2 py-2 border rounded-lg text-sm" placeholder="Qty" type="number" value={l.quantity} onChange={(e) => upd(i, "quantity", e.target.value)} data-testid={`recv-qty-${i}`} />
-              <input className="col-span-2 px-2 py-2 border rounded-lg text-sm" placeholder="Cost" type="number" value={l.unit_cost} onChange={(e) => upd(i, "unit_cost", e.target.value)} />
-              <input className="col-span-2 px-2 py-2 border rounded-lg text-sm" placeholder="Lot" value={l.lot_number} onChange={(e) => upd(i, "lot_number", e.target.value)} />
-              <input className="col-span-2 px-2 py-2 border rounded-lg text-sm" type="date" value={l.expiry_date} onChange={(e) => upd(i, "expiry_date", e.target.value)} />
+            <div key={i} className="grid grid-cols-12 gap-2 items-center rounded-lg border border-slate-100 p-2 sm:border-0 sm:p-0">
+              <div className="col-span-12 sm:col-span-4"><Select value={l.product_id} onValueChange={(v) => upd(i, "product_id", v)}><SelectTrigger data-testid={`recv-prod-${i}`}><SelectValue placeholder="Product" /></SelectTrigger><SelectContent>{products.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent></Select></div>
+              <input className="col-span-4 sm:col-span-2 px-2 py-2 border rounded-lg text-sm" placeholder="Qty" type="number" value={l.quantity} onChange={(e) => upd(i, "quantity", e.target.value)} data-testid={`recv-qty-${i}`} />
+              <input className="col-span-4 sm:col-span-2 px-2 py-2 border rounded-lg text-sm" placeholder="Cost" type="number" value={l.unit_cost} onChange={(e) => upd(i, "unit_cost", e.target.value)} />
+              <input className="col-span-4 sm:col-span-2 px-2 py-2 border rounded-lg text-sm" placeholder="Lot" value={l.lot_number} onChange={(e) => upd(i, "lot_number", e.target.value)} />
+              <input className="col-span-12 sm:col-span-2 px-2 py-2 border rounded-lg text-sm" type="date" value={l.expiry_date} onChange={(e) => upd(i, "expiry_date", e.target.value)} />
             </div>
           ))}
           <button onClick={() => setLines((l) => [...l, { product_id: "", quantity: "", unit_cost: "", lot_number: "", expiry_date: "" }])} className="text-sm text-accent hover:underline">+ Add line</button>
@@ -272,7 +273,7 @@ function AdjustDialog({ store, products, levels, initialProductId, onClose, onSa
   const save = async () => {
     const complete = lines.filter((l) => l.product_id && l.new_quantity !== "");
     if (!complete.length) { toast.error("Select a product and enter its new on-hand quantity"); return; }
-    if (complete.some((l) => Number(l.new_quantity) < 0)) { toast.error("New on-hand quantity cannot be negative"); return; }
+    if (complete.some((l) => Number(l.new_quantity) < 0 || !Number.isInteger(Number(l.new_quantity)))) { toast.error("New on-hand quantity must be a whole number of zero or more"); return; }
     if (new Set(complete.map((l) => l.product_id)).size !== complete.length) { toast.error("Each product can only be adjusted once"); return; }
     const valid = complete.filter((l) => Number(l.new_quantity) !== Number(l.current_quantity))
       .map((l) => ({ product_id: l.product_id, new_quantity: Number(l.new_quantity) }));
@@ -291,19 +292,19 @@ function AdjustDialog({ store, products, levels, initialProductId, onClose, onSa
       <DialogContent className="max-w-xl">
         <DialogHeader><DialogTitle>Stock Adjustment</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label><span className="text-[11px] font-bold uppercase text-slate-500">Reason</span>
               <Select value={reason} onValueChange={setReason}><SelectTrigger className="mt-1" data-testid="adj-reason"><SelectValue /></SelectTrigger><SelectContent>{reasons.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent></Select></label>
             <label><span className="text-[11px] font-bold uppercase text-slate-500">Notes</span><input className="w-full mt-1 px-3 py-2 border rounded-lg text-sm" value={notes} onChange={(e) => setNotes(e.target.value)} /></label>
           </div>
-          <div className="grid grid-cols-12 gap-2 px-1 text-[11px] font-bold uppercase text-slate-500">
+          <div className="hidden grid-cols-12 gap-2 px-1 text-[11px] font-bold uppercase text-slate-500 sm:grid">
             <span className="col-span-6">Product</span><span className="col-span-3 text-right">Current</span><span className="col-span-3 text-right">New On-Hand</span>
           </div>
           {lines.map((l, i) => (
-            <div key={i} className="grid grid-cols-12 gap-2">
-              <div className="col-span-6"><ProductSearchSelect products={products} value={l.product_id} onChange={(v) => selectProduct(i, v)} testId={`adj-prod-${i}`} /></div>
-              <div className="col-span-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-right text-sm font-semibold text-slate-600" data-testid={`adj-current-${i}`}>{l.product_id ? l.current_quantity : "—"}</div>
-              <input className="col-span-3 rounded-lg border px-2 py-2 text-right text-sm font-semibold" placeholder="New qty" type="number" min="0" step="any"
+            <div key={i} className="grid grid-cols-12 gap-2 rounded-lg border border-slate-100 p-2 sm:border-0 sm:p-0">
+              <div className="col-span-12 sm:col-span-6"><ProductSearchSelect products={products} value={l.product_id} onChange={(v) => selectProduct(i, v)} testId={`adj-prod-${i}`} /></div>
+              <div className="col-span-5 sm:col-span-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-right text-sm font-semibold text-slate-600" data-testid={`adj-current-${i}`}><span className="mr-2 text-[10px] uppercase text-slate-400 sm:hidden">Current</span>{l.product_id ? l.current_quantity : "—"}</div>
+              <input className="col-span-7 sm:col-span-3 rounded-lg border px-2 py-2 text-right text-sm font-semibold" placeholder="New on-hand" type="number" min="0" step="1"
                 value={l.new_quantity} onChange={(e) => upd(i, "new_quantity", e.target.value)} data-testid={`adj-qty-${i}`} />
             </div>
           ))}

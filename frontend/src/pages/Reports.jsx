@@ -29,7 +29,7 @@ export default function Reports() {
         onPreset={(value) => { setPeriod(value); setStart(""); setEnd(""); }}
         onApply={(from, to) => { setStart(from); setEnd(to); }} className="mb-4" />}
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
+        <TabsList className="max-w-full justify-start overflow-x-auto">
           <TabsTrigger value="sales" data-testid="rtab-sales">Sales & Profit</TabsTrigger>
           <TabsTrigger value="valuation" data-testid="rtab-valuation">Inventory Valuation</TabsTrigger>
           <TabsTrigger value="spwd" data-testid="rtab-spwd">Senior / PWD</TabsTrigger>
@@ -64,8 +64,8 @@ function SalesReport({ period, start, end }) {
         <StatCard label="Gross Profit" value={peso(totalProfit)} tone="success" />
         <StatCard label="Margin" value={`${totalNet ? ((totalProfit / totalNet) * 100).toFixed(1) : 0}%`} tone="accent" />
       </div>
-      <Card className="overflow-hidden">
-        <table className="w-full text-sm">
+      <Card className="overflow-x-auto">
+        <table className="w-full min-w-[700px] text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>
             <th className="px-4 py-3">{group}</th><th className="px-4 py-3 text-right">Qty</th><th className="px-4 py-3 text-right">Net Sales</th><th className="px-4 py-3 text-right">COGS</th><th className="px-4 py-3 text-right">Profit</th><th className="px-4 py-3 text-right">Margin</th></tr></thead>
           <tbody>
@@ -97,8 +97,8 @@ function Valuation() {
         <StatCard label="Total Inventory Value (at cost)" value={peso(d.total_value)} tone="primary" />
         <Button variant="outline" onClick={() => download("valuation.csv", toCSV(d.rows, [{ key: "name", label: "Product" }, { key: "category", label: "Category" }, { key: "quantity", label: "Qty" }, { key: "average_cost", label: "Cost" }, { key: "value", label: "Value" }]))}><Download className="w-4 h-4 mr-1" />Export</Button>
       </div>
-      <Card className="overflow-hidden">
-        <table className="w-full text-sm">
+      <Card className="overflow-x-auto">
+        <table className="w-full min-w-[700px] text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>
             <th className="px-4 py-3">Product</th><th className="px-4 py-3">Category</th><th className="px-4 py-3 text-right">Qty</th><th className="px-4 py-3 text-right">Avg Cost</th><th className="px-4 py-3 text-right">Value</th><th className="px-4 py-3 text-right">Retail</th></tr></thead>
           <tbody>
@@ -122,14 +122,14 @@ function SeniorPwd({ period, start, end }) {
   if (!d) return <div className="text-slate-400">Loading…</div>;
   return (
     <div>
-      <div className="grid grid-cols-3 gap-4 mb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
         <StatCard label="Transactions" value={d.count} tone="primary" />
         <StatCard label="Total Discount" value={peso(d.total_discount)} tone="warning" />
         <StatCard label="VAT Exempted" value={peso(d.total_vat_exempt)} tone="accent" />
       </div>
       <div className="flex justify-end mb-2"><Button variant="outline" onClick={() => download("senior-pwd.csv", toCSV(d.rows, [{ key: "sale_number", label: "Sale" }, { key: "type", label: "Type" }, { key: "id_number", label: "ID" }, { key: "name", label: "Name" }, { key: "gross", label: "Gross" }, { key: "vat_exempt", label: "VATExempt" }, { key: "discount", label: "Discount" }, { key: "net", label: "Net" }]))}><Download className="w-4 h-4 mr-1" />Export</Button></div>
-      <Card className="overflow-hidden">
-        <table className="w-full text-sm">
+      <Card className="overflow-x-auto">
+        <table className="w-full min-w-[760px] text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>
             <th className="px-4 py-3">Sale</th><th className="px-4 py-3">Type</th><th className="px-4 py-3">ID / Name</th><th className="px-4 py-3 text-right">Gross</th><th className="px-4 py-3 text-right">VAT Exempt</th><th className="px-4 py-3 text-right">Discount</th><th className="px-4 py-3 text-right">Net</th></tr></thead>
           <tbody>
@@ -162,13 +162,13 @@ function UnavailableItems({ period, start, end }) {
       <div className="flex flex-wrap gap-2 mb-4 items-center">
         <Button variant="outline" onClick={() => download("requested-items.csv", toCSV(data.rows, columns))} className="ml-auto" data-testid="export-unavailable-items"><Download className="w-4 h-4 mr-1" />Export CSV</Button>
       </div>
-      <div className="grid grid-cols-3 gap-4 mb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
         <StatCard label="Requests" value={data.count} tone="primary" />
         <StatCard label="Unique Items" value={data.unique_items} tone="accent" />
         <StatCard label="Total Quantity Requested" value={num(data.total_quantity)} tone="warning" />
       </div>
-      <Card className="overflow-hidden">
-        <table className="w-full text-sm">
+      <Card className="overflow-x-auto">
+        <table className="w-full min-w-[780px] text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>
             <th className="px-4 py-3">Date</th><th className="px-4 py-3">Requested Item</th><th className="px-4 py-3 text-right">Qty</th>
             <th className="px-4 py-3">Customer</th><th className="px-4 py-3">Notes</th><th className="px-4 py-3">Recorded By</th>

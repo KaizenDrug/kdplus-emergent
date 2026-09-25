@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useCallback, useEffect, useState, useMemo } from "react";
 import api, { peso, fmtDay, apiError } from "@/lib/api";
 import { PageHeader, Card, Empty } from "@/components/kit";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -53,7 +53,7 @@ export default function PurchaseOrders() {
         <Button onClick={() => setCreating(true)} data-testid="add-po-btn" className="bg-primary hover:bg-teal-800"><Plus className="w-4 h-4 mr-1" />New PO</Button>
       </PageHeader>
       <Card className="overflow-hidden">
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>
             <th className="px-4 py-3">PO #</th><th className="px-4 py-3">Supplier</th><th className="px-4 py-3">Expected</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Total</th><th className="px-4 py-3"></th></tr></thead>
           <tbody>
@@ -68,7 +68,7 @@ export default function PurchaseOrders() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
         {!rows.length && <Empty />}
       </Card>
       {creating && <POForm products={products} suppliers={suppliers} onClose={() => setCreating(false)} onSaved={() => { setCreating(false); load(); toast.success("PO created"); }} />}
@@ -108,18 +108,18 @@ function POForm({ po, products, suppliers, onClose, onSaved }) {
     <Dialog open={true} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl">
         <DialogHeader><DialogTitle>{isEdit ? `Edit ${po.number}` : "New Purchase Order"}</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-2 gap-3 mb-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
           <label><span className="text-[11px] font-bold uppercase text-slate-500">Supplier</span>
             <Select value={supplier} onValueChange={setSupplier}><SelectTrigger className="mt-1" data-testid="po-supplier"><SelectValue placeholder="Select" /></SelectTrigger><SelectContent>{suppliers.map((s) => <SelectItem key={s.id} value={s.id}>{s.company}</SelectItem>)}</SelectContent></Select></label>
           <label><span className="text-[11px] font-bold uppercase text-slate-500">Expected Date</span><input type="date" value={expected} onChange={(e) => setExpected(e.target.value)} className="w-full mt-1 px-3 py-2 border rounded-lg text-sm" /></label>
         </div>
         <div className="space-y-2 max-h-[40vh] overflow-y-auto">
           {lines.map((l, i) => (
-            <div key={i} className="grid grid-cols-12 gap-2 items-center">
-              <div className="col-span-6"><Select value={l.product_id} onValueChange={(v) => pickProduct(i, v)}><SelectTrigger data-testid={`po-prod-${i}`}><SelectValue placeholder="Product" /></SelectTrigger><SelectContent>{[...products].sort(byProductName).map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent></Select></div>
-              <input className="col-span-2 px-2 py-2 border rounded-lg text-sm" placeholder="Qty" type="number" value={l.qty_ordered} onChange={(e) => upd(i, "qty_ordered", e.target.value)} data-testid={`po-qty-${i}`} />
-              <input className="col-span-3 px-2 py-2 border rounded-lg text-sm" placeholder="Cost" type="number" value={l.unit_cost} onChange={(e) => upd(i, "unit_cost", e.target.value)} data-testid={`po-cost-${i}`} />
-              <button className="col-span-1 text-slate-400 hover:text-red-500" onClick={() => setLines((ls) => ls.filter((_, x) => x !== i))}><Trash2 className="w-4 h-4" /></button>
+            <div key={i} className="grid grid-cols-12 gap-2 items-center rounded-lg border border-slate-100 p-2 sm:border-0 sm:p-0">
+              <div className="col-span-12 sm:col-span-6"><Select value={l.product_id} onValueChange={(v) => pickProduct(i, v)}><SelectTrigger data-testid={`po-prod-${i}`}><SelectValue placeholder="Product" /></SelectTrigger><SelectContent>{[...products].sort(byProductName).map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent></Select></div>
+              <input className="col-span-4 sm:col-span-2 px-2 py-2 border rounded-lg text-sm" placeholder="Qty" type="number" value={l.qty_ordered} onChange={(e) => upd(i, "qty_ordered", e.target.value)} data-testid={`po-qty-${i}`} />
+              <input className="col-span-6 sm:col-span-3 px-2 py-2 border rounded-lg text-sm" placeholder="Cost" type="number" value={l.unit_cost} onChange={(e) => upd(i, "unit_cost", e.target.value)} data-testid={`po-cost-${i}`} />
+              <button className="col-span-2 sm:col-span-1 text-slate-400 hover:text-red-500" onClick={() => setLines((ls) => ls.filter((_, x) => x !== i))}><Trash2 className="w-4 h-4 mx-auto" /></button>
             </div>
           ))}
           <button onClick={() => setLines((l) => [...l, { product_id: "", qty_ordered: "", unit_cost: "" }])} className="text-sm text-accent hover:underline">+ Add line</button>
@@ -138,16 +138,16 @@ function POView({ poId, products, threshold, supName, onClose, onEdit, onChanged
   const [mode, setMode] = useState("view");
   const [busy, setBusy] = useState(false);
 
-  const reload = async () => {
+  const reload = useCallback(async () => {
     const [p, r] = await Promise.all([api.get(`/purchase-orders/${poId}`), api.get(`/purchase-orders/${poId}/receipts`)]);
     setPo(p.data); setReceipts(r.data);
-  };
+  }, [poId]);
   useEffect(() => {
     reload();
     api.get("/inventory/levels?store_id=store_main").then((r) => {
       const map = {}; r.data.forEach((x) => { map[x.product_id] = x; }); setLevels(map);
     });
-  }, [poId]);
+  }, [poId, reload]);
 
   const prodMap = useMemo(() => Object.fromEntries(products.map((p) => [p.id, p])), [products]);
   if (!po) return null;
@@ -171,7 +171,7 @@ function POView({ poId, products, threshold, supName, onClose, onEdit, onChanged
         {mode === "view" ? (
           <>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full min-w-[760px] text-sm">
                 <thead className="text-xs uppercase text-slate-400 text-left border-b border-slate-200">
                   <tr><th className="py-1.5">Item</th><th className="py-1.5 text-right">Ordered</th><th className="py-1.5 text-right">Received</th><th className="py-1.5 text-right">Over</th><th className="py-1.5 text-right">Cancelled</th><th className="py-1.5 text-right">Outstanding</th><th className="py-1.5 text-right">PO Cost</th><th className="py-1.5 text-right">Line Total</th></tr>
                 </thead>

@@ -21,8 +21,8 @@ export default function Employees() {
       <PageHeader title="Employees" subtitle="Roles, PIN access & permissions">
         <Button onClick={() => setEditing({ ...empty })} data-testid="add-employee-btn" className="bg-primary hover:bg-teal-800"><Plus className="w-4 h-4 mr-1" />New Employee</Button>
       </PageHeader>
-      <Card className="overflow-hidden">
-        <table className="w-full text-sm">
+      <Card className="overflow-x-auto">
+        <table className="w-full min-w-[620px] text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>
             <th className="px-4 py-3">Name</th><th className="px-4 py-3">Role</th><th className="px-4 py-3">Stores</th><th className="px-4 py-3">Status</th><th className="px-4 py-3"></th></tr></thead>
           <tbody>
