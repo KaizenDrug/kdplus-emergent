@@ -123,3 +123,51 @@ async def test_duplicate_nissin_beef_removes_only_later_duplicate(migration_db):
 
     second = await data_migrations.remove_duplicate_nissin_beef()
     assert second == {"status": "already_applied", "removed": 1}
+
+
+@pytest.mark.asyncio
+async def test_legacy_generated_skus_are_migrated_and_references_updated(migration_db):
+    await migration_db.products.insert_many([
+        {"id": "existing", "org_id": core.ORG_ID, "name": "Existing", "sku": "SKU10008"},
+        {"id": "legacy-a", "org_id": core.ORG_ID, "name": "Legacy A",
+         "sku": "SKU-20260925-00002", "created_at": "2026-09-25T02:00:00+00:00"},
+        {"id": "legacy-b", "org_id": core.ORG_ID, "name": "Legacy B",
+         "sku": "SKU-20260925-00001", "created_at": "2026-09-25T01:00:00+00:00"},
+        {"id": "custom", "org_id": core.ORG_ID, "name": "Custom", "sku": "CUSTOM-1"},
+        {"id": "promo", "org_id": core.ORG_ID, "name": "Promo", "sku": "PROMO-1",
+         "components": [{"product_id": "legacy-a", "name": "Legacy A",
+                         "sku": "SKU-20260925-00002", "quantity": 2}]},
+    ])
+    await migration_db.sales.insert_one({
+        "id": "sale", "org_id": core.ORG_ID,
+        "items": [{"product_id": "legacy-a", "sku": "SKU-20260925-00002",
+                   "inventory_components": [
+                       {"product_id": "legacy-b", "sku": "SKU-20260925-00001"},
+                   ]}],
+    })
+    await migration_db.sales.insert_one({
+        "id": "promo-sale", "org_id": core.ORG_ID,
+        "items": [{"product_id": "promo", "sku": "PROMO-1",
+                   "inventory_components": [
+                       {"product_id": "legacy-a", "sku": "SKU-20260925-00002"},
+                   ]}],
+    })
+
+    result = await data_migrations.normalize_generated_product_skus()
+
+    assert result == {"status": "corrected", "updated": 2}
+    assert (await migration_db.products.find_one({"id": "legacy-b"}))["sku"] == "SKU10009"
+    assert (await migration_db.products.find_one({"id": "legacy-a"}))["sku"] == "SKU10010"
+    assert (await migration_db.products.find_one({"id": "existing"}))["sku"] == "SKU10008"
+    assert (await migration_db.products.find_one({"id": "custom"}))["sku"] == "CUSTOM-1"
+    promo = await migration_db.products.find_one({"id": "promo"})
+    assert promo["components"][0]["sku"] == "SKU10010"
+    sale = await migration_db.sales.find_one({"id": "sale"})
+    assert sale["items"][0]["sku"] == "SKU10010"
+    assert sale["items"][0]["inventory_components"][0]["sku"] == "SKU10009"
+    promo_sale = await migration_db.sales.find_one({"id": "promo-sale"})
+    assert promo_sale["items"][0]["inventory_components"][0]["sku"] == "SKU10010"
+    assert (await migration_db.counters.find_one({"_id": "product-sku"}))["seq"] == 10010
+
+    second = await data_migrations.normalize_generated_product_skus()
+    assert second == {"status": "already_applied", "updated": 2}

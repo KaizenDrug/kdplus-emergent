@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from pymongo import ReturnDocument
 from typing import Optional, List
 import re
 import csv
 import io
 
-from core import (db, ORG_ID, uid, now_iso, m, D, get_current_principal, require_perm, audit,
-                  next_number)
+from core import db, ORG_ID, uid, now_iso, m, D, get_current_principal, require_perm, audit
 
 router = APIRouter(prefix="/api", tags=["catalog"])
 
@@ -266,6 +266,35 @@ def product_search_clauses(search: str):
     ]
 
 
+async def next_product_sku() -> str:
+    """Return the next product SKU in the SKU10000, SKU10001... sequence."""
+    sku_pattern = re.compile(r"^SKU(\d{5,})$", re.IGNORECASE)
+    existing = await db.products.find(
+        {"org_id": ORG_ID, "sku": {"$regex": r"^SKU\d{5,}$", "$options": "i"}},
+        {"_id": 0, "sku": 1},
+    ).to_list(100000)
+    highest = max(
+        (int(match.group(1)) for product in existing
+         if (match := sku_pattern.fullmatch((product.get("sku") or "").strip()))),
+        default=9999,
+    )
+
+    # Keep a dedicated atomic sequence so simultaneous New Product forms never
+    # receive the same number.  $max also moves older installations forward to
+    # the highest SKU already present in their catalog.
+    await db.counters.update_one(
+        {"_id": "product-sku"}, {"$max": {"seq": highest}}, upsert=True,
+    )
+    while True:
+        counter = await db.counters.find_one_and_update(
+            {"_id": "product-sku"}, {"$inc": {"seq": 1}},
+            return_document=ReturnDocument.AFTER,
+        )
+        sku = f"SKU{counter['seq']:05d}"
+        if not await db.products.find_one({"org_id": ORG_ID, "sku": sku}, {"_id": 1}):
+            return sku
+
+
 @router.get("/products")
 async def list_products(principal=Depends(get_current_principal),
                         q: Optional[str] = None, category_id: Optional[str] = None,
@@ -283,7 +312,7 @@ async def list_products(principal=Depends(get_current_principal),
 @router.post("/products/generate-sku")
 async def generate_product_sku(principal=Depends(require_perm("*"))):
     """Reserve a unique SKU for the new-product form."""
-    return {"sku": await next_number("SKU")}
+    return {"sku": await next_product_sku()}
 
 
 @router.get("/products/{pid}")
@@ -297,7 +326,7 @@ async def get_product(pid: str, principal=Depends(get_current_principal)):
 @router.post("/products")
 async def create_product(body: ProductIn, principal=Depends(require_perm("*"))):
     data = body.model_dump()
-    data["sku"] = (data.get("sku") or "").strip() or await next_number("SKU")
+    data["sku"] = (data.get("sku") or "").strip() or await next_product_sku()
     data = await prepare_product_components(data)
     await ensure_unique_product(data)
     if not data.get("average_cost"):
@@ -316,7 +345,7 @@ async def update_product(pid: str, body: ProductIn, principal=Depends(require_pe
     if not old:
         raise HTTPException(status_code=404, detail="Product not found")
     data = body.model_dump()
-    data["sku"] = (data.get("sku") or "").strip() or old.get("sku") or await next_number("SKU")
+    data["sku"] = (data.get("sku") or "").strip() or old.get("sku") or await next_product_sku()
     data = await prepare_product_components(data, product_id=pid)
     # The product editor exposes one manual Cost field. Older clients changed the
     # acquisition cost but sent the previous average cost back unchanged, making

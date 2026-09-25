@@ -1,5 +1,7 @@
 """Small, idempotent production-data corrections for KDPLUS."""
 
+import re
+
 from pymongo import ReturnDocument
 
 from core import db, ORG_ID, D, m, now_iso
@@ -7,6 +9,7 @@ from core import db, ORG_ID, D, m, now_iso
 
 GASAIDE_RECEIPT_FIX = "fix-po-20260917-00001-gasaide-received-200-v1"
 NISSIN_BEEF_DUPLICATE_FIX = "remove-duplicate-nissin-cup-mini-beef-40g-v1"
+PRODUCT_SKU_FORMAT_FIX = "normalize-product-skus-to-sku-five-digits-v1"
 
 
 def _po_status(items):
@@ -283,5 +286,130 @@ async def remove_duplicate_nissin_beef():
     return {"status": "corrected", "removed": len(removed_ids), "kept_id": keeper.get("id")}
 
 
+async def normalize_generated_product_skus():
+    """Convert legacy date-based product SKUs to the SKU10000 sequence."""
+    completed = await db.data_migrations.find_one({
+        "id": PRODUCT_SKU_FORMAT_FIX, "status": "DONE",
+    })
+    if completed:
+        return {"status": "already_applied", "updated": completed.get("updated", 0)}
+
+    plan = await db.data_migrations.find_one({"id": PRODUCT_SKU_FORMAT_FIX})
+    if not plan:
+        products = await db.products.find(
+            {"org_id": ORG_ID}, {"_id": 0, "id": 1, "sku": 1, "created_at": 1},
+        ).to_list(100000)
+        simple_pattern = re.compile(r"^SKU(\d{5,})$", re.IGNORECASE)
+        legacy_pattern = re.compile(r"^SKU-\d{8}-\d{5}$", re.IGNORECASE)
+        used_numbers = {
+            int(match.group(1))
+            for product in products
+            if (match := simple_pattern.fullmatch(str(product.get("sku") or "").strip()))
+        }
+        next_number = max(used_numbers, default=9999) + 1
+        legacy = sorted(
+            (product for product in products
+             if legacy_pattern.fullmatch(str(product.get("sku") or "").strip())),
+            key=lambda product: (
+                str(product.get("created_at") or ""),
+                str(product.get("sku") or ""),
+                str(product.get("id") or ""),
+            ),
+        )
+        mapping = []
+        for product in legacy:
+            while next_number in used_numbers:
+                next_number += 1
+            mapping.append({
+                "product_id": product["id"], "old_sku": product["sku"],
+                "new_sku": f"SKU{next_number:05d}",
+            })
+            used_numbers.add(next_number)
+            next_number += 1
+
+        plan = await db.data_migrations.find_one_and_update(
+            {"id": PRODUCT_SKU_FORMAT_FIX},
+            {"$setOnInsert": {
+                "id": PRODUCT_SKU_FORMAT_FIX, "org_id": ORG_ID,
+                "status": "PLANNED", "mapping": mapping, "created_at": now_iso(),
+            }},
+            upsert=True, return_document=ReturnDocument.AFTER,
+        )
+
+    mapping = plan.get("mapping", [])
+    sku_by_product = {row["product_id"]: row["new_sku"] for row in mapping}
+
+    for row in mapping:
+        await db.products.update_one(
+            {"id": row["product_id"], "org_id": ORG_ID,
+             "sku": {"$in": [row["old_sku"], row["new_sku"]]}},
+            {"$set": {"sku": row["new_sku"], "updated_at": now_iso()}},
+        )
+
+    # Promotional products copy component names/SKUs for quick display.
+    promos = await db.products.find(
+        {"org_id": ORG_ID, "components.product_id": {"$in": list(sku_by_product)}},
+    ).to_list(100000)
+    for promo in promos:
+        components = [
+            {**component, "sku": sku_by_product.get(component.get("product_id"), component.get("sku"))}
+            for component in promo.get("components", [])
+        ]
+        await db.products.update_one(
+            {"_id": promo["_id"]}, {"$set": {"components": components, "updated_at": now_iso()}},
+        )
+
+    # These records intentionally carry an SKU snapshot. Keep their displayed
+    # SKU consistent while retaining product IDs, prices, costs, and quantities.
+    for collection in (db.sales, db.refunds, db.stock_transfers, db.inventory_counts):
+        documents = await collection.find(
+            {"org_id": ORG_ID, "$or": [
+                {"items.product_id": {"$in": list(sku_by_product)}},
+                {"items.inventory_components.product_id": {"$in": list(sku_by_product)}},
+            ]},
+        ).to_list(100000)
+        for document in documents:
+            items = []
+            for item in document.get("items", []):
+                updated = dict(item)
+                product_id = updated.get("product_id")
+                if product_id in sku_by_product:
+                    updated["sku"] = sku_by_product[product_id]
+                if updated.get("inventory_components"):
+                    updated["inventory_components"] = [
+                        {**component,
+                         "sku": sku_by_product.get(component.get("product_id"), component.get("sku"))}
+                        for component in updated["inventory_components"]
+                    ]
+                items.append(updated)
+            await collection.update_one({"_id": document["_id"]}, {"$set": {"items": items}})
+
+    highest = max((int(row["new_sku"][3:]) for row in mapping), default=9999)
+    if mapping:
+        await db.counters.update_one(
+            {"_id": "product-sku"}, {"$max": {"seq": highest}}, upsert=True,
+        )
+    await db.audit_logs.update_one(
+        {"id": f"{PRODUCT_SKU_FORMAT_FIX}-audit"},
+        {"$setOnInsert": {
+            "id": f"{PRODUCT_SKU_FORMAT_FIX}-audit", "org_id": ORG_ID,
+            "event": "item.skus_normalized", "record_type": "product",
+            "before": {"format": "SKU-YYYYMMDD-#####"},
+            "after": {"format": "SKU#####", "updated": len(mapping)},
+            "user_id": "system", "user_name": "System data migration",
+            "created_at": now_iso(),
+        }}, upsert=True,
+    )
+    await db.data_migrations.update_one(
+        {"id": PRODUCT_SKU_FORMAT_FIX},
+        {"$set": {"status": "DONE", "updated": len(mapping), "completed_at": now_iso()}},
+    )
+    return {"status": "corrected" if mapping else "already_clean", "updated": len(mapping)}
+
+
 async def run_data_migrations():
-    return [await correct_gasaide_receipt(), await remove_duplicate_nissin_beef()]
+    return [
+        await correct_gasaide_receipt(),
+        await remove_duplicate_nissin_beef(),
+        await normalize_generated_product_skus(),
+    ]

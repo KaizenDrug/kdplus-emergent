@@ -123,7 +123,7 @@ async def test_new_product_gets_automatic_unique_sku(catalog_db):
     payload = routes_catalog.ProductIn(name="Automatic SKU Product", price=10)
     created = await routes_catalog.create_product(payload, principal=MANAGER)
 
-    assert created["sku"].startswith("SKU-")
+    assert created["sku"] == "SKU10000"
     assert await catalog_db.products.count_documents({"sku": created["sku"]}) == 1
 
     with pytest.raises(routes_catalog.HTTPException, match="SKU already exists"):
@@ -131,6 +131,21 @@ async def test_new_product_gets_automatic_unique_sku(catalog_db):
             routes_catalog.ProductIn(name="Duplicate SKU", sku=created["sku"], price=10),
             principal=MANAGER,
         )
+
+
+@pytest.mark.asyncio
+async def test_product_sku_continues_from_highest_existing_number(catalog_db):
+    await catalog_db.products.insert_many([
+        {"id": "p1", "org_id": core.ORG_ID, "name": "Older", "sku": "SKU10008"},
+        {"id": "p2", "org_id": core.ORG_ID, "name": "Legacy", "sku": "SKU-20260925-00001"},
+        {"id": "p3", "org_id": core.ORG_ID, "name": "Manual", "sku": "CUSTOM-123"},
+    ])
+
+    first = await routes_catalog.generate_product_sku(principal=MANAGER)
+    second = await routes_catalog.generate_product_sku(principal=MANAGER)
+
+    assert first == {"sku": "SKU10009"}
+    assert second == {"sku": "SKU10010"}
 
 
 @pytest.mark.asyncio
