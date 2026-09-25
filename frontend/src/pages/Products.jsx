@@ -87,8 +87,8 @@ export default function Products() {
   };
   const updateStockOnHand = async (product, value) => {
     const quantity = Number(value);
-    if (!Number.isFinite(quantity) || quantity < 0) {
-      toast.error("Stock on hand cannot be negative");
+    if (!Number.isFinite(quantity) || quantity < 0 || !Number.isInteger(quantity)) {
+      toast.error("Stock on hand must be a whole number of zero or more");
       throw new Error("Invalid stock quantity");
     }
     try {
@@ -101,6 +101,17 @@ export default function Products() {
     } catch (e) {
       toast.error(apiError(e.response?.data?.detail || e.message) || "Stock update failed");
       throw e;
+    }
+  };
+  const updateProductCategory = async (product, selected) => {
+    const categoryId = selected === "uncategorized" ? null : selected;
+    if ((product.category_id || null) === categoryId) return;
+    try {
+      const { data } = await api.put(`/products/${product.id}`, { ...product, category_id: categoryId });
+      setProducts((items) => items.map((item) => item.id === product.id ? data : item));
+      toast.success(`${product.name} category updated`);
+    } catch (e) {
+      toast.error(apiError(e.response?.data?.detail || e.message) || "Category update failed");
     }
   };
 
@@ -191,12 +202,22 @@ export default function Products() {
                     <div className="font-semibold text-slate-800 flex items-center gap-2">{p.name}{p.product_type === "PROMO" && <span className="text-[10px] rounded-full bg-fuchsia-100 text-fuchsia-700 px-2 py-0.5">PROMO</span>}</div>
                     <div className="text-xs text-slate-400">{p.generic_name} · {p.sku} · {p.shelf_code} · {p.rx_classification}</div>
                   </td>
-                  <td className="px-4 py-2.5 text-slate-600">{catName(p.category_id)}</td>
+                  <td className="px-4 py-2.5 text-slate-600">
+                    <Select value={p.category_id || "uncategorized"} onValueChange={(value) => updateProductCategory(p, value)}>
+                      <SelectTrigger className="h-9 min-w-44 bg-white" data-testid={`inline-category-${p.id}`} aria-label={`Category for ${p.name}`}>
+                        <SelectValue placeholder="Select category" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="uncategorized">Uncategorized</SelectItem>
+                        {categories.map((category) => <SelectItem key={category.id} value={category.id}>{category.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </td>
                   <td className="px-4 py-2.5 text-right"><InlineNumber value={p.price} currency testId={`inline-price-${p.id}`} onSave={(value) => updateProductValue(p, "price", value)} /></td>
                   <td className="px-4 py-2.5 text-right"><InlineNumber value={p.average_cost} currency disabled={p.product_type === "PROMO"} testId={`inline-cost-${p.id}`} onSave={(value) => updateProductValue(p, "cost", value)} /></td>
                   <td className="px-4 py-2.5 text-right text-slate-500">{p.margin_pct}%</td>
                   <td className="px-4 py-2.5 text-right">
-                    <InlineNumber value={levelByProduct[p.id]?.quantity || 0} disabled={p.product_type === "PROMO" || p.track_inventory === false}
+                    <InlineNumber value={levelByProduct[p.id]?.quantity || 0} wholeNumber disabled={p.product_type === "PROMO" || p.track_inventory === false}
                       testId={`inline-stock-${p.id}`} onSave={(value) => updateStockOnHand(p, value)} />
                     {levelByProduct[p.id]?.status === "LOW" && <div className="text-[11px] font-semibold text-amber-600">Low stock</div>}
                     {levelByProduct[p.id]?.status === "OUT" && <div className="text-[11px] font-semibold text-red-600">Out of stock</div>}
@@ -238,7 +259,7 @@ export default function Products() {
   );
 }
 
-function InlineNumber({ value, onSave, currency = false, disabled = false, testId }) {
+function InlineNumber({ value, onSave, currency = false, disabled = false, wholeNumber = false, testId }) {
   const [draft, setDraft] = useState(String(Number(value || 0)));
   const [saving, setSaving] = useState(false);
   useEffect(() => { if (!saving) setDraft(String(Number(value || 0))); }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -256,7 +277,7 @@ function InlineNumber({ value, onSave, currency = false, disabled = false, testI
   return (
     <div className={`relative ml-auto inline-flex w-28 items-center border-b ${disabled ? "border-transparent text-slate-400" : "border-slate-300 focus-within:border-primary"}`}>
       {currency && <span className="pl-1 text-sm">₱</span>}
-      <input type="number" min="0" step="0.01" value={draft} disabled={disabled || saving}
+      <input type="number" min="0" step={wholeNumber ? "1" : "0.01"} inputMode={wholeNumber ? "numeric" : "decimal"} value={draft} disabled={disabled || saving}
         onChange={(e) => setDraft(e.target.value)} onBlur={commit}
         onKeyDown={(e) => {
           if (e.key === "Enter") e.currentTarget.blur();
