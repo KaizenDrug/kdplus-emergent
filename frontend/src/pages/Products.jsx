@@ -42,7 +42,7 @@ export default function Products() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [sort, setSort] = useState({ key: "name", direction: "asc" });
 
-  const load = () => api.get("/products?limit=1000").then((r) => setProducts(r.data));
+  const load = () => api.get("/products?limit=10000").then((r) => setProducts(r.data));
   const loadCats = () => api.get("/categories").then((r) => setCategories(r.data));
   const loadLevels = () => api.get(`/inventory/levels?store_id=${store}`).then((r) => setLevels(r.data));
   useEffect(() => {
