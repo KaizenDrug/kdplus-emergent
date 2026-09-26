@@ -35,6 +35,9 @@ class POStatusIn(BaseModel):
 class POReceiveLine(BaseModel):
     product_id: str
     qty: float
+    substitution_decision: Optional[str] = None  # ACCEPT or REJECT when a different product was delivered
+    received_product_id: Optional[str] = None    # catalog product actually delivered (accepted substitutions only)
+    substitute_description: Optional[str] = ""   # optional description when a substitute is rejected
     actual_unit_cost: Optional[float] = None  # actual invoice cost; defaults to ordered
     lot_number: Optional[str] = ""
     expiry_date: Optional[str] = None
@@ -219,13 +222,37 @@ async def receive_po(pid: str, body: POReceiveIn, principal=Depends(require_perm
 
     # ---------- Phase 1: validate ALL lines up-front (no mutation) ----------
     planned = []
+    rejected = []
     for ln in body.lines:
         qty = D(ln.qty)
+        decision = (ln.substitution_decision or "").strip().upper()
+        if decision and decision not in ("ACCEPT", "REJECT"):
+            raise HTTPException(status_code=400, detail="Substitution decision must be ACCEPT or REJECT")
+        if decision == "REJECT":
+            if qty <= 0:
+                raise HTTPException(status_code=400, detail="Enter the quantity of the substitute delivery being rejected")
+            poi = item_by_pid.get(ln.product_id)
+            if not poi:
+                raise HTTPException(status_code=400, detail=f"Product {ln.product_id} is not on this PO")
+            rejected.append({"ln": ln, "poi": poi, "qty": qty})
+            continue
         if qty <= 0:
             continue
         poi = item_by_pid.get(ln.product_id)
         if not poi:
             raise HTTPException(status_code=400, detail=f"Product {ln.product_id} is not on this PO")
+        received_product_id = ln.product_id
+        if decision == "ACCEPT":
+            received_product_id = (ln.received_product_id or "").strip()
+            if not received_product_id or received_product_id == ln.product_id:
+                raise HTTPException(status_code=400, detail=f"{poi['name']}: select a different catalog product to accept as a substitute")
+            substitute = await db.products.find_one({"id": received_product_id, "org_id": ORG_ID}, {"_id": 0})
+            if not substitute or not substitute.get("active", True):
+                raise HTTPException(status_code=400, detail=f"{poi['name']}: the selected substitute is unavailable")
+            if substitute.get("product_type", "REGULAR") == "PROMO" or substitute.get("track_inventory") is False:
+                raise HTTPException(status_code=400, detail=f"{substitute.get('name', 'Selected substitute')} does not track stock and cannot be received")
+        elif ln.received_product_id:
+            raise HTTPException(status_code=400, detail=f"{poi['name']}: choose Accept before selecting a substitute product")
         outstanding = max(D(0), D(poi["qty_ordered"]) - D(poi["qty_received"]) - D(poi["qty_cancelled"]))
         over_received = max(D(0), qty - outstanding)
         ordered = D(poi["ordered_unit_cost"])
@@ -241,49 +268,68 @@ async def receive_po(pid: str, body: POReceiveIn, principal=Depends(require_perm
             if reason.lower() == "other" and not note:
                 raise HTTPException(status_code=400,
                                     detail=f"{poi['name']}: please add a note for the 'Other' variance reason")
-        planned.append({"ln": ln, "poi": poi, "qty": qty, "outstanding": outstanding,
+        planned.append({"ln": ln, "poi": poi, "qty": qty, "received_product_id": received_product_id, "outstanding": outstanding,
                         "over_received": over_received, "ordered": ordered, "actual": actual,
                         "var_amt": var_amt, "var_pct": var_pct, "reason": reason, "note": note})
 
-    if not planned:
+    if not planned and not rejected:
         raise HTTPException(status_code=400, detail="Enter a received quantity for at least one line")
 
     # ---------- Phase 2: apply ----------
     receipt_group_id = uid()
     receipt_no = await next_number("GRN")
     store_id = po["store_id"]
+    for entry in rejected:
+        ln, poi, qty = entry["ln"], entry["poi"], entry["qty"]
+        description = (ln.substitute_description or "").strip()
+        await db.po_receipts.insert_one({
+            "id": uid(), "receipt_group_id": receipt_group_id, "receipt_no": receipt_no, "org_id": ORG_ID,
+            "po_id": pid, "po_number": po["number"], "po_line_id": ln.product_id,
+            "product_id": ln.product_id, "product_name": poi["name"], "ordered_product_id": ln.product_id,
+            "ordered_product_name": poi["name"], "substitution_status": "REJECTED",
+            "substitute_description": description, "qty_received": 0, "qty_rejected": m(qty),
+            "supplier_id": po["supplier_id"], "store_id": store_id, "received_at": now_iso(),
+            "received_by": (principal or {}).get("id"), "received_by_name": (principal or {}).get("name"),
+        })
+        await audit(principal, "po.substitute_rejected", "purchase_order", pid,
+                    after={"number": po["number"], "product": poi["name"],
+                           "substitute_description": description, "qty_rejected": m(qty)}, store_id=store_id)
     for pl in planned:
         ln, poi, qty, actual = pl["ln"], pl["poi"], pl["qty"], pl["actual"]
-        p = await db.products.find_one({"id": ln.product_id, "org_id": ORG_ID})
+        received_product_id = pl["received_product_id"]
+        p = await db.products.find_one({"id": received_product_id, "org_id": ORG_ID})
+        is_substitute = received_product_id != ln.product_id
 
         # 1) lot with ITS OWN actual cost (never rewrite existing lots)
         lot_id = None
         if p and (p.get("track_lots") or p.get("track_expiry")):
             lot_id = uid()
             await db.inventory_lots.insert_one({
-                "id": lot_id, "org_id": ORG_ID, "store_id": store_id, "product_id": ln.product_id,
+                "id": lot_id, "org_id": ORG_ID, "store_id": store_id, "product_id": received_product_id,
                 "lot_number": ln.lot_number or po["number"], "expiry_date": ln.expiry_date,
                 "quantity": m(qty), "unit_cost": m(actual), "supplier_id": po["supplier_id"],
                 "status": "ACTIVE", "received_date": now_iso(), "created_at": now_iso()})
 
         # 2) weighted average + latest cost (product level)
-        old_qty = D(await get_level(store_id, ln.product_id))
+        old_qty = D(await get_level(store_id, received_product_id))
         old_cost = D((p or {}).get("average_cost", 0))
         new_qty = old_qty + qty
         avg = m((old_qty * old_cost + qty * actual) / new_qty) if new_qty > 0 else m(actual)
-        await db.products.update_one({"id": ln.product_id},
+        await db.products.update_one({"id": received_product_id},
                                      {"$set": {"average_cost": avg, "latest_cost": m(actual), "updated_at": now_iso()}})
 
         # 3) inventory movement at ACTUAL cost
-        await record_movement(store_id, ln.product_id, "PURCHASE_RECEIPT", float(qty),
+        await record_movement(store_id, received_product_id, "PURCHASE_RECEIPT", float(qty),
                               unit_cost=float(actual), lot_id=lot_id, reference=po["number"],
                               ref_id=pid, principal=principal)
 
         # 4) immutable receipt history record
         await db.po_receipts.insert_one({
             "id": uid(), "receipt_group_id": receipt_group_id, "receipt_no": receipt_no, "org_id": ORG_ID,
-            "po_id": pid, "po_number": po["number"], "po_line_id": ln.product_id, "product_id": ln.product_id,
-            "product_name": poi["name"], "supplier_id": po["supplier_id"], "store_id": store_id,
+            "po_id": pid, "po_number": po["number"], "po_line_id": ln.product_id, "product_id": received_product_id,
+            "product_name": (p or {}).get("name", poi["name"]), "ordered_product_id": ln.product_id,
+            "ordered_product_name": poi["name"], "substitution_status": "ACCEPTED" if is_substitute else None,
+            "supplier_id": po["supplier_id"], "store_id": store_id,
             "qty_received": m(qty), "qty_outstanding_before": m(pl["outstanding"]),
             "qty_over_received": m(pl["over_received"]),
             "ordered_unit_cost": m(pl["ordered"]), "actual_unit_cost": m(actual),
@@ -298,7 +344,9 @@ async def receive_po(pid: str, body: POReceiveIn, principal=Depends(require_perm
 
         # 6) audit
         await audit(principal, "po.received", "purchase_order", pid,
-                    after={"number": po["number"], "product": poi["name"], "qty": m(qty),
+                    after={"number": po["number"], "product": (p or {}).get("name", poi["name"]),
+                           "ordered_product": poi["name"] if is_substitute else None,
+                           "substitution_status": "ACCEPTED" if is_substitute else None, "qty": m(qty),
                            "qty_over_received": m(pl["over_received"]),
                            "ordered_unit_cost": m(pl["ordered"]), "actual_unit_cost": m(actual),
                            "lot": ln.lot_number, "expiry": ln.expiry_date}, store_id=store_id)
@@ -312,7 +360,9 @@ async def receive_po(pid: str, body: POReceiveIn, principal=Depends(require_perm
     for it in items:
         it["qty_outstanding"] = m(max(D(0), D(it["qty_ordered"]) - D(it["qty_received"]) - D(it["qty_cancelled"])))
         it["qty_over_received"] = m(max(D(0), D(it["qty_received"]) - D(it["qty_ordered"])))
-    status = _compute_status(items)
+    # A rejected substitute does not count as a receipt and must not advance
+    # a SENT PO into PARTIALLY_RECEIVED by itself.
+    status = _compute_status(items) if planned else po.get("status", "SENT")
     await db.purchase_orders.update_one({"id": pid, "org_id": ORG_ID},
                                         {"$set": {"items": items, "status": status, "updated_at": now_iso()}})
     return await get_po(pid, principal)

@@ -198,18 +198,19 @@ function POView({ poId, products, threshold, supName, onClose, onEdit, onChanged
                 <div className="overflow-x-auto border border-slate-200 rounded-lg">
                   <table className="w-full text-xs">
                     <thead className="bg-slate-50 text-left uppercase text-slate-400">
-                      <tr><th className="px-2 py-1.5">Date</th><th className="px-2 py-1.5">Product</th><th className="px-2 py-1.5 text-right">Qty</th><th className="px-2 py-1.5 text-right">PO Cost</th><th className="px-2 py-1.5 text-right">Actual</th><th className="px-2 py-1.5 text-right">Variance</th><th className="px-2 py-1.5">Lot / Expiry</th><th className="px-2 py-1.5">By</th></tr>
+                      <tr><th className="px-2 py-1.5">Date</th><th className="px-2 py-1.5">Product</th><th className="px-2 py-1.5">Decision</th><th className="px-2 py-1.5 text-right">Qty</th><th className="px-2 py-1.5 text-right">PO Cost</th><th className="px-2 py-1.5 text-right">Actual</th><th className="px-2 py-1.5 text-right">Variance</th><th className="px-2 py-1.5">Lot / Expiry</th><th className="px-2 py-1.5">By</th></tr>
                     </thead>
                     <tbody>
                       {receipts.map((r) => (
                         <tr key={r.id} className="border-t border-slate-100">
                           <td className="px-2 py-1.5 whitespace-nowrap">{fmtDay(r.received_at)}</td>
-                          <td className="px-2 py-1.5">{r.product_name}</td>
-                          <td className="px-2 py-1.5 text-right">{r.qty_received}{Number(r.qty_over_received) > 0 && <div className="text-[10px] font-semibold text-amber-700">+{r.qty_over_received} over PO</div>}</td>
-                          <td className="px-2 py-1.5 text-right text-slate-500">{peso(r.ordered_unit_cost)}</td>
-                          <td className="px-2 py-1.5 text-right font-semibold">{peso(r.actual_unit_cost)}</td>
+                          <td className="px-2 py-1.5">{r.product_name}{r.ordered_product_name && r.ordered_product_name !== r.product_name && <div className="text-[10px] text-slate-400">For {r.ordered_product_name}</div>}{r.substitute_description && <div className="text-[10px] text-slate-400">{r.substitute_description}</div>}</td>
+                          <td className={`px-2 py-1.5 font-semibold ${r.substitution_status === "REJECTED" ? "text-red-600" : r.substitution_status === "ACCEPTED" ? "text-emerald-700" : "text-slate-400"}`}>{r.substitution_status || "Received"}</td>
+                          <td className="px-2 py-1.5 text-right">{r.substitution_status === "REJECTED" ? <span className="text-red-600">{r.qty_rejected} rejected</span> : <>{r.qty_received}{Number(r.qty_over_received) > 0 && <div className="text-[10px] font-semibold text-amber-700">+{r.qty_over_received} over PO</div>}</>}</td>
+                          <td className="px-2 py-1.5 text-right text-slate-500">{r.substitution_status === "REJECTED" ? "—" : peso(r.ordered_unit_cost)}</td>
+                          <td className="px-2 py-1.5 text-right font-semibold">{r.substitution_status === "REJECTED" ? "—" : peso(r.actual_unit_cost)}</td>
                           <td className={`px-2 py-1.5 text-right ${r.variance_amount > 0 ? "text-red-600" : r.variance_amount < 0 ? "text-emerald-600" : "text-slate-400"}`}>
-                            {r.variance_amount > 0 ? "+" : ""}{peso(r.variance_amount)} ({r.variance_percent > 0 ? "+" : ""}{r.variance_percent}%)
+                            {r.substitution_status === "REJECTED" ? "—" : <>{r.variance_amount > 0 ? "+" : ""}{peso(r.variance_amount)} ({r.variance_percent > 0 ? "+" : ""}{r.variance_percent}%)</>}
                             {r.variance_reason ? <div className="text-[10px] text-slate-400">{r.variance_reason}</div> : null}
                           </td>
                           <td className="px-2 py-1.5">{r.lot_number || "—"}{r.expiry_date ? ` · ${fmtDay(r.expiry_date)}` : ""}</td>
@@ -245,6 +246,7 @@ function ReceivePanel({ po, prodMap, levels, threshold, onCancel, onDone }) {
     product_id: i.product_id, name: i.name, ordered: Number(i.ordered_unit_cost), outstanding: Number(i.qty_outstanding),
     received: Number(i.qty_received), cancelled: Number(i.qty_cancelled), qty: "", actual: String(i.ordered_unit_cost),
     lot_number: "", expiry_date: "", variance_reason: "", variance_note: "",
+    substitution_decision: "", received_product_id: "", substitute_description: "",
   })));
   const [busy, setBusy] = useState(false);
   const set = (i, k, v) => setRows((r) => r.map((x, idx) => idx === i ? { ...x, [k]: v } : x));
@@ -254,9 +256,11 @@ function ReceivePanel({ po, prodMap, levels, threshold, onCancel, onDone }) {
     const varAmt = actual - ordered;
     const varPct = ordered > 0 ? (varAmt / ordered) * 100 : 0;
     const over = Math.abs(varPct) > threshold;
-    const onhand = Number(levels[row.product_id]?.quantity || 0);
-    const avg = Number(prodMap[row.product_id]?.average_cost || 0);
-    const latest = Number(prodMap[row.product_id]?.latest_cost || 0);
+    const stockProductId = row.substitution_decision === "ACCEPT" && row.received_product_id
+      ? row.received_product_id : row.product_id;
+    const onhand = Number(levels[stockProductId]?.quantity || 0);
+    const avg = Number(prodMap[stockProductId]?.average_cost || 0);
+    const latest = Number(prodMap[stockProductId]?.latest_cost || 0);
     const qty = Number(row.qty) || 0;
     const newHand = onhand + qty;
     const newAvg = newHand > 0 ? (onhand * avg + qty * actual) / newHand : actual;
@@ -268,17 +272,36 @@ function ReceivePanel({ po, prodMap, levels, threshold, onCancel, onDone }) {
     const lines = [];
     for (const [i, row] of rows.entries()) {
       const qty = Number(row.qty) || 0;
+      if (row.substitution_decision === "REJECT") {
+        if (qty <= 0) { toast.error(`${row.name}: enter the quantity being rejected`); return; }
+        lines.push({ product_id: row.product_id, qty, substitution_decision: "REJECT", substitute_description: row.substitute_description.trim() });
+        continue;
+      }
       if (qty <= 0) continue;
+      if (row.substitution_decision === "ACCEPT" && !row.received_product_id) {
+        toast.error(`${row.name}: choose the substitute item to accept`); return;
+      }
+      if (row.substitution_decision && !["ACCEPT", "REJECT"].includes(row.substitution_decision)) {
+        toast.error(`${row.name}: choose whether to accept or reject the substitute`); return;
+      }
       const { over } = calc(row);
       if (over && !row.variance_reason) { toast.error(`${row.name}: select a variance reason`); return; }
       if (over && row.variance_reason === "Other" && !row.variance_note.trim()) { toast.error(`${row.name}: add a note for 'Other'`); return; }
-      lines.push({ product_id: row.product_id, qty, actual_unit_cost: Number(row.actual) || 0, lot_number: row.lot_number,
-        expiry_date: row.expiry_date || null, variance_reason: row.variance_reason, variance_note: row.variance_note });
+      lines.push({ product_id: row.product_id, qty, actual_unit_cost: Number(row.actual) || 0,
+        ...(row.substitution_decision === "ACCEPT" ? { substitution_decision: "ACCEPT", received_product_id: row.received_product_id } : {}),
+        lot_number: row.lot_number, expiry_date: row.expiry_date || null,
+        variance_reason: row.variance_reason, variance_note: row.variance_note });
       void i;
     }
     if (!lines.length) { toast.error("Enter a received quantity"); return; }
     setBusy(true);
-    try { await api.post(`/purchase-orders/${po.id}/receive`, { lines }); toast.success("Received into stock"); onDone(); }
+    try {
+      await api.post(`/purchase-orders/${po.id}/receive`, { lines });
+      toast.success(lines.some((line) => line.substitution_decision === "REJECT")
+        ? "Receipt processed; rejected substitute quantities were not added to stock"
+        : "Received into stock");
+      onDone();
+    }
     catch (e) { toast.error(apiError(e.response?.data?.detail) || "Failed"); } finally { setBusy(false); }
   };
 
@@ -295,7 +318,7 @@ function ReceivePanel({ po, prodMap, levels, threshold, onCancel, onDone }) {
               <div className="text-xs text-slate-400">Ordered {it.qty_ordered} · Received {row.received} · Cancelled {row.cancelled} · <b className="text-slate-600">Outstanding {row.outstanding}</b></div>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
-              <label className="block"><span className="text-[10px] font-bold uppercase text-slate-500">Receive Now (Outstanding {row.outstanding})</span>
+              <label className="block"><span className="text-[10px] font-bold uppercase text-slate-500">{row.substitution_decision === "REJECT" ? "Reject Qty" : `Receive Now (Outstanding ${row.outstanding})`}</span>
                 <input type="number" min={0} className="w-full mt-1 px-2 py-1.5 border rounded text-sm" value={row.qty} onChange={(e) => set(i, "qty", e.target.value)} data-testid={`recv-qty-${it.product_id}`} /></label>
               <label className="block"><span className="text-[10px] font-bold uppercase text-slate-500">PO Cost</span>
                 <div className="mt-1 px-2 py-1.5 bg-slate-50 border rounded text-sm text-slate-500">{peso(row.ordered)}</div></label>
@@ -304,6 +327,34 @@ function ReceivePanel({ po, prodMap, levels, threshold, onCancel, onDone }) {
               <label className="block"><span className="text-[10px] font-bold uppercase text-slate-500">Variance</span>
                 <div className={`mt-1 px-2 py-1.5 border rounded text-sm font-semibold ${c.varAmt > 0 ? "bg-red-50 text-red-600 border-red-200" : c.varAmt < 0 ? "bg-emerald-50 text-emerald-600 border-emerald-200" : "bg-slate-50 text-slate-400"}`} data-testid={`recv-variance-${it.product_id}`}>
                   {c.varAmt > 0 ? "+" : ""}{peso(c.varAmt)} ({c.varPct > 0 ? "+" : ""}{c.varPct.toFixed(2)}%)</div></label>
+            </div>
+
+            <div className="mt-3 rounded-lg border border-slate-200 p-3 space-y-2" data-testid={`recv-substitution-${it.product_id}`}>
+              <div className="text-xs font-semibold text-slate-700">Did the supplier deliver a different brand or product?</div>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" size="sm" variant={row.substitution_decision === "ACCEPT" ? "default" : "outline"}
+                  onClick={() => setRows((all) => all.map((item, idx) => idx === i ? { ...item, substitution_decision: "ACCEPT" } : item))}
+                  data-testid={`recv-substitute-accept-${it.product_id}`}>Accept substitute</Button>
+                <Button type="button" size="sm" variant={row.substitution_decision === "REJECT" ? "destructive" : "outline"}
+                  onClick={() => setRows((all) => all.map((item, idx) => idx === i ? { ...item, substitution_decision: "REJECT", received_product_id: "" } : item))}
+                  data-testid={`recv-substitute-reject-${it.product_id}`}>Reject delivery</Button>
+                {row.substitution_decision && <Button type="button" size="sm" variant="ghost" onClick={() => setRows((all) => all.map((item, idx) => idx === i ? { ...item, substitution_decision: "", received_product_id: "", substitute_description: "" } : item))}>Clear choice</Button>}
+              </div>
+              {row.substitution_decision === "ACCEPT" && (
+                <div className="space-y-1">
+                  <Select value={row.received_product_id} onValueChange={(value) => set(i, "received_product_id", value)}>
+                    <SelectTrigger data-testid={`recv-substitute-product-${it.product_id}`}><SelectValue placeholder="Select the catalog item delivered" /></SelectTrigger>
+                    <SelectContent>{Object.values(prodMap).filter((p) => p.id !== row.product_id && p.active !== false && p.track_inventory !== false && (p.product_type || "REGULAR") === "REGULAR").sort(byProductName).map((p) => <SelectItem key={p.id} value={p.id}>{p.name} · {p.sku || "No SKU"}</SelectItem>)}</SelectContent>
+                  </Select>
+                  <div className="text-[11px] text-slate-500">Accepted quantity will fulfill this PO line and be added to the selected item's stock. The substitute must already exist in Products.</div>
+                </div>
+              )}
+              {row.substitution_decision === "REJECT" && (
+                <div className="space-y-1">
+                  <input className="w-full px-2 py-1.5 border rounded text-sm" placeholder="Delivered brand / item (optional)" value={row.substitute_description} onChange={(e) => set(i, "substitute_description", e.target.value)} data-testid={`recv-rejected-description-${it.product_id}`} />
+                  <div className="text-[11px] text-slate-500">Rejected quantity will not enter stock and will remain outstanding on the PO.</div>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
