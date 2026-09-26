@@ -16,7 +16,7 @@ export default function StockTransfers() {
   const [creating, setCreating] = useState(false);
   const [viewing, setViewing] = useState(null);
   const load = () => api.get("/stock-transfers").then((r) => setRows(r.data));
-  useEffect(() => { load(); api.get("/products?limit=1000").then((r) => setProducts(r.data)); }, []);
+  useEffect(() => { load(); api.get("/products?limit=10000").then((r) => setProducts(r.data)); }, []);
 
   return (
     <div>
