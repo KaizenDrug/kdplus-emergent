@@ -41,7 +41,7 @@ export default function PurchaseOrders() {
   const load = () => api.get("/purchase-orders").then((r) => setRows(r.data));
   useEffect(() => {
     load();
-    api.get("/products?limit=1000").then((r) => setProducts(r.data.filter((p) => (p.product_type || "REGULAR") === "REGULAR")));
+    api.get("/products?limit=10000").then((r) => setProducts(r.data.filter((p) => (p.product_type || "REGULAR") === "REGULAR")));
     api.get("/suppliers").then((r) => setSuppliers(r.data));
     api.get("/settings").then((r) => setThreshold(r.data?.purchasing?.cost_variance_threshold_pct ?? 5));
   }, []);
