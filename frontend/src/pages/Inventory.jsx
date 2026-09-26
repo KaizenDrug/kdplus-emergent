@@ -26,7 +26,7 @@ export default function Inventory() {
 
   const loadLevels = useCallback(() => api.get(`/inventory/levels?store_id=${store}`).then((r) => setLevels(r.data)), [store]);
   const loadExpiry = useCallback(() => api.get(`/inventory/expiry?store_id=${store}`).then((r) => setExpiry(r.data)), [store]);
-  useEffect(() => { api.get("/products?limit=1000").then((r) => setProducts(r.data)); }, []);
+  useEffect(() => { api.get("/products?limit=10000").then((r) => setProducts(r.data)); }, []);
   useEffect(() => { loadLevels(); loadExpiry(); }, [loadLevels, loadExpiry]);
 
   const low = levels.filter((l) => l.status === "LOW").length;
