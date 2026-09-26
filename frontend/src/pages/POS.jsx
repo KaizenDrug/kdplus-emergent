@@ -110,7 +110,7 @@ export default function POS() {
 
   useEffect(() => {
     Promise.all([
-      api.get("/products?active=true&limit=1000"),
+      api.get("/products?active=true&limit=10000"),
       api.get("/categories"),
       api.get("/customers"),
       api.get("/settings"),
