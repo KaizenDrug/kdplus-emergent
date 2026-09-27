@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState, useRef } from "react"
 import { useNavigate } from "react-router-dom";
 import {
   Search, Plus, Minus, Trash2, X, ShoppingCart, Wifi, ArrowLeft, Printer, UserPlus, Barcode,
-  RefreshCw, CloudOff, AlertCircle, Receipt, ClipboardPlus,
+  RefreshCw, CloudOff, AlertCircle, Receipt, ClipboardPlus, BookmarkPlus, FolderOpen,
 } from "lucide-react";
 import api, { peso, fmtDate } from "@/lib/api";
 import { getCache, saveCache, enqueueSale, queueCount, syncQueue } from "@/lib/offline";
@@ -48,6 +48,10 @@ export default function POS() {
   const [cat, setCat] = useState("all");
   const [q, setQ] = useState("");
   const [cart, setCart] = useState([]);
+  const [parkedTickets, setParkedTickets] = useState([]);
+  const [showParkedTickets, setShowParkedTickets] = useState(false);
+  const [ticketBusy, setTicketBusy] = useState(false);
+  const [activeParkedTicketId, setActiveParkedTicketId] = useState(null);
   const [online, setOnline] = useState(navigator.onLine);
   const [syncStatus, setSyncStatus] = useState("idle"); // idle | syncing | error
   const [pending, setPending] = useState(queueCount());
@@ -87,6 +91,53 @@ export default function POS() {
   const refreshLevels = () => api.get(`/inventory/levels?store_id=${storeId}`).then((lv) => {
     const lm = {}; lv.data.forEach((x) => (lm[x.product_id] = x.quantity)); setLevels(lm);
   }).catch(() => {});
+
+  const loadParkedTickets = useCallback(() => api.get("/pos/parked-tickets", { params: { store_id: storeId } })
+    .then((r) => setParkedTickets(r.data)).catch(() => setParkedTickets([])), [storeId]);
+  useEffect(() => { loadParkedTickets(); }, [loadParkedTickets]);
+
+  const saveTicket = async () => {
+    if (!cart.length) return;
+    setTicketBusy(true);
+    try {
+      const { data } = await api.post("/pos/parked-tickets", {
+        store_id: storeId, items: cart.map(({ product_id, qty }) => ({ product_id, qty })),
+      });
+      if (activeParkedTicketId) {
+        await api.delete(`/pos/parked-tickets/${activeParkedTicketId}`).catch(() => {});
+      }
+      setParkedTickets((old) => [data, ...old.filter((t) => t.id !== activeParkedTicketId)]);
+      setCart([]); setActiveParkedTicketId(null); setMobileCartOpen(false);
+      toast.success("Ticket saved. You can resume it from Saved Tickets.");
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not save ticket"); }
+    finally { setTicketBusy(false); }
+  };
+
+  const resumeTicket = async (ticket) => {
+    if (cart.length) { toast.error("Save or clear the current ticket before resuming another"); return; }
+    const resumed = (ticket.items || []).map((line) => {
+      const p = products.find((product) => product.id === line.product_id);
+      if (!p || p.active === false) return null;
+      return { product_id: p.id, name: p.name, unit_price: Number(p.price), qty: Number(line.qty),
+        tax_mode: p.tax_mode, discount_eligible: p.discount_eligible !== false };
+    });
+    if (!resumed.length || resumed.some((line) => !line)) {
+      toast.error("This ticket contains a product that is no longer available. It remains saved."); return;
+    }
+    setCart(resumed); setActiveParkedTicketId(ticket.id); setShowParkedTickets(false);
+    setMobileCartOpen(true); toast.success("Ticket resumed");
+  };
+
+  const deleteParkedTicket = async (ticket) => {
+    setTicketBusy(true);
+    try {
+      await api.delete(`/pos/parked-tickets/${ticket.id}`);
+      setParkedTickets((old) => old.filter((t) => t.id !== ticket.id));
+      if (activeParkedTicketId === ticket.id) setActiveParkedTicketId(null);
+      toast.success("Saved ticket deleted");
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not delete ticket"); }
+    finally { setTicketBusy(false); }
+  };
 
   const doSync = async () => {
     if (queueCount() === 0) { setPending(0); return; }
@@ -181,6 +232,10 @@ export default function POS() {
           <button onClick={() => navigate("/receipts")} data-testid="pos-receipts"
             className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200">
             <Receipt className="w-3.5 h-3.5" /><span className="hidden sm:inline">Receipts</span>
+          </button>
+          <button type="button" onClick={() => setShowParkedTickets(true)} data-testid="pos-saved-tickets"
+            className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-full bg-amber-50 text-amber-800 hover:bg-amber-100">
+            <FolderOpen className="w-3.5 h-3.5" /><span>Saved</span><span>({parkedTickets.length})</span>
           </button>
           {pending > 0 && (
             <button onClick={doSync} data-testid="pos-sync-btn"
@@ -289,7 +344,7 @@ export default function POS() {
           <div className="p-4 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center gap-2 font-heading font-bold text-slate-800"><ShoppingCart className="w-5 h-5 text-primary" />Current Ticket</div>
             <div className="flex items-center gap-3">
-              {cart.length > 0 && <button onClick={() => setCart([])} className="text-xs text-red-500 hover:underline" data-testid="clear-cart">Clear</button>}
+              {cart.length > 0 && <button onClick={() => { setCart([]); setActiveParkedTicketId(null); }} className="text-xs text-red-500 hover:underline" data-testid="clear-cart">Clear</button>}
               <button type="button" onClick={() => setMobileCartOpen(false)} aria-label="Close ticket" className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 lg:hidden"><X className="h-5 w-5" /></button>
             </div>
           </div>
@@ -318,6 +373,10 @@ export default function POS() {
           <div className="p-4 border-t border-slate-200 bg-white">
             <div className="flex justify-between text-sm mb-1"><span className="text-slate-500">Subtotal</span><span className="font-semibold" data-testid="cart-subtotal">{peso(subtotal)}</span></div>
             <div className="flex justify-between text-sm mb-3"><span className="text-slate-500">Items</span><span className="font-semibold">{cart.reduce((s, i) => s + i.qty, 0)}</span></div>
+            <button type="button" onClick={saveTicket} disabled={!cart.length || ticketBusy || !online}
+              data-testid="save-ticket" className="w-full mb-2 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-semibold hover:bg-slate-50 disabled:opacity-40">
+              <BookmarkPlus className="w-4 h-4 inline mr-1" />{ticketBusy ? "Saving…" : "Save Ticket"}
+            </button>
             <button onClick={() => { setCheckout(true); setMobileCartOpen(false); }} disabled={!cart.length || !shift} data-testid="checkout-btn"
               className="w-full py-3.5 rounded-xl bg-primary text-white font-bold text-lg hover:bg-teal-800 transition-colors active:scale-[0.99] disabled:opacity-40">
               {shift ? `Charge ${peso(subtotal)}` : "Start Shift to Charge"}
@@ -329,9 +388,15 @@ export default function POS() {
       {checkout && (
         <CheckoutDialog
           open={checkout} onClose={() => setCheckout(false)} cart={cart} storeId={storeId} shiftId={shift?.id}
-          customers={customers} settings={settings} cashierName={user?.name}
+          customers={customers} settings={settings} cashierName={user?.name} parkedTicketId={activeParkedTicketId}
           onOfflineQueued={() => setPending(queueCount())}
           onComplete={(sale) => {
+            if (activeParkedTicketId) {
+              // The backend removes the parked ticket with the sale. Offline queued
+              // sales carry the same ID and remove it when they sync.
+              setParkedTickets((old) => old.filter((t) => t.id !== activeParkedTicketId));
+              setActiveParkedTicketId(null);
+            }
             setLastSale(sale); setCart([]); setQ(""); setCheckout(false); setMobileCartOpen(false); refreshLevels();
             if (!settings?.printing?.auto_print_receipt) openCashDrawerForSale(sale, settings);
             toast.success(sale._offline ? `Sale queued offline (${sale.number})` : `Sale ${sale.number} completed`);
@@ -345,10 +410,47 @@ export default function POS() {
           onSaved={() => { setShowUnavailable(false); setQ(""); searchRef.current?.focus(); }}
         />
       )}
+      {showParkedTickets && <ParkedTicketsDialog tickets={parkedTickets} busy={ticketBusy} hasCurrentCart={cart.length > 0}
+        onResume={resumeTicket} onDelete={deleteParkedTicket} onClose={() => setShowParkedTickets(false)} onRefresh={loadParkedTickets} />}
       {lastSale && <ReceiptDialog sale={lastSale} settings={settings} onClose={() => setLastSale(null)} />}
       {!shiftLoading && !shift && <ShiftStartOverlay online={online} storeId={storeId} onOpened={(sh) => { setShift(sh); cacheShift(sh); }} />}
       {showClose && shift && <ShiftCloseDialog shift={shift} pending={pending} onClose={() => setShowClose(false)} onClosed={finishClosedShift} />}
     </div>
+  );
+}
+
+function ParkedTicketsDialog({ tickets, busy, hasCurrentCart, onResume, onDelete, onClose, onRefresh }) {
+  return (
+    <Dialog open={true} onOpenChange={onClose}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader><DialogTitle>Saved Tickets</DialogTitle></DialogHeader>
+        {hasCurrentCart && <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
+          Save or clear the current ticket before resuming another.
+        </div>}
+        <div className="max-h-[60vh] overflow-y-auto space-y-2">
+          {tickets.map((ticket) => {
+            const total = (ticket.items || []).reduce((sum, item) => sum + Number(item.unit_price || 0) * Number(item.qty || 0), 0);
+            const count = (ticket.items || []).reduce((sum, item) => sum + Number(item.qty || 0), 0);
+            return (
+              <div key={ticket.id} className="rounded-lg border border-slate-200 p-3 flex flex-wrap items-center gap-3" data-testid={`parked-ticket-${ticket.id}`}>
+                <div className="flex-1 min-w-[180px]">
+                  <div className="font-semibold text-slate-800">Ticket · {fmtDate(ticket.created_at)}</div>
+                  <div className="text-xs text-slate-500">{count} item(s) · {peso(total)} · Saved by {ticket.created_by_name || "Cashier"}</div>
+                  <div className="text-xs text-slate-400 mt-1 line-clamp-2">{(ticket.items || []).map((item) => `${item.name} × ${item.qty}`).join(", ")}</div>
+                </div>
+                <Button size="sm" onClick={() => onResume(ticket)} disabled={busy || hasCurrentCart} data-testid={`resume-ticket-${ticket.id}`}>Resume</Button>
+                <Button size="sm" variant="outline" onClick={() => onDelete(ticket)} disabled={busy} className="text-red-600" data-testid={`delete-ticket-${ticket.id}`}>Delete</Button>
+              </div>
+            );
+          })}
+          {!tickets.length && <div className="py-12 text-center text-sm text-slate-400">No saved tickets for this store.</div>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onRefresh} disabled={busy}>Refresh</Button>
+          <Button onClick={onClose}>Done</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -524,7 +626,7 @@ function ShiftCloseDialog({ shift, pending, onClose, onClosed }) {
   );
 }
 
-function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, settings, cashierName, onComplete, onOfflineQueued }) {
+function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, settings, cashierName, parkedTicketId, onComplete, onOfflineQueued }) {
   const [discountType, setDiscountType] = useState("REGULAR");
   const [customerId, setCustomerId] = useState("");
   const [orderDiscount, setOrderDiscount] = useState("");
@@ -583,6 +685,7 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
     const validPayments = payments.filter((p) => Number(p.amount) > 0).map((p) => ({ method: p.method, amount: Number(p.amount), reference: "" }));
     const body = {
       store_id: storeId, register_id: "reg_1", shift_id: shiftId,
+      parked_ticket_id: parkedTicketId || null,
       items: cart.map((i) => {
         const eq = Math.min(i.qty, Math.max(0, Number(eligibleQty[i.product_id]) || 0));
         return { product_id: i.product_id, qty: i.qty, discount_eligible: eq > 0, discount_eligible_qty: eq };

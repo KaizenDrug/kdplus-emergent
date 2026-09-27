@@ -44,6 +44,7 @@ class SaleIn(BaseModel):
     senior_pwd: Optional[SeniorPwdInfo] = None
     notes: Optional[str] = ""
     client_txn_id: Optional[str] = None       # offline dedupe UUID
+    parked_ticket_id: Optional[str] = None    # delete the saved ticket only after this sale is accepted
 
 
 class UnavailableItemIn(BaseModel):
@@ -54,9 +55,75 @@ class UnavailableItemIn(BaseModel):
     notes: Optional[str] = ""
 
 
+class ParkedTicketLineIn(BaseModel):
+    product_id: str
+    qty: float
+
+
+class ParkedTicketIn(BaseModel):
+    store_id: str
+    items: List[ParkedTicketLineIn]
+
+
 async def get_settings():
     s = await db.settings.find_one({"org_id": ORG_ID}, {"_id": 0})
     return s or {}
+
+
+@router.get("/parked-tickets")
+async def list_parked_tickets(store_id: str = Query(...),
+                              principal=Depends(require_perm("pos.sell"))):
+    tickets = await db.parked_tickets.find(
+        {"org_id": ORG_ID, "store_id": store_id}, {"_id": 0}
+    ).sort("updated_at", -1).to_list(200)
+    return tickets
+
+
+@router.post("/parked-tickets")
+async def save_parked_ticket(body: ParkedTicketIn,
+                             principal=Depends(require_perm("pos.sell"))):
+    if not body.items:
+        raise HTTPException(status_code=400, detail="A ticket must contain at least one item")
+    items = []
+    for line in body.items:
+        if not math.isfinite(line.qty) or line.qty <= 0:
+            raise HTTPException(status_code=400, detail="Ticket quantities must be greater than zero")
+        product = await db.products.find_one(
+            {"id": line.product_id, "org_id": ORG_ID, "active": {"$ne": False}},
+            {"_id": 0, "id": 1, "name": 1, "price": 1, "tax_mode": 1, "discount_eligible": 1},
+        )
+        if not product:
+            raise HTTPException(status_code=400, detail="A ticket item is no longer available")
+        items.append({
+            "product_id": product["id"], "name": product["name"],
+            "unit_price": m(product.get("price", 0)), "qty": m(line.qty),
+            "tax_mode": product.get("tax_mode", "VAT"),
+            "discount_eligible": product.get("discount_eligible", True),
+        })
+    now = now_iso()
+    doc = {
+        "id": uid(), "org_id": ORG_ID, "store_id": body.store_id, "items": items,
+        "created_by_id": principal.get("id"), "created_by_name": principal.get("name"),
+        "created_at": now, "updated_at": now,
+    }
+    await db.parked_tickets.insert_one(doc)
+    await audit(principal, "pos.ticket_parked", "parked_ticket", doc["id"],
+                after={"items": len(items)}, store_id=body.store_id)
+    doc.pop("_id", None)
+    return doc
+
+
+@router.delete("/parked-tickets/{ticket_id}")
+async def delete_parked_ticket(ticket_id: str,
+                               principal=Depends(require_perm("pos.sell"))):
+    ticket = await db.parked_tickets.find_one_and_delete(
+        {"id": ticket_id, "org_id": ORG_ID}
+    )
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Saved ticket not found")
+    await audit(principal, "pos.ticket_removed", "parked_ticket", ticket_id,
+                before={"items": len(ticket.get("items", []))}, store_id=ticket.get("store_id"))
+    return {"ok": True}
 
 
 @router.post("/unavailable-items")
@@ -93,6 +160,8 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
     if body.client_txn_id:
         existing = await db.sales.find_one({"org_id": ORG_ID, "client_txn_id": body.client_txn_id}, {"_id": 0})
         if existing:
+            if body.parked_ticket_id:
+                await db.parked_tickets.delete_one({"id": body.parked_ticket_id, "org_id": ORG_ID, "store_id": body.store_id})
             return existing
 
     if not body.items:
@@ -374,6 +443,8 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
             "net": m(total), "store_id": body.store_id, "created_at": now_iso()})
 
     await audit(principal, "sale.created", "sale", sale["id"], after={"number": number, "total": m(total)}, store_id=body.store_id)
+    if body.parked_ticket_id:
+        await db.parked_tickets.delete_one({"id": body.parked_ticket_id, "org_id": ORG_ID, "store_id": body.store_id})
     sale.pop("_id", None)
     return sale
 
