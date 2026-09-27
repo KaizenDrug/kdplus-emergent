@@ -308,6 +308,13 @@ export default function POS() {
                   <ClipboardPlus className="w-4 h-4" />Record unavailable
                 </button>
               )}
+              {cart.length > 0 && (
+                <button type="button" onClick={saveTicket} disabled={ticketBusy || !online}
+                  data-testid="save-ticket-toolbar"
+                  className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 text-sm font-bold text-amber-900 hover:bg-amber-100 disabled:opacity-40">
+                  <BookmarkPlus className="h-4 w-4" />{ticketBusy ? "Saving…" : "Save Ticket"}
+                </button>
+              )}
               <button type="button" onClick={() => setMobileCartOpen(true)} data-testid="open-mobile-cart"
                 className="lg:hidden relative inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-bold text-white">
                 <ShoppingCart className="h-4 w-4" /> Ticket
@@ -373,10 +380,6 @@ export default function POS() {
           <div className="p-4 border-t border-slate-200 bg-white">
             <div className="flex justify-between text-sm mb-1"><span className="text-slate-500">Subtotal</span><span className="font-semibold" data-testid="cart-subtotal">{peso(subtotal)}</span></div>
             <div className="flex justify-between text-sm mb-3"><span className="text-slate-500">Items</span><span className="font-semibold">{cart.reduce((s, i) => s + i.qty, 0)}</span></div>
-            <button type="button" onClick={saveTicket} disabled={!cart.length || ticketBusy || !online}
-              data-testid="save-ticket" className="w-full mb-2 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-semibold hover:bg-slate-50 disabled:opacity-40">
-              <BookmarkPlus className="w-4 h-4 inline mr-1" />{ticketBusy ? "Saving…" : "Save Ticket"}
-            </button>
             <button onClick={() => { setCheckout(true); setMobileCartOpen(false); }} disabled={!cart.length || !shift} data-testid="checkout-btn"
               className="w-full py-3.5 rounded-xl bg-primary text-white font-bold text-lg hover:bg-teal-800 transition-colors active:scale-[0.99] disabled:opacity-40">
               {shift ? `Charge ${peso(subtotal)}` : "Start Shift to Charge"}
