@@ -380,6 +380,10 @@ export default function POS() {
           <div className="p-4 border-t border-slate-200 bg-white">
             <div className="flex justify-between text-sm mb-1"><span className="text-slate-500">Subtotal</span><span className="font-semibold" data-testid="cart-subtotal">{peso(subtotal)}</span></div>
             <div className="flex justify-between text-sm mb-3"><span className="text-slate-500">Items</span><span className="font-semibold">{cart.reduce((s, i) => s + i.qty, 0)}</span></div>
+            <button type="button" onClick={saveTicket} disabled={!cart.length || ticketBusy || !online}
+              data-testid="save-ticket" className="w-full mb-2 py-2.5 rounded-xl border border-amber-300 bg-amber-50 text-amber-900 font-semibold hover:bg-amber-100 disabled:opacity-40">
+              <BookmarkPlus className="w-4 h-4 inline mr-1" />{ticketBusy ? "Saving…" : "Save Ticket"}
+            </button>
             <button onClick={() => { setCheckout(true); setMobileCartOpen(false); }} disabled={!cart.length || !shift} data-testid="checkout-btn"
               className="w-full py-3.5 rounded-xl bg-primary text-white font-bold text-lg hover:bg-teal-800 transition-colors active:scale-[0.99] disabled:opacity-40">
               {shift ? `Charge ${peso(subtotal)}` : "Start Shift to Charge"}
