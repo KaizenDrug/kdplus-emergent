@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import BrandLogo from "@/components/BrandLogo";
 import { matchesSearchTerms } from "@/lib/utils";
-import { openCashDrawerForSale, printThermalReceipt } from "@/lib/receiptPrint";
+import { openCashDrawerForSale, printThermalReceipt, printThermalTicket } from "@/lib/receiptPrint";
 import { ACTIVE_STORES } from "@/lib/stores";
 
 const PAY_METHODS = ["Cash", "GCash", "Maya", "Credit Card", "Debit Card", "Bank Transfer"];
@@ -212,6 +212,13 @@ export default function POS() {
   const removeItem = (id) => setCart((c) => c.filter((i) => i.product_id !== id));
 
   const subtotal = cart.reduce((s, i) => s + i.unit_price * i.qty, 0);
+  const printCurrentTicket = () => {
+    const ticket = {
+      id: `CURRENT-${Date.now()}`, created_at: new Date().toISOString(), created_by_name: user?.name,
+      items: cart.map(({ name, unit_price, qty }) => ({ name, unit_price, qty })),
+    };
+    if (!printThermalTicket(ticket, settings)) toast.error("Could not prepare the ticket for printing");
+  };
 
   return (
     <div className="h-[100dvh] flex flex-col bg-slate-100 overflow-hidden">
@@ -380,6 +387,10 @@ export default function POS() {
           <div className="p-4 border-t border-slate-200 bg-white">
             <div className="flex justify-between text-sm mb-1"><span className="text-slate-500">Subtotal</span><span className="font-semibold" data-testid="cart-subtotal">{peso(subtotal)}</span></div>
             <div className="flex justify-between text-sm mb-3"><span className="text-slate-500">Items</span><span className="font-semibold">{cart.reduce((s, i) => s + i.qty, 0)}</span></div>
+            <button type="button" onClick={printCurrentTicket} disabled={!cart.length}
+              data-testid="print-current-ticket" className="w-full mb-2 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-semibold hover:bg-slate-50 disabled:opacity-40">
+              <Printer className="w-4 h-4 inline mr-1" />Print Ticket
+            </button>
             <button type="button" onClick={saveTicket} disabled={!cart.length || ticketBusy || !online}
               data-testid="save-ticket" className="w-full mb-2 py-2.5 rounded-xl border border-amber-300 bg-amber-50 text-amber-900 font-semibold hover:bg-amber-100 disabled:opacity-40">
               <BookmarkPlus className="w-4 h-4 inline mr-1" />{ticketBusy ? "Saving…" : "Save Ticket"}
@@ -418,7 +429,9 @@ export default function POS() {
         />
       )}
       {showParkedTickets && <ParkedTicketsDialog tickets={parkedTickets} busy={ticketBusy} hasCurrentCart={cart.length > 0}
-        onResume={resumeTicket} onDelete={deleteParkedTicket} onClose={() => setShowParkedTickets(false)} onRefresh={loadParkedTickets} />}
+        onResume={resumeTicket} onPrint={(ticket) => {
+          if (!printThermalTicket(ticket, settings)) toast.error("Could not prepare the ticket for printing");
+        }} onDelete={deleteParkedTicket} onClose={() => setShowParkedTickets(false)} onRefresh={loadParkedTickets} />}
       {lastSale && <ReceiptDialog sale={lastSale} settings={settings} onClose={() => setLastSale(null)} />}
       {!shiftLoading && !shift && <ShiftStartOverlay online={online} storeId={storeId} onOpened={(sh) => { setShift(sh); cacheShift(sh); }} />}
       {showClose && shift && <ShiftCloseDialog shift={shift} pending={pending} onClose={() => setShowClose(false)} onClosed={finishClosedShift} />}
@@ -426,7 +439,7 @@ export default function POS() {
   );
 }
 
-function ParkedTicketsDialog({ tickets, busy, hasCurrentCart, onResume, onDelete, onClose, onRefresh }) {
+function ParkedTicketsDialog({ tickets, busy, hasCurrentCart, onResume, onPrint, onDelete, onClose, onRefresh }) {
   return (
     <Dialog open={true} onOpenChange={onClose}>
       <DialogContent className="max-w-xl">
@@ -445,6 +458,7 @@ function ParkedTicketsDialog({ tickets, busy, hasCurrentCart, onResume, onDelete
                   <div className="text-xs text-slate-500">{count} item(s) · {peso(total)} · Saved by {ticket.created_by_name || "Cashier"}</div>
                   <div className="text-xs text-slate-400 mt-1 line-clamp-2">{(ticket.items || []).map((item) => `${item.name} × ${item.qty}`).join(", ")}</div>
                 </div>
+                <Button size="sm" variant="outline" onClick={() => onPrint(ticket)} data-testid={`print-ticket-${ticket.id}`}><Printer className="w-3.5 h-3.5 mr-1" />Print</Button>
                 <Button size="sm" onClick={() => onResume(ticket)} disabled={busy || hasCurrentCart} data-testid={`resume-ticket-${ticket.id}`}>Resume</Button>
                 <Button size="sm" variant="outline" onClick={() => onDelete(ticket)} disabled={busy} className="text-red-600" data-testid={`delete-ticket-${ticket.id}`}>Delete</Button>
               </div>
