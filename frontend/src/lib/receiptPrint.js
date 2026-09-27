@@ -1,3 +1,7 @@
+import { Capacitor, registerPlugin } from "@capacitor/core";
+
+const BluetoothPrintIntent = registerPlugin("BluetoothPrintIntent");
+
 const escapeHtml = (value) => String(value ?? "")
   .replace(/&/g, "&amp;")
   .replace(/</g, "&lt;")
@@ -148,9 +152,19 @@ function androidBluetoothLink(html, openDrawer) {
     + `&src='data:text/html,${encodeURIComponent(html)}'`;
 }
 
+function openAndroidBluetoothLink(url) {
+  if (Capacitor.isNativePlatform()) {
+    BluetoothPrintIntent.open({ url }).catch((error) => {
+      console.error("Unable to open the Android Bluetooth printing app", error);
+    });
+    return;
+  }
+  window.location.href = url;
+}
+
 function printWithAndroidBluetoothService(sale, settings, refunds, openDrawer = false) {
   const html = receiptHtml(sale, settings, refunds);
-  window.location.href = androidBluetoothLink(html, openDrawer);
+  openAndroidBluetoothLink(androidBluetoothLink(html, openDrawer));
 }
 
 function printHtmlInBrowser(html) {
@@ -176,7 +190,7 @@ export function printThermalTicket(ticket, settings = {}) {
   if (!ticket || !ticket.items?.length) return false;
   const html = parkedTicketHtml(ticket, settings);
   if (isAndroid() && settings.printing?.android_bluetooth_bridge !== false) {
-    window.location.href = androidBluetoothLink(html, false);
+    openAndroidBluetoothLink(androidBluetoothLink(html, false));
   } else {
     printHtmlInBrowser(html);
   }
@@ -190,7 +204,7 @@ export function openCashDrawerForSale(sale, settings = {}) {
   // The bridge requires a source document even for a drawer-only request. A zero-size
   // page sends no receipt content while openCashDrawer issues the printer pulse.
   const blank = "<!doctype html><html><head><style>@page{size:58mm 0;margin:0}html,body{width:0;height:0;margin:0;padding:0;overflow:hidden}</style></head><body></body></html>";
-  window.location.href = androidBluetoothLink(blank, true);
+  openAndroidBluetoothLink(androidBluetoothLink(blank, true));
   return true;
 }
 

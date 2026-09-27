@@ -1,0 +1,12 @@
+{
+  "appId": "com.kdpluspharmacy.pos",
+  "appName": "KDPlus POS",
+  "webDir": "build",
+  "server": {
+    "url": "https://ralps-macbook-pro.tailfd147f.ts.net/",
+    "cleartext": false,
+    "allowNavigation": [
+      "ralps-macbook-pro.tailfd147f.ts.net"
+    ]
+  }
+}
