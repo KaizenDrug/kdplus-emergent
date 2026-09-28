@@ -523,7 +523,6 @@ function ProductDialog({ product, products, categories, suppliers, onClose, onSa
                   <button type="button" onClick={() => removeComponent(index)} aria-label="Remove component" className="h-10 text-red-500 hover:bg-red-100 rounded-lg"><Trash2 className="w-4 h-4 mx-auto" /></button>
                 </div>
               ))}
-              {!(f.components || []).length && <div className="text-xs text-fuchsia-700">Add the regular item and enter 8 for an ImmunPro 7+1 promotion.</div>}
             </div>
           )}
           {inp("generic_name", "Generic Name")}{inp("brand", "Brand")}
