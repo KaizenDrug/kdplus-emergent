@@ -18,6 +18,7 @@ export default function Inventory() {
   const [levels, setLevels] = useState([]);
   const [expiry, setExpiry] = useState(null);
   const [products, setProducts] = useState([]);
+  const [suppliers, setSuppliers] = useState([]);
   const [receive, setReceive] = useState(false);
   const [adjust, setAdjust] = useState(false);
   const [search, setSearch] = useState("");
@@ -26,7 +27,10 @@ export default function Inventory() {
 
   const loadLevels = useCallback(() => api.get(`/inventory/levels?store_id=${store}`).then((r) => setLevels(r.data)), [store]);
   const loadExpiry = useCallback(() => api.get(`/inventory/expiry?store_id=${store}`).then((r) => setExpiry(r.data)), [store]);
-  useEffect(() => { api.get("/products?limit=10000").then((r) => setProducts(r.data)); }, []);
+  useEffect(() => {
+    api.get("/products?limit=10000").then((r) => setProducts(r.data));
+    api.get("/suppliers").then((r) => setSuppliers(r.data));
+  }, []);
   useEffect(() => { loadLevels(); loadExpiry(); }, [loadLevels, loadExpiry]);
 
   const low = levels.filter((l) => l.status === "LOW").length;
@@ -163,7 +167,7 @@ export default function Inventory() {
         <TabsContent value="movements"><LedgerTab store={store} products={products} search={search} /></TabsContent>
       </Tabs>
 
-      {receive && <ReceiveDialog store={store} products={products.filter((p) => (p.product_type || "REGULAR") === "REGULAR")} onClose={() => setReceive(false)} onSaved={() => { setReceive(false); loadLevels(); loadExpiry(); toast.success("Stock received"); }} />}
+      {receive && <ReceiveDialog store={store} suppliers={suppliers} products={products.filter((p) => (p.product_type || "REGULAR") === "REGULAR")} onClose={() => setReceive(false)} onSaved={() => { setReceive(false); loadLevels(); loadExpiry(); toast.success("Stock received"); }} />}
       {adjust && <AdjustDialog store={store} products={products.filter((p) => (p.product_type || "REGULAR") === "REGULAR")} levels={levels} initialProductId={typeof adjust === "string" ? adjust : ""}
         onClose={() => setAdjust(false)} onSaved={() => { setAdjust(false); loadLevels(); loadExpiry(); }} />}
     </div>
@@ -215,16 +219,18 @@ function LedgerTab({ store, products, search }) {
   );
 }
 
-function ReceiveDialog({ store, products, onClose, onSaved }) {
+function ReceiveDialog({ store, suppliers, products, onClose, onSaved }) {
   const [lines, setLines] = useState([{ product_id: "", quantity: "", unit_cost: "", lot_number: "", expiry_date: "" }]);
+  const [supplierId, setSupplierId] = useState("");
   const [busy, setBusy] = useState(false);
   const upd = (i, k, v) => setLines((l) => l.map((x, idx) => idx === i ? { ...x, [k]: v } : x));
   const save = async () => {
+    if (!supplierId) { toast.error("Select a supplier before receiving stock"); return; }
     const valid = lines.filter((l) => l.product_id && Number(l.quantity) > 0);
     if (!valid.length) { toast.error("Add at least one line"); return; }
     setBusy(true);
     try {
-      await api.post("/inventory/receive", { store_id: store, reference: "Manual GRN", lines: valid.map((l) => ({ product_id: l.product_id, quantity: Number(l.quantity), unit_cost: Number(l.unit_cost) || 0, lot_number: l.lot_number, expiry_date: l.expiry_date || null })) });
+      await api.post("/inventory/receive", { store_id: store, supplier_id: supplierId, reference: "Manual GRN", lines: valid.map((l) => ({ product_id: l.product_id, quantity: Number(l.quantity), unit_cost: Number(l.unit_cost) || 0, lot_number: l.lot_number, expiry_date: l.expiry_date || null })) });
       onSaved();
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); } finally { setBusy(false); }
   };
@@ -232,19 +238,27 @@ function ReceiveDialog({ store, products, onClose, onSaved }) {
     <Dialog open={true} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl">
         <DialogHeader><DialogTitle>Receive Stock (Goods Receiving)</DialogTitle></DialogHeader>
+        <label className="block">
+          <span className="text-[11px] font-bold uppercase text-slate-500">Supplier <span className="text-red-500">Required</span></span>
+          <Select value={supplierId} onValueChange={setSupplierId}>
+            <SelectTrigger className="mt-1" data-testid="recv-supplier"><SelectValue placeholder="Select supplier first" /></SelectTrigger>
+            <SelectContent>{suppliers.map((s) => <SelectItem key={s.id} value={s.id}>{s.company}</SelectItem>)}</SelectContent>
+          </Select>
+        </label>
+        {!supplierId && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">Select the supplier to start adding received items.</div>}
         <div className="space-y-2 max-h-[55vh] overflow-y-auto">
-          {lines.map((l, i) => (
+          {supplierId && lines.map((l, i) => (
             <div key={i} className="grid grid-cols-12 gap-2 items-center rounded-lg border border-slate-100 p-2 sm:border-0 sm:p-0">
-              <div className="col-span-12 sm:col-span-4"><Select value={l.product_id} onValueChange={(v) => upd(i, "product_id", v)}><SelectTrigger data-testid={`recv-prod-${i}`}><SelectValue placeholder="Product" /></SelectTrigger><SelectContent>{products.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent></Select></div>
+              <div className="col-span-12 sm:col-span-4"><ProductSearchSelect products={products} value={l.product_id} onChange={(v) => upd(i, "product_id", v)} testId={`recv-prod-${i}`} /></div>
               <input className="col-span-4 sm:col-span-2 px-2 py-2 border rounded-lg text-sm" placeholder="Qty" type="number" value={l.quantity} onChange={(e) => upd(i, "quantity", e.target.value)} data-testid={`recv-qty-${i}`} />
               <input className="col-span-4 sm:col-span-2 px-2 py-2 border rounded-lg text-sm" placeholder="Cost" type="number" value={l.unit_cost} onChange={(e) => upd(i, "unit_cost", e.target.value)} />
               <input className="col-span-4 sm:col-span-2 px-2 py-2 border rounded-lg text-sm" placeholder="Lot" value={l.lot_number} onChange={(e) => upd(i, "lot_number", e.target.value)} />
               <input className="col-span-12 sm:col-span-2 px-2 py-2 border rounded-lg text-sm" type="date" value={l.expiry_date} onChange={(e) => upd(i, "expiry_date", e.target.value)} />
             </div>
           ))}
-          <button onClick={() => setLines((l) => [...l, { product_id: "", quantity: "", unit_cost: "", lot_number: "", expiry_date: "" }])} className="text-sm text-accent hover:underline">+ Add line</button>
+          {supplierId && <button onClick={() => setLines((l) => [...l, { product_id: "", quantity: "", unit_cost: "", lot_number: "", expiry_date: "" }])} className="text-sm text-accent hover:underline" data-testid="recv-add-line">+ Add item</button>}
         </div>
-        <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={busy} data-testid="save-receive" className="bg-primary hover:bg-teal-800">{busy ? "Saving…" : "Receive"}</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={busy || !supplierId} data-testid="save-receive" className="bg-primary hover:bg-teal-800">{busy ? "Saving…" : "Receive"}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   );
