@@ -113,6 +113,7 @@ class SettingsIn(BaseModel):
     printing: Optional[dict] = None
     tax: Optional[dict] = None
     senior_pwd: Optional[dict] = None
+    discount_schemes: Optional[list] = None
     loyalty: Optional[dict] = None
     purchasing: Optional[dict] = None
     negative_stock_policy: Optional[str] = None

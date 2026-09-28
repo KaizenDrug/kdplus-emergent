@@ -651,6 +651,7 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
   const [discountType, setDiscountType] = useState("REGULAR");
   const [customerId, setCustomerId] = useState("");
   const [orderDiscount, setOrderDiscount] = useState("");
+  const [discountSchemeId, setDiscountSchemeId] = useState("");
   const [idNumber, setIdNumber] = useState("");
   const [spName, setSpName] = useState("");
   const [payments, setPayments] = useState([{
@@ -663,6 +664,21 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
   const vatRate = (settings?.tax?.vat_rate || 12) / 100;
   const spPct = (settings?.senior_pwd?.discount_pct || 20) / 100;
   const gross = cart.reduce((s, i) => s + i.unit_price * i.qty, 0);
+  const todayManila = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila" }).format(new Date());
+  const activeSchemes = (settings?.discount_schemes || []).filter((scheme) => scheme.enabled !== false
+    && (!scheme.start_date || todayManila >= scheme.start_date)
+    && (!scheme.end_date || todayManila <= scheme.end_date));
+  const selectedScheme = discountType === "REGULAR" ? activeSchemes.find((scheme) => scheme.id === discountSchemeId) : null;
+  const selectedProducts = new Set(selectedScheme?.product_ids || []);
+  const schemeEligibleSubtotal = selectedScheme
+    ? cart.reduce((sum, item) => sum + ((!selectedProducts.size || selectedProducts.has(item.product_id)) ? item.unit_price * item.qty : 0), 0)
+    : 0;
+  const schemeMinimum = Number(selectedScheme?.min_subtotal || 0);
+  const schemeMinimumMet = !selectedScheme || schemeEligibleSubtotal >= schemeMinimum;
+  const schemeDiscount = selectedScheme && schemeMinimumMet
+    ? Math.min(schemeEligibleSubtotal, selectedScheme.discount_type === "PERCENT"
+      ? schemeEligibleSubtotal * Number(selectedScheme.value || 0) / 100 : Number(selectedScheme.value || 0))
+    : 0;
 
   // preview totals
   let total = gross, vatExempt = 0, spDisc = 0, vatAmt = 0;
@@ -681,7 +697,8 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
     });
     total = net;
   } else {
-    if (orderDiscount) total = Math.max(0, gross - Number(orderDiscount));
+    const regularDiscount = selectedScheme ? schemeDiscount : Number(orderDiscount || 0);
+    if (regularDiscount) total = Math.max(0, gross - regularDiscount);
     cart.forEach((i) => { const line = i.unit_price * i.qty; if (i.tax_mode === "VAT") vatAmt += line - line / (1 + vatRate); });
   }
 
@@ -694,9 +711,32 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
   const removePayment = (idx) => setPayments((p) => p.filter((_, i) => i !== idx));
   const fillExact = () => setPayments([{ method: payments[0].method, amount: total.toFixed(2) }]);
   const fillCashAmount = (amount) => setPayments([{ method: "Cash", amount: Number(amount).toFixed(2) }]);
+  const chooseDiscountScheme = (value) => {
+    const nextId = value === "manual" ? "" : value;
+    const nextScheme = activeSchemes.find((scheme) => scheme.id === nextId);
+    const nextProducts = new Set(nextScheme?.product_ids || []);
+    const eligibleSubtotal = nextScheme
+      ? cart.reduce((sum, item) => sum + ((!nextProducts.size || nextProducts.has(item.product_id)) ? item.unit_price * item.qty : 0), 0)
+      : 0;
+    const minimumMet = !nextScheme || eligibleSubtotal >= Number(nextScheme.min_subtotal || 0);
+    const discount = nextScheme && minimumMet
+      ? Math.min(eligibleSubtotal, nextScheme.discount_type === "PERCENT"
+        ? eligibleSubtotal * Number(nextScheme.value || 0) / 100 : Number(nextScheme.value || 0))
+      : 0;
+    const nextTotal = Math.max(0, gross - discount);
+    setPayments((current) => {
+      const amount = Number(current[0]?.amount);
+      const wasExact = current.length === 1 && (Math.abs(amount - total) < 0.001 || Math.abs(amount - gross) < 0.001);
+      return wasExact ? [{ ...current[0], amount: nextTotal.toFixed(2) }] : current;
+    });
+    setDiscountSchemeId(nextId);
+    if (nextId) setOrderDiscount("");
+  };
 
   const submit = async () => {
     if (!shiftId) { toast.error("Open a shift before completing a sale"); return; }
+    if (selectedScheme && !schemeMinimumMet) { toast.error(`Eligible items must total at least ${peso(schemeMinimum)} for this scheme`); return; }
+    if (selectedScheme && schemeEligibleSubtotal <= 0) { toast.error("This scheme has no eligible items in the ticket"); return; }
     if ((discountType === "SENIOR" || discountType === "PWD") && (!idNumber.trim() || !spName.trim())) {
       toast.error("Enter the Senior/PWD ID number and cardholder name"); return;
     }
@@ -712,7 +752,10 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
         return { product_id: i.product_id, qty: i.qty, discount_eligible: eq > 0, discount_eligible_qty: eq };
       }),
       payments: validPayments,
-      discount_type: discountType, order_discount: Number(orderDiscount) || 0,
+      // Scheme amounts are recomputed and validated by the backend; send only
+      // the scheme ID so the client cannot override its saved discount value.
+      discount_type: discountType, order_discount: selectedScheme ? 0 : Number(orderDiscount) || 0,
+      discount_scheme_id: selectedScheme?.id || null,
       senior_pwd: (discountType !== "REGULAR") ? { id_number: idNumber, name: spName } : null,
       client_txn_id, customer_id: customerId || null,
     };
@@ -723,6 +766,8 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
         discount_eligible: Number(eligibleQty[i.product_id]) > 0,
         discount_eligible_qty: Math.min(i.qty, Math.max(0, Number(eligibleQty[i.product_id]) || 0)) })),
       subtotal: gross, vat_exempt_amount: vatExempt, spwd_discount: spDisc, vat_amount: vatAmt,
+      discount_total: discountType === "REGULAR" ? (selectedScheme ? schemeDiscount : Number(orderDiscount) || 0) + spDisc : spDisc,
+      discount_scheme_name: selectedScheme?.name || null,
       total, payments: validPayments, change: change > 0 ? change : 0, _offline: true,
     };
     try {
@@ -749,7 +794,7 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label className="text-[11px] font-bold uppercase text-slate-500">Discount Type</label>
-              <Select value={discountType} onValueChange={setDiscountType}>
+              <Select value={discountType} onValueChange={(value) => { setDiscountType(value); if (value !== "REGULAR") setDiscountSchemeId(""); }}>
                 <SelectTrigger className="mt-1" data-testid="discount-type"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="REGULAR">Regular</SelectItem>
@@ -798,12 +843,26 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
           )}
 
           {discountType === "REGULAR" && (
-            <div><label className="text-[11px] font-bold uppercase text-slate-500">Order Discount (₱)</label>
-              <input type="number" value={orderDiscount} onChange={(e) => setOrderDiscount(e.target.value)} data-testid="order-discount" className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 text-sm" placeholder="0.00" /></div>
+            <div className="space-y-3">
+              <div><label className="text-[11px] font-bold uppercase text-slate-500">Discount Scheme</label>
+                <Select value={discountSchemeId || "manual"} onValueChange={chooseDiscountScheme}>
+                  <SelectTrigger className="mt-1" data-testid="discount-scheme-select"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="manual">No scheme — manual discount</SelectItem>
+                    {activeSchemes.map((scheme) => <SelectItem key={scheme.id} value={scheme.id}>{scheme.name} ({scheme.discount_type === "PERCENT" ? `${scheme.value}%` : peso(scheme.value)})</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                {selectedScheme && !schemeMinimumMet && <p className="text-xs text-amber-700 mt-1">Eligible items need {peso(schemeMinimum)} minimum; current eligible subtotal is {peso(schemeEligibleSubtotal)}.</p>}
+                {selectedScheme && schemeMinimumMet && schemeEligibleSubtotal <= 0 && <p className="text-xs text-amber-700 mt-1">There are no eligible products in this ticket.</p>}
+              </div>
+              {!selectedScheme && <div><label className="text-[11px] font-bold uppercase text-slate-500">Manual Order Discount (₱)</label>
+                <input type="number" min="0" step="0.01" value={orderDiscount} onChange={(e) => setOrderDiscount(e.target.value)} data-testid="order-discount" className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 text-sm" placeholder="0.00" /></div>}
+            </div>
           )}
 
           <div className="bg-slate-50 rounded-lg p-3 space-y-1 text-sm">
             <div className="flex justify-between"><span className="text-slate-500">Gross</span><span>{peso(gross)}</span></div>
+            {discountType === "REGULAR" && (selectedScheme ? schemeDiscount : Number(orderDiscount) || 0) > 0 && <div className="flex justify-between text-slate-500"><span>{selectedScheme ? `Less ${selectedScheme.name}` : "Less manual discount"}</span><span>-{peso(selectedScheme ? schemeDiscount : Number(orderDiscount))}</span></div>}
             {vatExempt > 0 && <div className="flex justify-between text-slate-500"><span>Less VAT exemption</span><span>-{peso(vatExempt)}</span></div>}
             {spDisc > 0 && <div className="flex justify-between text-slate-500"><span>Less Senior/PWD 20%</span><span>-{peso(spDisc)}</span></div>}
             <div className="flex justify-between text-lg font-bold text-slate-900 pt-1 border-t border-slate-200"><span>Total Due</span><span data-testid="checkout-total">{peso(total)}</span></div>

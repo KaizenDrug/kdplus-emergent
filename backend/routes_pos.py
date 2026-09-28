@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional, List
-from datetime import datetime
+from datetime import date, datetime
 from collections import defaultdict
 import math
 import re
@@ -41,6 +41,7 @@ class SaleIn(BaseModel):
     payments: List[PaymentIn]
     discount_type: str = "REGULAR"           # REGULAR / SENIOR / PWD
     order_discount: float = 0                 # peso amount off whole ticket (regular only)
+    discount_scheme_id: Optional[str] = None
     senior_pwd: Optional[SeniorPwdInfo] = None
     notes: Optional[str] = ""
     client_txn_id: Optional[str] = None       # offline dedupe UUID
@@ -184,6 +185,38 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
         raise HTTPException(status_code=400, detail="Senior/PWD discounts are disabled")
     if is_spwd and (not body.senior_pwd or not body.senior_pwd.id_number.strip() or not body.senior_pwd.name.strip()):
         raise HTTPException(status_code=400, detail="Senior/PWD ID number and cardholder name are required")
+
+    discount_scheme = None
+    if body.discount_scheme_id:
+        if is_spwd:
+            raise HTTPException(status_code=400, detail="A discount scheme cannot be combined with Senior/PWD discounts")
+        if D(body.order_discount) != 0:
+            raise HTTPException(status_code=400, detail="Choose either a discount scheme or a manual discount")
+        discount_scheme = next((scheme for scheme in (settings.get("discount_schemes") or [])
+                                if scheme.get("id") == body.discount_scheme_id), None)
+        if not discount_scheme or not discount_scheme.get("enabled", True):
+            raise HTTPException(status_code=400, detail="This discount scheme is unavailable")
+        today = datetime.now(MANILA).date().isoformat()
+        try:
+            start_date = date.fromisoformat(discount_scheme["start_date"]) if discount_scheme.get("start_date") else None
+            end_date = date.fromisoformat(discount_scheme["end_date"]) if discount_scheme.get("end_date") else None
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="The discount scheme has invalid dates")
+        if discount_scheme.get("start_date") and today < discount_scheme["start_date"]:
+            raise HTTPException(status_code=400, detail="This discount scheme is not active yet")
+        if discount_scheme.get("end_date") and today > discount_scheme["end_date"]:
+            raise HTTPException(status_code=400, detail="This discount scheme has expired")
+        try:
+            scheme_value = D(discount_scheme.get("value", 0))
+            minimum_subtotal = D(discount_scheme.get("min_subtotal", 0))
+        except Exception:
+            raise HTTPException(status_code=400, detail="The discount scheme has invalid settings")
+        if (discount_scheme.get("discount_type") not in ("PERCENT", "FIXED")
+                or scheme_value <= 0 or minimum_subtotal < 0
+                or (discount_scheme.get("discount_type") == "PERCENT" and scheme_value > 100)
+                or (discount_scheme.get("product_scope") == "SELECTED" and not discount_scheme.get("product_ids"))
+                or (start_date and end_date and end_date < start_date)):
+            raise HTTPException(status_code=400, detail="The discount scheme has invalid settings")
 
     if body.register_id and not body.shift_id:
         raise HTTPException(status_code=400, detail="Open a shift before completing a sale")
@@ -350,9 +383,28 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
             "track_inventory": bool(inventory_components), "inventory_components": inventory_components,
         })
 
-    # order-level discount (regular sales only)
+    # order-level discount (regular sales only). The server calculates schemes
+    # from the saved definition rather than trusting an amount sent by the POS.
     order_disc = D(0)
-    if not is_spwd and body.order_discount:
+    if discount_scheme:
+        selected_products = set(discount_scheme.get("product_ids") or [])
+        eligible_subtotal = sum(
+            (D(line.get("line_gross", 0)) for line in line_docs
+             if not selected_products or line.get("product_id") in selected_products), D(0)
+        )
+        minimum_subtotal = D(discount_scheme.get("min_subtotal", 0))
+        if eligible_subtotal <= 0:
+            raise HTTPException(status_code=400, detail="This scheme has no eligible items in the ticket")
+        if eligible_subtotal < minimum_subtotal:
+            raise HTTPException(status_code=400, detail=f"Eligible items must total at least {m(minimum_subtotal)} for this scheme")
+        value = D(discount_scheme["value"])
+        if discount_scheme["discount_type"] == "PERCENT":
+            order_disc = eligible_subtotal * value / D(100)
+        else:
+            order_disc = value
+        order_disc = min(order_disc, eligible_subtotal)
+        net_total = max(D(0), net_total - order_disc)
+    elif not is_spwd and body.order_discount:
         order_disc = D(body.order_discount)
         if order_disc < 0:
             raise HTTPException(status_code=400, detail="Order discount cannot be negative")
@@ -379,6 +431,8 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
         "customer_id": body.customer_id, "customer_name": (f"{customer.get('first_name','')} {customer.get('last_name','')}".strip() if customer else None),
         "status": "COMPLETED", "items": line_docs,
         "subtotal": m(subtotal), "order_discount": m(order_disc),
+        "discount_scheme_id": discount_scheme.get("id") if discount_scheme else None,
+        "discount_scheme_name": discount_scheme.get("name") if discount_scheme else None,
         "vat_amount": m(vat_amount), "vat_exempt_amount": m(vat_exempt_amount),
         "spwd_discount": m(spwd_discount), "discount_type": body.discount_type,
         "senior_pwd": (body.senior_pwd.model_dump() if body.senior_pwd else None),

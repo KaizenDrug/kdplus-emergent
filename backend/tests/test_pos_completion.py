@@ -102,6 +102,45 @@ async def test_senior_discount_only_applies_to_selected_items(pos_db):
 
 
 @pytest.mark.asyncio
+async def test_discount_scheme_is_calculated_and_saved_from_server_settings(pos_db):
+    await pos_db.settings.update_one({"org_id": core.ORG_ID}, {"$set": {"discount_schemes": [{
+        "id": "scheme-10", "name": "Eligible Medicine 10%", "discount_type": "PERCENT",
+        "value": 10, "min_subtotal": 100, "product_ids": ["p_med"], "enabled": True,
+    }]}})
+    sale = await routes_pos.create_sale(routes_pos.SaleIn(
+        store_id="store_main", register_id="reg_1", shift_id="shift1",
+        items=[routes_pos.SaleLine(product_id="p_med", qty=1)],
+        payments=[routes_pos.PaymentIn(method="Cash", amount=112)],
+        discount_scheme_id="scheme-10", client_txn_id="txn-scheme-10",
+    ), principal=PRINCIPAL)
+
+    assert sale["discount_scheme_id"] == "scheme-10"
+    assert sale["discount_scheme_name"] == "Eligible Medicine 10%"
+    assert sale["order_discount"] == 11.2
+    assert sale["discount_total"] == 11.2
+    assert sale["total"] == 100.8
+
+
+@pytest.mark.asyncio
+async def test_discount_scheme_rejects_below_minimum_and_manual_stacking(pos_db):
+    await pos_db.settings.update_one({"org_id": core.ORG_ID}, {"$set": {"discount_schemes": [{
+        "id": "scheme-10", "name": "Minimum spend", "discount_type": "FIXED",
+        "value": 10, "min_subtotal": 200, "enabled": True,
+    }]}})
+    body = routes_pos.SaleIn(
+        store_id="store_main", register_id="reg_1", shift_id="shift1",
+        items=[routes_pos.SaleLine(product_id="p_med", qty=1)],
+        payments=[routes_pos.PaymentIn(method="Cash", amount=200)],
+        discount_scheme_id="scheme-10", client_txn_id="txn-scheme-minimum",
+    )
+    with pytest.raises(HTTPException, match="Eligible items must total"):
+        await routes_pos.create_sale(body, principal=PRINCIPAL)
+
+    with pytest.raises(HTTPException, match="manual discount"):
+        await routes_pos.create_sale(body.model_copy(update={"order_discount": 1}), principal=PRINCIPAL)
+
+
+@pytest.mark.asyncio
 async def test_refund_restores_original_lot_and_records_refund_method(pos_db):
     sale = await routes_pos.create_sale(senior_sale(), principal=PRINCIPAL)
     lot_after_sale = await pos_db.inventory_lots.find_one({"id": "lot1"})

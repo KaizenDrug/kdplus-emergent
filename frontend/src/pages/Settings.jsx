@@ -5,7 +5,7 @@ import { PageHeader, Card } from "@/components/kit";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { AlertTriangle, Download, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, Download, CheckCircle2, Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Settings() {
@@ -16,8 +16,8 @@ export default function Settings() {
   if (!s) return <div className="text-slate-400">Loading…</div>;
 
   const save = async (patch) => {
-    try { const { data } = await api.put("/settings", patch); setS(data); toast.success("Settings saved"); }
-    catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+    try { const { data } = await api.put("/settings", patch); setS(data); toast.success("Settings saved"); return data; }
+    catch (e) { toast.error(e.response?.data?.detail || "Failed"); return null; }
   };
 
   return (
@@ -28,6 +28,7 @@ export default function Settings() {
           <TabsTrigger value="business" data-testid="stab-business">Business</TabsTrigger>
           <TabsTrigger value="printing" data-testid="stab-printing">Receipt Printing</TabsTrigger>
           <TabsTrigger value="tax" data-testid="stab-tax">Tax & Senior/PWD</TabsTrigger>
+          {isAdmin && <TabsTrigger value="discount-schemes" data-testid="stab-discount-schemes">Discount Schemes</TabsTrigger>}
           <TabsTrigger value="loyalty" data-testid="stab-loyalty">Loyalty & Inventory</TabsTrigger>
           {isAdmin && <TabsTrigger value="danger" data-testid="stab-danger" className="data-[state=active]:text-red-600">Danger Zone</TabsTrigger>}
         </TabsList>
@@ -35,6 +36,7 @@ export default function Settings() {
         <TabsContent value="business"><BusinessTab s={s} save={save} /></TabsContent>
         <TabsContent value="printing"><PrintingTab s={s} save={save} /></TabsContent>
         <TabsContent value="tax"><TaxTab s={s} save={save} /></TabsContent>
+        {isAdmin && <TabsContent value="discount-schemes"><DiscountSchemesTab s={s} save={save} /></TabsContent>}
         <TabsContent value="loyalty"><LoyaltyTab s={s} save={save} /></TabsContent>
         {isAdmin && <TabsContent value="danger"><DangerZoneTab /></TabsContent>}
       </Tabs>
@@ -128,6 +130,124 @@ function TaxTab({ s, save }) {
       <Row label="Discount (%)"><input type="number" className={inputCls} value={sp.discount_pct ?? 20} onChange={(e) => setSp((x) => ({ ...x, discount_pct: Number(e.target.value) }))} data-testid="set-spwd-pct" /></Row>
       <Row label="VAT Exemption"><input type="checkbox" checked={sp.vat_exempt ?? true} onChange={(e) => setSp((x) => ({ ...x, vat_exempt: e.target.checked }))} className="w-4 h-4 accent-teal-600" /></Row>
       <div className="mt-4"><Button onClick={() => save({ tax, senior_pwd: sp })} data-testid="save-tax" className="bg-primary hover:bg-teal-800">Save Tax & Discount Rules</Button></div>
+    </Card>
+  );
+}
+
+const newScheme = () => ({
+  id: `disc-${Date.now()}`, name: "", discount_type: "PERCENT", value: 10,
+  min_subtotal: 0, product_scope: "ALL", product_ids: [], start_date: "", end_date: "", enabled: true,
+});
+
+function DiscountSchemesTab({ s, save }) {
+  const schemes = s.discount_schemes || [];
+  const [form, setForm] = useState(null);
+  const [products, setProducts] = useState([]);
+  const [productQuery, setProductQuery] = useState("");
+  useEffect(() => {
+    api.get("/products?active=true&limit=10000").then((r) => setProducts(r.data || [])).catch(() => {});
+  }, []);
+
+  const persist = async (next) => {
+    const data = await save({ discount_schemes: next });
+    if (data) setForm(null);
+  };
+  const saveScheme = () => {
+    const name = form?.name?.trim();
+    const value = Number(form?.value);
+    const minimum = Number(form?.min_subtotal || 0);
+    if (!name) { toast.error("Enter a scheme name"); return; }
+    if (!Number.isFinite(value) || value <= 0 || (form.discount_type === "PERCENT" && value > 100)) {
+      toast.error(form.discount_type === "PERCENT" ? "Enter a percentage from 0.01 to 100" : "Enter a discount amount greater than zero"); return;
+    }
+    if (!Number.isFinite(minimum) || minimum < 0) { toast.error("Minimum purchase cannot be negative"); return; }
+    if (form.product_scope === "SELECTED" && !form.product_ids.length) { toast.error("Choose at least one eligible product"); return; }
+    if (form.start_date && form.end_date && form.end_date < form.start_date) { toast.error("End date must be on or after start date"); return; }
+    const normalized = { ...form, name, value, min_subtotal: minimum, product_ids: form.product_ids || [] };
+    const next = schemes.some((x) => x.id === normalized.id)
+      ? schemes.map((x) => x.id === normalized.id ? normalized : x)
+      : [...schemes, normalized];
+    persist(next);
+  };
+  const updateScheme = (scheme, patch) => persist(schemes.map((x) => x.id === scheme.id ? { ...x, ...patch } : x));
+  const removeScheme = (scheme) => {
+    if (!window.confirm(`Delete the discount scheme “${scheme.name}”?`)) return;
+    persist(schemes.filter((x) => x.id !== scheme.id));
+  };
+  const visibleProducts = products.filter((p) => {
+    const q = productQuery.trim().toLowerCase();
+    return !q || [p.name, p.sku, p.barcode].some((v) => String(v || "").toLowerCase().includes(q));
+  }).slice(0, 50);
+  const toggleProduct = (productId) => setForm((x) => ({
+    ...x, product_ids: x.product_ids.includes(productId)
+      ? x.product_ids.filter((id) => id !== productId) : [...x.product_ids, productId],
+  }));
+
+  return (
+    <Card className="p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+        <div>
+          <h3 className="font-heading font-bold text-slate-800">Discount Schemes</h3>
+          <p className="text-sm text-slate-500 mt-1">Create reusable percentage or fixed discounts for checkout. Schemes can be limited to selected products, dates, and a minimum purchase.</p>
+        </div>
+        {!form && <Button onClick={() => { setProductQuery(""); setForm(newScheme()); }} data-testid="new-discount-scheme"><Plus className="w-4 h-4 mr-1" />New Scheme</Button>}
+      </div>
+
+      {form && <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 mb-5 space-y-3" data-testid="discount-scheme-form">
+        <div className="grid sm:grid-cols-2 gap-3">
+          <label className="text-xs font-semibold text-slate-600">Scheme name<input className={`${inputCls} mt-1`} value={form.name} onChange={(e) => setForm((x) => ({ ...x, name: e.target.value }))} placeholder="e.g. Employee 10%" data-testid="scheme-name" /></label>
+          <label className="text-xs font-semibold text-slate-600">Discount type
+            <Select value={form.discount_type} onValueChange={(v) => setForm((x) => ({ ...x, discount_type: v }))}>
+              <SelectTrigger className={`${inputCls} mt-1`} data-testid="scheme-type"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="PERCENT">Percentage off</SelectItem><SelectItem value="FIXED">Fixed amount off</SelectItem></SelectContent>
+            </Select>
+          </label>
+          <label className="text-xs font-semibold text-slate-600">{form.discount_type === "PERCENT" ? "Percent (%)" : "Amount (₱)"}<input type="number" min="0.01" step="0.01" className={`${inputCls} mt-1`} value={form.value} onChange={(e) => setForm((x) => ({ ...x, value: e.target.value }))} data-testid="scheme-value" /></label>
+          <label className="text-xs font-semibold text-slate-600">Minimum eligible purchase (₱)<input type="number" min="0" step="0.01" className={`${inputCls} mt-1`} value={form.min_subtotal} onChange={(e) => setForm((x) => ({ ...x, min_subtotal: e.target.value }))} data-testid="scheme-minimum" /></label>
+          <label className="text-xs font-semibold text-slate-600">Start date (optional)<input type="date" className={`${inputCls} mt-1`} value={form.start_date || ""} onChange={(e) => setForm((x) => ({ ...x, start_date: e.target.value }))} data-testid="scheme-start-date" /></label>
+          <label className="text-xs font-semibold text-slate-600">End date (optional)<input type="date" className={`${inputCls} mt-1`} value={form.end_date || ""} onChange={(e) => setForm((x) => ({ ...x, end_date: e.target.value }))} data-testid="scheme-end-date" /></label>
+        </div>
+        <div className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.enabled} onChange={(e) => setForm((x) => ({ ...x, enabled: e.target.checked }))} className="accent-teal-600" data-testid="scheme-enabled" /><span>Available at checkout</span></div>
+        <div>
+          <div className="text-xs font-semibold text-slate-600 mb-2">Eligible products</div>
+          <div className="flex gap-3 text-sm mb-2">
+            <label className="flex items-center gap-2"><input type="radio" checked={form.product_scope !== "SELECTED"} onChange={() => setForm((x) => ({ ...x, product_scope: "ALL", product_ids: [] }))} />All products</label>
+            <label className="flex items-center gap-2"><input type="radio" checked={form.product_scope === "SELECTED"} onChange={() => setForm((x) => ({ ...x, product_scope: "SELECTED" }))} />Choose products</label>
+          </div>
+          {form.product_scope === "SELECTED" && <>
+            <input className={`${inputCls} mb-2`} value={productQuery} onChange={(e) => setProductQuery(e.target.value)} placeholder="Search product name, SKU, or barcode" data-testid="scheme-product-search" />
+            <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 grid sm:grid-cols-2 gap-x-4 gap-y-1">
+              {visibleProducts.map((p) => <label key={p.id} className="flex items-center gap-2 text-xs text-slate-700 py-1">
+                <input type="checkbox" checked={form.product_ids.includes(p.id)} onChange={() => toggleProduct(p.id)} className="accent-teal-600" />
+                <span className="truncate">{p.name} <span className="text-slate-400">{p.sku ? `· ${p.sku}` : ""}</span></span>
+              </label>)}
+              {!visibleProducts.length && <span className="text-xs text-slate-400">No products match.</span>}
+            </div>
+            <p className="text-xs text-slate-500 mt-1">{form.product_ids.length} product(s) selected. Only matching items in the ticket count toward the discount and minimum purchase.</p>
+          </>}
+          {form.product_scope === "SELECTED" && !form.product_ids.length && <p className="text-xs text-amber-700">Choose at least one product.</p>}
+        </div>
+        <div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setForm(null)}>Cancel</Button><Button onClick={saveScheme} data-testid="save-discount-scheme">Save Scheme</Button></div>
+      </div>}
+
+      <div className="overflow-x-auto rounded-lg border border-slate-200">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr><th className="px-3 py-2">Scheme</th><th className="px-3 py-2">Discount</th><th className="px-3 py-2">Eligibility</th><th className="px-3 py-2">Dates</th><th className="px-3 py-2">Status</th><th className="px-3 py-2"></th></tr></thead>
+          <tbody>{schemes.map((scheme) => <tr key={scheme.id} className="border-t border-slate-100">
+            <td className="px-3 py-2 font-semibold">{scheme.name}</td>
+            <td className="px-3 py-2">{scheme.discount_type === "PERCENT" ? `${scheme.value}%` : `₱${Number(scheme.value).toFixed(2)}`}</td>
+            <td className="px-3 py-2 text-slate-500">{scheme.product_ids?.length ? `${scheme.product_ids.length} selected product(s)` : "All products"}{Number(scheme.min_subtotal) > 0 ? ` · min ₱${Number(scheme.min_subtotal).toFixed(2)}` : ""}</td>
+            <td className="px-3 py-2 text-slate-500">{scheme.start_date || "Any date"} – {scheme.end_date || "No end"}</td>
+            <td className="px-3 py-2"><span className={scheme.enabled ? "text-emerald-700" : "text-slate-400"}>{scheme.enabled ? "Active" : "Inactive"}</span></td>
+            <td className="px-3 py-2"><div className="flex justify-end gap-2">
+              <button title="Edit" onClick={() => { setProductQuery(""); setForm({ ...newScheme(), ...scheme, product_ids: scheme.product_ids || [], product_scope: scheme.product_ids?.length ? "SELECTED" : "ALL" }); }} data-testid={`edit-scheme-${scheme.id}`} className="text-teal-700"><Pencil className="w-4 h-4" /></button>
+              <button title={scheme.enabled ? "Deactivate" : "Activate"} onClick={() => updateScheme(scheme, { enabled: !scheme.enabled })} className="text-slate-500 text-xs">{scheme.enabled ? "Disable" : "Enable"}</button>
+              <button title="Delete" onClick={() => removeScheme(scheme)} data-testid={`delete-scheme-${scheme.id}`} className="text-red-600"><Trash2 className="w-4 h-4" /></button>
+            </div></td>
+          </tr>)}
+          {!schemes.length && <tr><td colSpan="6" className="text-center text-sm text-slate-400 py-8">No discount schemes yet. Create one to make it available in POS checkout.</td></tr>}</tbody>
+        </table>
+      </div>
     </Card>
   );
 }
