@@ -473,9 +473,9 @@ IMPORT_FIELDS = (
 )
 
 
-def _csv_text(rows, fieldnames=IMPORT_FIELDS):
+def _csv_text(rows):
     stream = io.StringIO()
-    writer = csv.DictWriter(stream, fieldnames=fieldnames, lineterminator="\n")
+    writer = csv.DictWriter(stream, fieldnames=IMPORT_FIELDS, lineterminator="\n")
     writer.writeheader()
     writer.writerows(rows)
     return stream.getvalue()
@@ -547,8 +547,6 @@ async def _validate_rows(rows):
     seen = set()
     for r in rows:
         messages = []
-        if r.get("lot_count", "") not in ("", "0", "1"):
-            messages.append("Invalid multi-lot import: use a product-only file without lot_count, batch and expiry, or receive each lot separately.")
         name = r.get("name", "").strip()
         if not name:
             messages.append("Missing product name")
@@ -668,11 +666,6 @@ async def export_products(principal=Depends(require_perm("*"))):
     categories = await db.categories.find({"org_id": ORG_ID}, {"_id": 0}).to_list(500)
     suppliers = await db.suppliers.find({"org_id": ORG_ID}, {"_id": 0}).to_list(500)
     levels = await db.inventory_levels.find({"org_id": ORG_ID}, {"_id": 0}).to_list(50000)
-    lots_by_product = {}
-    async for lot in db.inventory_lots.find({
-        "org_id": ORG_ID, "status": "ACTIVE", "quantity": {"$gt": 0},
-    }, {"_id": 0}):
-        lots_by_product.setdefault(lot.get("product_id"), []).append(lot)
     cat_names = {c["id"]: c["name"] for c in categories}
     sup_names = {s["id"]: s["company"] for s in suppliers}
     stock_by_product = {}
@@ -682,10 +675,6 @@ async def export_products(principal=Depends(require_perm("*"))):
 
     rows = []
     for p in products:
-        lots = sorted(lots_by_product.get(p.get("id"), []), key=lambda lot: (
-            lot.get("expiry_date") or "9999-12-31",
-            lot.get("lot_number") or "", lot.get("store_id") or "",
-        ))
         rows.append({
             "name": p.get("name", ""), "generic_name": p.get("generic_name", ""),
             "brand": p.get("brand", ""), "description": p.get("description", ""),
@@ -711,15 +700,9 @@ async def export_products(principal=Depends(require_perm("*"))):
             "track_lots": str(p.get("track_lots", True)).lower(),
             "track_expiry": str(p.get("track_expiry", True)).lower(), "tax_mode": p.get("tax_mode", "VAT"),
             "vat_inclusive": str(p.get("vat_inclusive", True)).lower(), "shelf_code": p.get("shelf_code", ""),
-            "active": str(p.get("active", True)).lower(),
-            "batch": "\n".join(lot.get("lot_number") or "" for lot in lots),
-            "expiry": "\n".join(lot.get("expiry_date") or "" for lot in lots),
-            "lot_count": len(lots),
-            "lot_quantities": "\n".join(str(m(lot.get("quantity", 0))) for lot in lots),
-            "lot_store_ids": "\n".join(lot.get("store_id") or "" for lot in lots),
+            "active": str(p.get("active", True)).lower(), "batch": "", "expiry": "",
         })
-    fields = (*IMPORT_FIELDS, "lot_count", "lot_quantities", "lot_store_ids")
-    return {"filename": "kdplus-products.csv", "csv": _csv_text(rows, fields), "count": len(rows)}
+    return {"filename": "kdplus-products.csv", "csv": _csv_text(rows), "count": len(rows)}
 
 @router.post("/products/import/validate")
 async def import_validate(body: ImportIn, principal=Depends(require_perm("*"))):
