@@ -87,6 +87,37 @@ async def test_complete_template_and_round_trip(catalog_db):
     assert exported_row["rx_classification"] == "RX"
     assert exported_row["track_lots"] == "true"
     assert exported_row["stock"] == "25.0"
+    assert exported_row["batch"] == "LOT-A"
+    assert exported_row["expiry"] == "2028-12-31"
+    assert exported_row["lot_count"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_export_preserves_multiple_lots_without_repeating_stock(catalog_db):
+    await catalog_db.products.insert_one({"id": "p1", "org_id": core.ORG_ID, "name": "Item"})
+    await catalog_db.inventory_levels.insert_one({"org_id": core.ORG_ID, "product_id": "p1", "quantity": 9})
+    await catalog_db.inventory_lots.insert_many([
+        {"org_id": core.ORG_ID, "product_id": "p1", "status": "ACTIVE", "quantity": 5,
+         "lot_number": "B", "expiry_date": None, "store_id": "store_main"},
+        {"org_id": core.ORG_ID, "product_id": "p1", "status": "ACTIVE", "quantity": 4,
+         "lot_number": "A", "expiry_date": "2027-01-31", "store_id": "store_main"},
+        {"org_id": core.ORG_ID, "product_id": "p1", "status": "ACTIVE", "quantity": 0,
+         "lot_number": "EMPTY", "expiry_date": "2026-01-31"},
+        {"org_id": "other", "product_id": "p1", "status": "ACTIVE", "quantity": 7,
+         "lot_number": "OTHER"},
+    ])
+    exported = await routes_catalog.export_products(principal=MANAGER)
+    rows = list(csv.DictReader(io.StringIO(exported["csv"])))
+    assert len(rows) == 1
+    assert rows[0]["stock"] == "9.0"
+    assert rows[0]["batch"] == "A\nB"
+    assert rows[0]["expiry"] == "2027-01-31\n"
+    assert rows[0]["lot_quantities"] == "4.0\n5.0"
+    assert rows[0]["lot_count"] == "2"
+    validation = await routes_catalog.import_validate(
+        routes_catalog.ImportIn(csv=exported["csv"]), principal=MANAGER,
+    )
+    assert validation["summary"]["error"] == 1
 
 
 @pytest.mark.asyncio
