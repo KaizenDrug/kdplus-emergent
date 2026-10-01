@@ -1,3 +1,4 @@
+import ProductSearchSelect from "@/components/ProductSearchSelect";
 import React, { useCallback, useEffect, useState, useMemo } from "react";
 import api, { peso, fmtDay, apiError } from "@/lib/api";
 import { PageHeader, Card, Empty } from "@/components/kit";
@@ -64,15 +65,15 @@ export default function PurchaseOrders() {
                 <td className="px-4 py-2.5 text-slate-500">{fmtDay(p.expected_date)}</td>
                 <td className="px-4 py-2.5"><POStatus s={p.status} /></td>
                 <td className="px-4 py-2.5 text-right font-semibold">{peso(p.total)}</td>
-                <td className="px-4 py-2.5 text-right"><button onClick={() => setViewing(p)} className="text-primary p-1.5 rounded hover:bg-primary/10" data-testid={`view-po-${p.id}`}><Eye className="w-4 h-4" /></button></td>
+                <td className="px-4 py-2.5 text-right">{p.status === "DRAFT" && <Button variant="outline" size="sm" className="mr-2" onClick={() => setEditing(p)} data-testid={`resume-po-${p.id}`}>Resume</Button>}<button onClick={() => setViewing(p)} className="text-primary p-1.5 rounded hover:bg-primary/10" data-testid={`view-po-${p.id}`}><Eye className="w-4 h-4" /></button></td>
               </tr>
             ))}
           </tbody>
         </table></div>
         {!rows.length && <Empty />}
       </Card>
-      {creating && <POForm products={products} suppliers={suppliers} onClose={() => setCreating(false)} onSaved={() => { setCreating(false); load(); toast.success("PO created"); }} />}
-      {editing && <POForm po={editing} products={products} suppliers={suppliers} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); toast.success("PO updated"); }} />}
+      {creating && <POForm products={products} suppliers={suppliers} onClose={() => setCreating(false)} onSaved={() => { setCreating(false); load(); toast.success("Draft saved. Click Resume to continue later."); }} />}
+      {editing && <POForm po={editing} products={products} suppliers={suppliers} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); toast.success("Draft updated"); }} />}
       {viewing && <POView poId={viewing.id} products={products} threshold={threshold} supName={supName}
         onClose={() => setViewing(null)} onEdit={(po) => { setViewing(null); setEditing(po); }} onChanged={load} />}
     </div>
@@ -81,6 +82,7 @@ export default function PurchaseOrders() {
 
 function POForm({ po, products, suppliers, onClose, onSaved }) {
   const isEdit = !!po;
+  const sortedProducts = useMemo(() => [...products].sort(byProductName), [products]);
   const [supplier, setSupplier] = useState(po?.supplier_id || "");
   const [expected, setExpected] = useState(po?.expected_date ? po.expected_date.slice(0, 10) : "");
   const [lines, setLines] = useState(
@@ -93,10 +95,14 @@ function POForm({ po, products, suppliers, onClose, onSaved }) {
 
   const save = async () => {
     if (!supplier) { toast.error("Select supplier"); return; }
-    const valid = lines.filter((l) => l.product_id && Number(l.qty_ordered) > 0);
+    const entered = lines.filter((l) => l.product_id || l.qty_ordered !== "" || l.unit_cost !== "");
+    if (entered.some((l) => !l.product_id || !Number.isFinite(Number(l.qty_ordered)) || Number(l.qty_ordered) <= 0 || !Number.isFinite(Number(l.unit_cost)) || Number(l.unit_cost) < 0)) {
+      toast.error("Select a product and enter a positive quantity and non-negative cost for every entered line."); return;
+    }
+    const valid = entered;
     if (!valid.length) { toast.error("Add a line"); return; }
     setBusy(true);
-    const payload = { supplier_id: supplier, store_id: po?.store_id || "store_main", expected_date: expected || null,
+    const payload = { discount: po?.discount || 0, tax: po?.tax || 0, shipping: po?.shipping || 0, additional_costs: po?.additional_costs || 0, notes: po?.notes || "", supplier_id: supplier, store_id: po?.store_id || "store_main", expected_date: expected || null,
       items: valid.map((l) => ({ product_id: l.product_id, name: products.find((p) => p.id === l.product_id)?.name, qty_ordered: Number(l.qty_ordered), unit_cost: Number(l.unit_cost) || 0 })) };
     try {
       if (isEdit) await api.put(`/purchase-orders/${po.id}`, payload); else await api.post("/purchase-orders", payload);
@@ -108,6 +114,7 @@ function POForm({ po, products, suppliers, onClose, onSaved }) {
     <Dialog open={true} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl">
         <DialogHeader><DialogTitle>{isEdit ? `Edit ${po.number}` : "New Purchase Order"}</DialogTitle></DialogHeader>
+        <p className="text-sm text-slate-500">Save your draft and use Resume in the purchase order list to continue later. Mark Sent when the order is ready.</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
           <label><span className="text-[11px] font-bold uppercase text-slate-500">Supplier</span>
             <Select value={supplier} onValueChange={setSupplier}><SelectTrigger className="mt-1" data-testid="po-supplier"><SelectValue placeholder="Select" /></SelectTrigger><SelectContent>{suppliers.map((s) => <SelectItem key={s.id} value={s.id}>{s.company}</SelectItem>)}</SelectContent></Select></label>
@@ -116,7 +123,7 @@ function POForm({ po, products, suppliers, onClose, onSaved }) {
         <div className="space-y-2 max-h-[40vh] overflow-y-auto">
           {lines.map((l, i) => (
             <div key={i} className="grid grid-cols-12 gap-2 items-center rounded-lg border border-slate-100 p-2 sm:border-0 sm:p-0">
-              <div className="col-span-12 sm:col-span-6"><Select value={l.product_id} onValueChange={(v) => pickProduct(i, v)}><SelectTrigger data-testid={`po-prod-${i}`}><SelectValue placeholder="Product" /></SelectTrigger><SelectContent>{[...products].sort(byProductName).map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent></Select></div>
+              <div className="col-span-12"><ProductSearchSelect products={sortedProducts} value={l.product_id} onChange={(v) => pickProduct(i, v)} testId={`po-prod-${i}`} /></div>
               <input className="col-span-4 sm:col-span-2 px-2 py-2 border rounded-lg text-sm" placeholder="Qty" type="number" value={l.qty_ordered} onChange={(e) => upd(i, "qty_ordered", e.target.value)} data-testid={`po-qty-${i}`} />
               <input className="col-span-6 sm:col-span-3 px-2 py-2 border rounded-lg text-sm" placeholder="Cost" type="number" value={l.unit_cost} onChange={(e) => upd(i, "unit_cost", e.target.value)} data-testid={`po-cost-${i}`} />
               <button className="col-span-2 sm:col-span-1 text-slate-400 hover:text-red-500" onClick={() => setLines((ls) => ls.filter((_, x) => x !== i))}><Trash2 className="w-4 h-4 mx-auto" /></button>
@@ -125,7 +132,7 @@ function POForm({ po, products, suppliers, onClose, onSaved }) {
           <button onClick={() => setLines((l) => [...l, { product_id: "", qty_ordered: "", unit_cost: "" }])} className="text-sm text-accent hover:underline">+ Add line</button>
         </div>
         <div className="text-right font-bold text-lg mt-2">Total: {peso(total)}</div>
-        <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={busy} data-testid="save-po" className="bg-primary hover:bg-teal-800">{isEdit ? "Save Changes" : "Create PO"}</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={busy} data-testid="save-po" className="bg-primary hover:bg-teal-800">{busy ? "Saving…" : "Save Draft"}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   );
