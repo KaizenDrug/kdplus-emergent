@@ -22,21 +22,25 @@ export default function ProductSearchSelect({ products, value, onChange, testId 
     <Popover open={open} onOpenChange={(next) => { setOpen(next); if (!next) setQuery(""); }}>
       <PopoverTrigger asChild>
         <button type="button" role="combobox" aria-expanded={open} data-testid={testId}
-          className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-left text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2">
-          <span className={selected ? "truncate" : "text-muted-foreground"}>
+          className="flex min-h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-left text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2">
+          <span className={selected ? "min-w-0 whitespace-normal break-words" : "text-muted-foreground"}>
             {selected ? `${selected.name}${selected.sku ? ` · ${selected.sku}` : ""}` : "Search and select product"}
           </span>
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-[min(28rem,calc(100vw-2rem))] p-0" align="start">
+      <PopoverContent
+        className="w-[min(36rem,calc(100vw-2rem))] overflow-hidden p-0"
+        align="start" side="bottom" collisionPadding={16}
+        style={{ maxHeight: "var(--radix-popover-content-available-height)" }}>
         <Command shouldFilter={false}>
           <CommandInput value={query} onValueChange={setQuery} placeholder="Name, generic, SKU, barcode…" data-testid={`${testId}-search`} />
-          <CommandList className="max-h-[min(55vh,24rem)]">
+          <CommandList className="overflow-y-auto overscroll-contain"
+            style={{ maxHeight: "max(0px, min(20rem, calc(var(--radix-popover-content-available-height) - 3.5rem)))" }}>
             {!matches.length && <div className="py-6 text-center text-sm text-slate-400">No products found.</div>}
             {!!matches.length && <CommandGroup>
               {matches.map((p) => (
-                <CommandItem key={p.id} value={p.id} onSelect={() => choose(p.id)} data-testid={`${testId}-option-${p.id}`}>
+                <CommandItem className="data-[selected=true]:bg-teal-50 data-[selected=true]:text-slate-900" key={p.id} value={p.id} onSelect={() => choose(p.id)} data-testid={`${testId}-option-${p.id}`}>
                   <Check className={`mr-2 h-4 w-4 ${value === p.id ? "opacity-100" : "opacity-0"}`} />
                   <div className="min-w-0 flex-1 whitespace-normal break-words py-0.5">
                     <div className="font-semibold leading-snug">{p.name}</div>

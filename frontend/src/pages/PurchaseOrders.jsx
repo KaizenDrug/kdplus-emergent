@@ -112,7 +112,7 @@ function POForm({ po, products, suppliers, onClose, onSaved }) {
 
   return (
     <Dialog open={true} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-3xl">
         <DialogHeader><DialogTitle>{isEdit ? `Edit ${po.number}` : "New Purchase Order"}</DialogTitle></DialogHeader>
         <p className="text-sm text-slate-500">Save your draft and use Resume in the purchase order list to continue later. Mark Sent when the order is ready.</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
