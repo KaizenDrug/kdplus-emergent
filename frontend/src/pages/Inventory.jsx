@@ -20,6 +20,10 @@ export default function Inventory() {
   const [products, setProducts] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [receive, setReceive] = useState(false);
+  const [receiveDraft, setReceiveDraft] = useState(null);
+  const [drafts, setDrafts] = useState([]);
+  const loadDrafts = useCallback(() => api.get(`/inventory/receive-drafts?store_id=${store}`).then((r) => setDrafts(r.data)).catch(() => setDrafts([])), [store]);
+  useEffect(() => { loadDrafts(); }, [loadDrafts]);
   const [adjust, setAdjust] = useState(false);
   const [search, setSearch] = useState("");
   const [levelSort, setLevelSort] = useState({ key: "name", direction: "asc" });
@@ -64,9 +68,17 @@ export default function Inventory() {
           <SelectContent>{ACTIVE_STORES.map((branch) => <SelectItem key={branch.id} value={branch.id}>{branch.name}</SelectItem>)}</SelectContent>
         </Select>
         <Button variant="outline" onClick={() => setAdjust(true)} data-testid="adjust-btn"><SlidersHorizontal className="w-4 h-4 mr-1" />Adjust</Button>
-        <Button onClick={() => setReceive(true)} data-testid="receive-btn" className="bg-primary hover:bg-teal-800"><PackagePlus className="w-4 h-4 mr-1" />Receive Stock</Button>
+        <Button onClick={() => { setReceiveDraft(null); setReceive(true); }} data-testid="receive-btn" className="bg-primary hover:bg-teal-800"><PackagePlus className="w-4 h-4 mr-1" />Receive Stock</Button>
       </PageHeader>
 
+      {drafts.length > 0 && <Card className="p-4 mb-4 space-y-2">
+        <h2 className="font-semibold">Saved stock receipts</h2>
+        {drafts.map((draft) => <div key={draft.id} className="flex flex-wrap items-center justify-between gap-2 border-t pt-2">
+          <div><span className="font-medium">{suppliers.find((s) => s.id === draft.supplier_id)?.company || "Supplier not selected"}</span>
+            <div className="text-sm text-slate-500">{draft.lines.length} line(s) · {fmtDate(draft.updated_at)}</div></div>
+          <Button variant="outline" onClick={() => { setReceiveDraft(draft); setReceive(true); }}>Resume</Button>
+        </div>)}
+      </Card>}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
         <StatCard label="Inventory Value" value={peso(totalValue)} icon={PackagePlus} tone="primary" />
         <StatCard label="Low Stock" value={low} icon={AlertTriangle} tone="warning" />
@@ -167,7 +179,7 @@ export default function Inventory() {
         <TabsContent value="movements"><LedgerTab store={store} products={products} search={search} /></TabsContent>
       </Tabs>
 
-      {receive && <ReceiveDialog store={store} suppliers={suppliers} products={products.filter((p) => (p.product_type || "REGULAR") === "REGULAR")} onClose={() => setReceive(false)} onSaved={() => { setReceive(false); loadLevels(); loadExpiry(); toast.success("Stock received"); }} />}
+      {receive && <ReceiveDialog draft={receiveDraft} onDraftSaved={() => { setReceive(false); loadDrafts(); }} store={store} suppliers={suppliers} products={products.filter((p) => (p.product_type || "REGULAR") === "REGULAR")} onClose={() => setReceive(false)} onSaved={() => { setReceive(false); loadDrafts(); loadLevels(); loadExpiry(); toast.success("Stock received"); }} />}
       {adjust && <AdjustDialog store={store} products={products.filter((p) => (p.product_type || "REGULAR") === "REGULAR")} levels={levels} initialProductId={typeof adjust === "string" ? adjust : ""}
         onClose={() => setAdjust(false)} onSaved={() => { setAdjust(false); loadLevels(); loadExpiry(); }} />}
     </div>
@@ -219,18 +231,28 @@ function LedgerTab({ store, products, search }) {
   );
 }
 
-function ReceiveDialog({ store, suppliers, products, onClose, onSaved }) {
-  const [lines, setLines] = useState([{ product_id: "", quantity: "", unit_cost: "", lot_number: "", expiry_date: "" }]);
-  const [supplierId, setSupplierId] = useState("");
+function ReceiveDialog({ store, suppliers, products, onClose, onSaved, draft, onDraftSaved }) {
+  const [draftId] = useState(() => draft?.id || crypto.randomUUID());
+  const [lines, setLines] = useState(draft?.lines || [{ product_id: "", quantity: "", unit_cost: "", lot_number: "", expiry_date: "" }]);
+  const [supplierId, setSupplierId] = useState(draft?.supplier_id || "");
   const [busy, setBusy] = useState(false);
   const upd = (i, k, v) => setLines((l) => l.map((x, idx) => idx === i ? { ...x, [k]: v } : x));
+  const saveDraft = async () => {
+    setBusy(true);
+    try {
+      await api.put(`/inventory/receive-drafts/${draftId}`, { store_id: store, supplier_id: supplierId, lines });
+      toast.success("Draft saved. Resume it from Saved stock receipts.");
+      onDraftSaved();
+    } catch (e) { toast.error("Could not save draft. Your entries are still open; please try again."); }
+    finally { setBusy(false); }
+  };
   const save = async () => {
     if (!supplierId) { toast.error("Select a supplier before receiving stock"); return; }
     const valid = lines.filter((l) => l.product_id && Number(l.quantity) > 0);
     if (!valid.length) { toast.error("Add at least one line"); return; }
     setBusy(true);
     try {
-      await api.post("/inventory/receive", { store_id: store, supplier_id: supplierId, reference: "Manual GRN", lines: valid.map((l) => ({ product_id: l.product_id, quantity: Number(l.quantity), unit_cost: Number(l.unit_cost) || 0, lot_number: l.lot_number, expiry_date: l.expiry_date || null })) });
+      await api.post("/inventory/receive", { draft_id: draftId, store_id: store, supplier_id: supplierId, reference: "Manual GRN", lines: valid.map((l) => ({ product_id: l.product_id, quantity: Number(l.quantity), unit_cost: Number(l.unit_cost) || 0, lot_number: l.lot_number, expiry_date: l.expiry_date || null })) });
       onSaved();
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); } finally { setBusy(false); }
   };
@@ -238,6 +260,7 @@ function ReceiveDialog({ store, suppliers, products, onClose, onSaved }) {
     <Dialog open={true} onOpenChange={onClose}>
       <DialogContent className="max-w-3xl">
         <DialogHeader><DialogTitle>Receive Stock (Goods Receiving)</DialogTitle></DialogHeader>
+        <p className="text-sm text-slate-500">Save a draft to continue later. Stock changes only when you click Receive.</p>
         <label className="block">
           <span className="text-[11px] font-bold uppercase text-slate-500">Supplier <span className="text-red-500">Required</span></span>
           <Select value={supplierId} onValueChange={setSupplierId}>
@@ -268,7 +291,7 @@ function ReceiveDialog({ store, suppliers, products, onClose, onSaved }) {
           ))}
           {supplierId && <button onClick={() => setLines((l) => [...l, { product_id: "", quantity: "", unit_cost: "", lot_number: "", expiry_date: "" }])} className="text-sm text-accent hover:underline" data-testid="recv-add-line">+ Add item</button>}
         </div>
-        <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={busy || !supplierId} data-testid="save-receive" className="bg-primary hover:bg-teal-800">{busy ? "Saving…" : "Receive"}</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" disabled={busy} onClick={onClose}>Cancel</Button><Button variant="outline" onClick={saveDraft} disabled={busy} data-testid="save-receive-draft">Save Draft</Button><Button onClick={save} disabled={busy || !supplierId} data-testid="save-receive" className="bg-primary hover:bg-teal-800">{busy ? "Saving…" : "Receive"}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   );

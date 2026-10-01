@@ -96,6 +96,40 @@ async def list_lots(product_id: Optional[str] = None, store_id: Optional[str] = 
     return lots
 
 
+# Drafts preserve incomplete input without changing inventory.
+class ReceiveDraftLine(BaseModel):
+    product_id: str = ""
+    quantity: str = ""
+    unit_cost: str = ""
+    lot_number: str = ""
+    expiry_date: str = ""
+
+class ReceiveDraftIn(BaseModel):
+    store_id: str
+    supplier_id: str = ""
+    lines: List[ReceiveDraftLine]
+
+@router.get("/inventory/receive-drafts")
+async def receive_drafts(store_id: str, principal=Depends(require_perm("inventory.receive"))):
+    return await db.receive_drafts.find(
+        {"org_id": ORG_ID, "store_id": store_id}, {"_id": 0}
+    ).sort("updated_at", -1).to_list(1000)
+
+@router.put("/inventory/receive-drafts/{draft_id}")
+async def save_receive_draft(draft_id: str, body: ReceiveDraftIn,
+                             principal=Depends(require_perm("inventory.receive"))):
+    doc = {**body.model_dump(), "updated_at": now_iso()}
+    await db.receive_drafts.update_one(
+        {"org_id": ORG_ID, "id": draft_id},
+        {"$set": doc, "$setOnInsert": {"created_at": now_iso()}}, upsert=True)
+    return {"id": draft_id, **doc}
+
+@router.delete("/inventory/receive-drafts/{draft_id}")
+async def delete_receive_draft(draft_id: str, principal=Depends(require_perm("inventory.receive"))):
+    await db.receive_drafts.delete_one({"org_id": ORG_ID, "id": draft_id})
+    return {"ok": True}
+
+
 # ---------------- Goods receiving (creates lots + movements + avg cost) ----------------
 class ReceiveLine(BaseModel):
     product_id: str
@@ -110,6 +144,7 @@ class ReceiveIn(BaseModel):
     supplier_id: Optional[str] = None
     reference: Optional[str] = ""            # e.g. PO number
     po_id: Optional[str] = None
+    draft_id: Optional[str] = None
     lines: List[ReceiveLine]
 
 @router.post("/inventory/receive")
@@ -141,6 +176,8 @@ async def receive_stock(body: ReceiveIn, principal=Depends(require_perm("invento
                               unit_cost=ln.unit_cost, lot_id=lot_id, reference=body.reference or number,
                               ref_id=body.po_id, principal=principal)
     await audit(principal, "goods.received", "receipt", number, after={"lines": len(body.lines)}, store_id=body.store_id)
+    if body.draft_id:
+        await db.receive_drafts.delete_one({"org_id": ORG_ID, "id": body.draft_id, "store_id": body.store_id})
     return {"number": number, "received": len(body.lines)}
 
 
