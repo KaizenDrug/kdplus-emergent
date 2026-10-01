@@ -1,4 +1,5 @@
 import { Capacitor, registerPlugin } from "@capacitor/core";
+import { toast } from "sonner";
 
 const BluetoothPrintIntent = registerPlugin("BluetoothPrintIntent");
 
@@ -143,7 +144,8 @@ export function parkedTicketHtml(ticket, settings = {}) {
 }
 
 function isAndroid() {
-  return typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent || "");
+  return Capacitor.getPlatform() === "android"
+    || (typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent || ""));
 }
 
 function androidBluetoothLink(html, openDrawer) {
@@ -152,10 +154,15 @@ function androidBluetoothLink(html, openDrawer) {
     + `&src='data:text/html,${encodeURIComponent(html)}'`;
 }
 
-function openAndroidBluetoothLink(url) {
+function openAndroidBluetoothLink(url, html) {
   if (Capacitor.isNativePlatform()) {
-    BluetoothPrintIntent.open({ url }).catch((error) => {
+    const request = html ? BluetoothPrintIntent.printHtml({ html }) : BluetoothPrintIntent.open({ url });
+    request.catch((error) => {
       console.error("Unable to open the Android Bluetooth printing app", error);
+      const message = /not implemented|unimplemented/i.test(error?.message || "")
+        ? "Update the KDPLUS APK to enable ESC POS PRINT. Rebuilding the website alone does not update the Android print bridge."
+        : (error?.message || "Could not open ESC POS PRINT. Check that it is installed and configured on this tablet.");
+      toast.error(message, { duration: 12000 });
     });
     return;
   }
@@ -164,10 +171,14 @@ function openAndroidBluetoothLink(url) {
 
 function printWithAndroidBluetoothService(sale, settings, refunds, openDrawer = false) {
   const html = receiptHtml(sale, settings, refunds);
-  openAndroidBluetoothLink(androidBluetoothLink(html, openDrawer));
+  openAndroidBluetoothLink(androidBluetoothLink(html, openDrawer), html);
 }
 
 function printHtmlInBrowser(html) {
+  if (Capacitor.getPlatform() === "android") {
+    toast.error("In Settings > Printing, select the Android Bluetooth printing option to use ESC POS PRINT in the KDPLUS app.", { duration: 12000 });
+    return;
+  }
   const frame = document.createElement("iframe");
   frame.setAttribute("aria-hidden", "true");
   frame.style.cssText = "position:fixed;left:-10000px;top:0;width:1px;height:1px;border:0";
@@ -190,7 +201,7 @@ export function printThermalTicket(ticket, settings = {}) {
   if (!ticket || !ticket.items?.length) return false;
   const html = parkedTicketHtml(ticket, settings);
   if (isAndroid() && settings.printing?.android_bluetooth_bridge !== false) {
-    openAndroidBluetoothLink(androidBluetoothLink(html, false));
+    openAndroidBluetoothLink(androidBluetoothLink(html, false), html);
   } else {
     printHtmlInBrowser(html);
   }
