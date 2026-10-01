@@ -236,7 +236,7 @@ function ReceiveDialog({ store, suppliers, products, onClose, onSaved }) {
   };
   return (
     <Dialog open={true} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-3xl">
         <DialogHeader><DialogTitle>Receive Stock (Goods Receiving)</DialogTitle></DialogHeader>
         <label className="block">
           <span className="text-[11px] font-bold uppercase text-slate-500">Supplier <span className="text-red-500">Required</span></span>
@@ -248,12 +248,22 @@ function ReceiveDialog({ store, suppliers, products, onClose, onSaved }) {
         {!supplierId && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">Select the supplier to start adding received items.</div>}
         <div className="space-y-2 max-h-[55vh] overflow-y-auto">
           {supplierId && lines.map((l, i) => (
-            <div key={i} className="grid grid-cols-12 gap-2 items-center rounded-lg border border-slate-100 p-2 sm:border-0 sm:p-0">
-              <div className="col-span-12 sm:col-span-4"><ProductSearchSelect products={products} value={l.product_id} onChange={(v) => upd(i, "product_id", v)} testId={`recv-prod-${i}`} /></div>
-              <input className="col-span-4 sm:col-span-2 px-2 py-2 border rounded-lg text-sm" placeholder="Qty" type="number" value={l.quantity} onChange={(e) => upd(i, "quantity", e.target.value)} data-testid={`recv-qty-${i}`} />
-              <input className="col-span-4 sm:col-span-2 px-2 py-2 border rounded-lg text-sm" placeholder="Cost" type="number" value={l.unit_cost} onChange={(e) => upd(i, "unit_cost", e.target.value)} />
-              <input className="col-span-4 sm:col-span-2 px-2 py-2 border rounded-lg text-sm" placeholder="Lot" value={l.lot_number} onChange={(e) => upd(i, "lot_number", e.target.value)} />
-              <input className="col-span-12 sm:col-span-2 px-2 py-2 border rounded-lg text-sm" type="date" value={l.expiry_date} onChange={(e) => upd(i, "expiry_date", e.target.value)} />
+            <div key={i} className="space-y-3 rounded-lg border border-slate-200 p-3">
+              <ProductSearchSelect products={products} value={l.product_id} onChange={(v) => upd(i, "product_id", v)} testId={`recv-prod-${i}`} />
+              <div className="grid grid-cols-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(190px,1.3fr)] gap-3 items-end">
+                <label className="min-w-0 text-xs font-semibold text-slate-500">Quantity
+                  <input className="mt-1 w-full min-w-0 px-2 py-2 border rounded-lg text-sm text-slate-900" placeholder="Qty" type="number" value={l.quantity} onChange={(e) => upd(i, "quantity", e.target.value)} data-testid={`recv-qty-${i}`} />
+                </label>
+                <label className="min-w-0 text-xs font-semibold text-slate-500">Unit cost
+                  <input className="mt-1 w-full min-w-0 px-2 py-2 border rounded-lg text-sm text-slate-900" placeholder="Cost" type="number" value={l.unit_cost} onChange={(e) => upd(i, "unit_cost", e.target.value)} />
+                </label>
+                <label className="col-span-2 sm:col-span-1 min-w-0 text-xs font-semibold text-slate-500">Batch / lot
+                  <input className="mt-1 w-full min-w-0 px-2 py-2 border rounded-lg text-sm text-slate-900" placeholder="Lot" value={l.lot_number} onChange={(e) => upd(i, "lot_number", e.target.value)} />
+                </label>
+                <label className="col-span-2 sm:col-span-1 min-w-0 text-xs font-semibold text-slate-500">Expiry date
+                  <input className="mt-1 w-full min-w-[190px] px-3 py-2 border rounded-lg text-base text-slate-900" type="date" value={l.expiry_date} onChange={(e) => upd(i, "expiry_date", e.target.value)} data-testid={`recv-expiry-${i}`} />
+                </label>
+              </div>
             </div>
           ))}
           {supplierId && <button onClick={() => setLines((l) => [...l, { product_id: "", quantity: "", unit_cost: "", lot_number: "", expiry_date: "" }])} className="text-sm text-accent hover:underline" data-testid="recv-add-line">+ Add item</button>}
