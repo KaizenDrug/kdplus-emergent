@@ -1,5 +1,6 @@
+import { InlineText, InlineNumber, InlineChoice } from "@/components/ProductInlineFields";
 import ColumnCustomizer from "@/components/ColumnCustomizer";
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import api, { peso, apiError } from "@/lib/api";
 import { PageHeader, Card, Empty } from "@/components/kit";
@@ -73,6 +74,9 @@ export default function Products() {
   const [searchParams] = useSearchParams();
   const urlQuery = searchParams.get("q") || "";
   const [products, setProducts] = useState([]);
+  const productsRef = useRef(products);
+  const productUpdates = useRef({});
+  useEffect(() => { productsRef.current = products; }, [products]);
   const [categories, setCategories] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [store, setStore] = useState("store_main");
@@ -113,27 +117,56 @@ export default function Products() {
     } finally { setDeleteBusy(false); }
   };
   const levelByProduct = useMemo(() => Object.fromEntries(levels.map((level) => [level.product_id, level])), [levels]);
+  const canEditProducts = (user?.permissions || []).includes("*");
+  const canEditStock = (user?.permissions || []).some((permission) => ["*", "inventory.adjust"].includes(permission));
+  // Product PUT expects a full body. Serialize changes to each row and use the
+  // latest saved product so rapid edits to different cells cannot undo each other.
+  const updateProductFields = (product, changes, label) => {
+    const previous = productUpdates.current[product.id] || Promise.resolve();
+    const next = previous.catch(() => {}).then(async () => {
+      try {
+        const current = productsRef.current.find((item) => item.id === product.id) || product;
+        const { data } = await api.put(`/products/${product.id}`, { ...current, ...changes });
+        productsRef.current = productsRef.current.map((item) => item.id === product.id ? data : item);
+        setProducts(productsRef.current);
+        toast.success(`${label} updated`);
+      } catch (e) {
+        toast.error(apiError(e.response?.data?.detail || e.message) || "Update failed");
+        throw e;
+      }
+    });
+    productUpdates.current[product.id] = next;
+    const cleanup = () => { if (productUpdates.current[product.id] === next) delete productUpdates.current[product.id]; };
+    next.then(cleanup, cleanup);
+    return next;
+  };
+  const updateTextField = (product, field, value) => {
+    const text = value.trim();
+    if (["name", "sku"].includes(field) && !text) {
+      toast.error(`${PRODUCT_COLUMNS[field].label} cannot be blank`);
+      return Promise.reject(new Error("Required field"));
+    }
+    return updateProductFields(product, { [field]: text }, PRODUCT_COLUMNS[field].label);
+  };
   const updateProductValue = async (product, field, value) => {
+    if (String(value).trim() === "") {
+      toast.error("Enter an amount. Use 0 to set it to zero.");
+      throw new Error("Missing amount");
+    }
     const amount = Number(value);
-    if (!Number.isFinite(amount) || amount < 0) {
-      toast.error("Enter a valid amount of zero or more");
+    const wholeNumber = ["reorder_level", "reorder_qty"].includes(field);
+    if (!Number.isFinite(amount) || amount < 0 || (wholeNumber && !Number.isInteger(amount))) {
+      toast.error(wholeNumber ? "Enter a whole number of zero or more" : "Enter a valid amount of zero or more");
       throw new Error("Invalid amount");
     }
     const body = field === "cost"
-      ? { ...product, acquisition_cost: amount, average_cost: amount, latest_cost: amount }
-      : { ...product, price: amount };
-    try {
-      const { data } = await api.put(`/products/${product.id}`, body);
-      setProducts((items) => items.map((item) => item.id === product.id ? data : item));
-      toast.success(`${product.name} ${field === "cost" ? "cost" : "price"} updated`);
-    } catch (e) {
-      toast.error(apiError(e.response?.data?.detail || e.message) || "Update failed");
-      throw e;
-    }
+      ? { acquisition_cost: amount, average_cost: amount, latest_cost: amount }
+      : { [field]: amount };
+    return updateProductFields(product, body, PRODUCT_COLUMNS[field].label);
   };
   const updateStockOnHand = async (product, value) => {
     const quantity = Number(value);
-    if (!Number.isFinite(quantity) || quantity < 0 || !Number.isInteger(quantity)) {
+    if (String(value).trim() === "" || !Number.isFinite(quantity) || quantity < 0 || !Number.isInteger(quantity)) {
       toast.error("Stock on hand must be a whole number of zero or more");
       throw new Error("Invalid stock quantity");
     }
@@ -152,13 +185,7 @@ export default function Products() {
   const updateProductCategory = async (product, selected) => {
     const categoryId = selected === "uncategorized" ? null : selected;
     if ((product.category_id || null) === categoryId) return;
-    try {
-      const { data } = await api.put(`/products/${product.id}`, { ...product, category_id: categoryId });
-      setProducts((items) => items.map((item) => item.id === product.id ? data : item));
-      toast.success(`${product.name} category updated`);
-    } catch (e) {
-      toast.error(apiError(e.response?.data?.detail || e.message) || "Category update failed");
-    }
+    try { await updateProductFields(product, { category_id: categoryId }, "Category"); } catch {}
   };
 
   const catName = (id) => categories.find((c) => c.id === id)?.name || "—";
@@ -234,6 +261,7 @@ export default function Products() {
       </Card>
 
       <Card className="overflow-hidden">
+        {canEditProducts && <p className="px-4 py-2 text-xs text-slate-500 border-b border-slate-100">Edit fields directly. Press Enter or leave a field to save. Press Escape to cancel.</p>}
         <div className="overflow-x-auto">
           <table className="w-full text-sm" style={{ minWidth: Math.max(480, visibleColumns.length * 145) }}>
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
@@ -245,11 +273,12 @@ export default function Products() {
                 <tr key={p.id} className="border-t border-slate-100 hover:bg-slate-50" data-testid={`product-row-${p.id}`}>
                   {visibleColumns.map((key) => {
                     if (key === "name") return (<td key={key} className="px-4 py-2.5">
-                    <div className="font-semibold text-slate-800 flex items-center gap-2">{p.name}{p.product_type === "PROMO" && <span className="text-[10px] rounded-full bg-fuchsia-100 text-fuchsia-700 px-2 py-0.5">PROMO</span>}</div>
+                    <InlineText value={p.name} multiline disabled={!canEditProducts} label={`Product name for ${p.sku}`} testId={`inline-name-${p.id}`} onSave={(value) => updateTextField(p, "name", value)} />
+                    {p.product_type === "PROMO" && <span className="text-[10px] rounded-full bg-fuchsia-100 text-fuchsia-700 px-2 py-0.5">PROMO</span>}
                   </td>);
                     if (key === "category") return (<td key={key} className="px-4 py-2.5 text-slate-600">
                     <Select value={p.category_id || "uncategorized"} onValueChange={(value) => updateProductCategory(p, value)}>
-                      <SelectTrigger className="h-9 min-w-44 bg-white" data-testid={`inline-category-${p.id}`} aria-label={`Category for ${p.name}`}>
+                      <SelectTrigger disabled={!canEditProducts} className="h-9 min-w-44 bg-white" data-testid={`inline-category-${p.id}`} aria-label={`Category for ${p.name}`}>
                         <SelectValue placeholder="Select category" />
                       </SelectTrigger>
                       <SelectContent>
@@ -258,16 +287,25 @@ export default function Products() {
                       </SelectContent>
                     </Select>
                   </td>);
-                    if (key === "price") return (<td key={key} className="px-4 py-2.5 text-right"><InlineNumber value={p.price} currency testId={`inline-price-${p.id}`} onSave={(value) => updateProductValue(p, "price", value)} /></td>);
-                    if (key === "cost") return (<td key={key} className="px-4 py-2.5 text-right"><InlineNumber value={p.average_cost} currency disabled={p.product_type === "PROMO"} testId={`inline-cost-${p.id}`} onSave={(value) => updateProductValue(p, "cost", value)} /></td>);
+                    if (key === "price") return (<td key={key} className="px-4 py-2.5 text-right"><InlineNumber value={p.price} currency disabled={!canEditProducts} testId={`inline-price-${p.id}`} onSave={(value) => updateProductValue(p, "price", value)} /></td>);
+                    if (key === "cost") return (<td key={key} className="px-4 py-2.5 text-right"><InlineNumber value={p.average_cost} currency disabled={!canEditProducts || p.product_type === "PROMO"} testId={`inline-cost-${p.id}`} onSave={(value) => updateProductValue(p, "cost", value)} /></td>);
                     if (key === "margin") return (<td key={key} className="px-4 py-2.5 text-right text-slate-500">{p.margin_pct}%</td>);
                     if (key === "stock") return (<td key={key} className="px-4 py-2.5 text-right">
-                    <InlineNumber value={levelByProduct[p.id]?.quantity || 0} wholeNumber disabled={p.product_type === "PROMO" || p.track_inventory === false}
+                    <InlineNumber value={levelByProduct[p.id]?.quantity || 0} wholeNumber disabled={!canEditStock || p.product_type === "PROMO" || p.track_inventory === false}
                       testId={`inline-stock-${p.id}`} onSave={(value) => updateStockOnHand(p, value)} />
                     {levelByProduct[p.id]?.status === "LOW" && <div className="text-[11px] font-semibold text-amber-600">Low stock</div>}
                     {levelByProduct[p.id]?.status === "OUT" && <div className="text-[11px] font-semibold text-red-600">Out of stock</div>}
                     {p.product_type === "PROMO" && <div className="text-[10px] text-fuchsia-600">From components</div>}
                   </td>);
+                    if (["sku", "barcode", "generic_name", "brand", "strength", "dosage_form", "pack_size", "shelf_code"].includes(key)) return <td key={key} className="px-4 py-2.5"><InlineText value={p[key]} disabled={!canEditProducts} label={`${PRODUCT_COLUMNS[key].label} for ${p.name}`} testId={`inline-${key}-${p.id}`} onSave={(value) => updateTextField(p, key, value)} /></td>;
+                    if (["reorder_level", "reorder_qty", "latest_cost"].includes(key)) return <td key={key} className="px-4 py-2.5 text-right"><InlineNumber value={p[key]} wholeNumber={key !== "latest_cost"} currency={key === "latest_cost"} disabled={!canEditProducts || p.product_type === "PROMO"} testId={`inline-${key}-${p.id}`} onSave={(value) => updateProductValue(p, key, value)} /></td>;
+                    if (["supplier", "rx_classification", "tax_mode"].includes(key)) {
+                      const field = key === "supplier" ? "supplier_id" : key;
+                      const options = key === "supplier" ? [["none", "No supplier"], ...suppliers.map((s) => [s.id, s.company])] : key === "tax_mode" ? [["VAT", "VATable (12%)"], ["EXEMPT", "VAT-Exempt"], ["ZERO", "Zero-Rated"]] : [["OTC", "OTC"], ["RX", "Prescription (RX)"]];
+                      return <td key={key} className="px-4 py-2.5"><InlineChoice value={p[field] || (key === "supplier" ? "none" : options[0][0])} options={options} disabled={!canEditProducts} label={`${PRODUCT_COLUMNS[key].label} for ${p.name}`} testId={`inline-${key}-${p.id}`} onSave={(value) => updateProductFields(p, { [field]: value === "none" ? null : value }, PRODUCT_COLUMNS[key].label)} /></td>;
+                    }
+                    if (["track_inventory", "track_lots", "track_expiry", "discount_eligible"].includes(key)) return <td key={key} className="px-4 py-2.5"><InlineChoice value={p[key] ? "true" : "false"} options={[["true", "Yes"], ["false", "No"]]} disabled={!canEditProducts || (p.product_type === "PROMO" && key !== "discount_eligible")} label={`${PRODUCT_COLUMNS[key].label} for ${p.name}`} testId={`inline-${key}-${p.id}`} onSave={(value) => updateProductFields(p, { [key]: value === "true" }, PRODUCT_COLUMNS[key].label)} /></td>;
+                    if (key === "product_type") return <td key={key} className="px-4 py-2.5"><button type="button" disabled={!canEditProducts} onClick={() => setEditing(p)} className="text-primary underline disabled:text-slate-600 disabled:no-underline" title="Configure product type and included products">{p.product_type === "PROMO" ? "Promotional SKU" : "Regular"}</button></td>;
                     let value = p[key];
                     if (key === "supplier") value = suppliers.find((s) => s.id === p.supplier_id)?.company;
                     if (key === "stock_value") value = peso(levelByProduct[p.id]?.stock_value || 0);
@@ -312,37 +350,6 @@ export default function Products() {
           </DialogContent>
         </Dialog>
       )}
-    </div>
-  );
-}
-
-function InlineNumber({ value, onSave, currency = false, disabled = false, wholeNumber = false, testId }) {
-  const [draft, setDraft] = useState(String(Number(value || 0)));
-  const [saving, setSaving] = useState(false);
-  useEffect(() => { if (!saving) setDraft(String(Number(value || 0))); }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const commit = async () => {
-    if (disabled || saving) return;
-    const numeric = Number(draft);
-    if (Number.isFinite(numeric) && numeric === Number(value || 0)) return;
-    setSaving(true);
-    try { await onSave(draft); }
-    catch { setDraft(String(Number(value || 0))); }
-    finally { setSaving(false); }
-  };
-
-  return (
-    <div className={`relative ml-auto inline-flex w-28 items-center border-b ${disabled ? "border-transparent text-slate-400" : "border-slate-300 focus-within:border-primary"}`}>
-      {currency && <span className="pl-1 text-sm">₱</span>}
-      <input type="number" min="0" step={wholeNumber ? "1" : "0.01"} inputMode={wholeNumber ? "numeric" : "decimal"} value={draft} disabled={disabled || saving}
-        onChange={(e) => setDraft(e.target.value)} onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") e.currentTarget.blur();
-          if (e.key === "Escape") { setDraft(String(Number(value || 0))); e.currentTarget.blur(); }
-        }}
-        aria-label={testId} data-testid={testId}
-        className="w-full bg-transparent px-1 py-1 text-right text-sm font-medium outline-none disabled:cursor-default" />
-      {saving && <Loader2 className="absolute -right-5 h-3.5 w-3.5 animate-spin text-primary" />}
     </div>
   );
 }
