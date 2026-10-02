@@ -1,3 +1,4 @@
+import ColumnCustomizer from "@/components/ColumnCustomizer";
 import React, { useEffect, useState, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import api, { peso, apiError } from "@/lib/api";
@@ -5,7 +6,7 @@ import { PageHeader, Card, Empty } from "@/components/kit";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Plus, Search, Pencil, Upload, FileDown, Tags, Trash2, Loader2 } from "lucide-react";
+import { Plus, Search, Pencil, Upload, FileDown, Tags, Trash2, Loader2, SlidersHorizontal } from "lucide-react";
 import { toast } from "sonner";
 import { matchesSearchTerms } from "@/lib/utils";
 import { sortTableRows } from "@/lib/utils";
@@ -22,8 +23,53 @@ const empty = {
   product_type: "REGULAR", components: [],
 };
 
+const PRODUCT_COLUMNS = Object.fromEntries([
+  ["name", "Product"], ["sku", "SKU"], ["barcode", "Barcode"],
+  ["category", "Category"], ["price", "Price", true], ["cost", "Cost", true],
+  ["margin", "Margin", true], ["stock", "In Stock", true],
+  ["stock_value", "Inventory Value", true], ["generic_name", "Generic Name"],
+  ["brand", "Brand"], ["strength", "Strength"], ["dosage_form", "Dosage Form"],
+  ["pack_size", "Pack Size"], ["rx_classification", "RX Class"], ["tax_mode", "Tax Mode"],
+  ["shelf_code", "Shelf Location"], ["supplier", "Supplier"],
+  ["reorder_level", "Reorder Level", true], ["reorder_qty", "Reorder Quantity", true],
+  ["latest_cost", "Last Cost", true], ["product_type", "Product Type"],
+  ["track_inventory", "Track Inventory"], ["track_lots", "Track Lots"],
+  ["track_expiry", "Track Expiry"], ["discount_eligible", "Discount Eligible"],
+].map(([key, label, numeric]) => [key, { label, numeric }]));
+const DEFAULT_PRODUCT_COLUMNS = ["name", "category", "price", "cost", "margin", "stock"];
+const COST_COLUMNS = ["cost", "margin", "stock_value", "latest_cost"];
+function normalizeProductColumns(value) {
+  const valid = Array.isArray(value) ? [...new Set(value.filter((key) => PRODUCT_COLUMNS[key]))] : DEFAULT_PRODUCT_COLUMNS;
+  return valid.includes("name") ? valid : ["name", ...valid];
+}
+
 export default function Products() {
   const { user } = useAuth();
+  const [columnsOpen, setColumnsOpen] = useState(false);
+  const [columns, setColumns] = useState(DEFAULT_PRODUCT_COLUMNS);
+  const [defaultColumns, setDefaultColumns] = useState(DEFAULT_PRODUCT_COLUMNS);
+  const admin = ["owner", "admin"].includes(user?.role);
+  const canViewCost = (user?.permissions || []).some((p) => ["*", "reports.view"].includes(p));
+  const allowedColumn = (key) => canViewCost || !COST_COLUMNS.includes(key);
+  const visibleColumns = columns.filter(allowedColumn);
+  const preferenceKey = `kdplus-product-columns:${user?.kind || "user"}:${user?.id}`;
+  useEffect(() => {
+    let personal;
+    try { personal = JSON.parse(localStorage.getItem(preferenceKey)); } catch {}
+    let cancelled = false;
+    api.get("/settings").then(({ data }) => {
+      if (cancelled) return;
+      const defaults = normalizeProductColumns(data.product_columns || DEFAULT_PRODUCT_COLUMNS);
+      setDefaultColumns(defaults);
+      setColumns(normalizeProductColumns(personal || defaults));
+    }).catch(() => { if (!cancelled) setColumns(normalizeProductColumns(personal || DEFAULT_PRODUCT_COLUMNS)); });
+    return () => { cancelled = true; };
+  }, [preferenceKey]);
+  const saveColumns = (next) => {
+    setColumns(next);
+    try { localStorage.setItem(preferenceKey, JSON.stringify(next)); } catch {}
+    setColumnsOpen(false);
+  };
   const [searchParams] = useSearchParams();
   const urlQuery = searchParams.get("q") || "";
   const [products, setProducts] = useState([]);
@@ -152,11 +198,15 @@ export default function Products() {
     price: (p) => Number(p.price || 0),
     margin: (p) => Number(p.margin_pct || 0),
     stock: (p) => Number(levelByProduct[p.id]?.quantity || 0),
-  }), [filtered, sort, categories, levelByProduct]); // eslint-disable-line react-hooks/exhaustive-deps
+    stock_value: (p) => Number(levelByProduct[p.id]?.stock_value || 0),
+    supplier: (p) => suppliers.find((s) => s.id === p.supplier_id)?.company || "",
+    latest_cost: (p) => Number(p.latest_cost || 0),
+  }), [filtered, sort, categories, suppliers, levelByProduct]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div>
       <PageHeader title="Products" subtitle={`${products.length} items in catalog`}>
+        <Button variant="outline" onClick={() => setColumnsOpen(true)} data-testid="product-customize-columns"><SlidersHorizontal className="w-4 h-4 mr-1" />Customize Columns</Button>
         <Button variant="outline" onClick={() => setCatOpen(true)} data-testid="manage-categories-btn"><Tags className="w-4 h-4 mr-1" />Categories</Button>
         <Button variant="outline" onClick={exportProducts} data-testid="export-products-btn"><FileDown className="w-4 h-4 mr-1" />Export Products</Button>
         <Button variant="outline" onClick={() => setImportOpen(true)} data-testid="import-csv-btn"><Upload className="w-4 h-4 mr-1" />Import CSV</Button>
@@ -185,24 +235,19 @@ export default function Products() {
 
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[980px] text-sm">
+          <table className="w-full text-sm" style={{ minWidth: Math.max(480, visibleColumns.length * 145) }}>
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-              <tr><SortableHeader column="name" label="Product" sort={sort} onSort={setSort} />
-                <SortableHeader column="category" label="Category" sort={sort} onSort={setSort} />
-                <SortableHeader column="price" label="Price" sort={sort} onSort={setSort} numeric />
-                <SortableHeader column="cost" label="Cost" sort={sort} onSort={setSort} numeric />
-                <SortableHeader column="margin" label="Margin" sort={sort} onSort={setSort} numeric />
-                <SortableHeader column="stock" label="In Stock" sort={sort} onSort={setSort} numeric />
+              <tr>{visibleColumns.map((key) => <SortableHeader key={key} column={key} label={PRODUCT_COLUMNS[key].label} sort={sort} onSort={setSort} numeric={PRODUCT_COLUMNS[key].numeric} />)}
                 <th className="px-4 py-3"></th></tr>
             </thead>
             <tbody>
               {sortedProducts.map((p) => (
                 <tr key={p.id} className="border-t border-slate-100 hover:bg-slate-50" data-testid={`product-row-${p.id}`}>
-                  <td className="px-4 py-2.5">
+                  {visibleColumns.map((key) => {
+                    if (key === "name") return (<td key={key} className="px-4 py-2.5">
                     <div className="font-semibold text-slate-800 flex items-center gap-2">{p.name}{p.product_type === "PROMO" && <span className="text-[10px] rounded-full bg-fuchsia-100 text-fuchsia-700 px-2 py-0.5">PROMO</span>}</div>
-                    <div className="text-xs text-slate-400">{p.generic_name} · {p.sku} · {p.shelf_code} · {p.rx_classification}</div>
-                  </td>
-                  <td className="px-4 py-2.5 text-slate-600">
+                  </td>);
+                    if (key === "category") return (<td key={key} className="px-4 py-2.5 text-slate-600">
                     <Select value={p.category_id || "uncategorized"} onValueChange={(value) => updateProductCategory(p, value)}>
                       <SelectTrigger className="h-9 min-w-44 bg-white" data-testid={`inline-category-${p.id}`} aria-label={`Category for ${p.name}`}>
                         <SelectValue placeholder="Select category" />
@@ -212,17 +257,25 @@ export default function Products() {
                         {categories.map((category) => <SelectItem key={category.id} value={category.id}>{category.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
-                  </td>
-                  <td className="px-4 py-2.5 text-right"><InlineNumber value={p.price} currency testId={`inline-price-${p.id}`} onSave={(value) => updateProductValue(p, "price", value)} /></td>
-                  <td className="px-4 py-2.5 text-right"><InlineNumber value={p.average_cost} currency disabled={p.product_type === "PROMO"} testId={`inline-cost-${p.id}`} onSave={(value) => updateProductValue(p, "cost", value)} /></td>
-                  <td className="px-4 py-2.5 text-right text-slate-500">{p.margin_pct}%</td>
-                  <td className="px-4 py-2.5 text-right">
+                  </td>);
+                    if (key === "price") return (<td key={key} className="px-4 py-2.5 text-right"><InlineNumber value={p.price} currency testId={`inline-price-${p.id}`} onSave={(value) => updateProductValue(p, "price", value)} /></td>);
+                    if (key === "cost") return (<td key={key} className="px-4 py-2.5 text-right"><InlineNumber value={p.average_cost} currency disabled={p.product_type === "PROMO"} testId={`inline-cost-${p.id}`} onSave={(value) => updateProductValue(p, "cost", value)} /></td>);
+                    if (key === "margin") return (<td key={key} className="px-4 py-2.5 text-right text-slate-500">{p.margin_pct}%</td>);
+                    if (key === "stock") return (<td key={key} className="px-4 py-2.5 text-right">
                     <InlineNumber value={levelByProduct[p.id]?.quantity || 0} wholeNumber disabled={p.product_type === "PROMO" || p.track_inventory === false}
                       testId={`inline-stock-${p.id}`} onSave={(value) => updateStockOnHand(p, value)} />
                     {levelByProduct[p.id]?.status === "LOW" && <div className="text-[11px] font-semibold text-amber-600">Low stock</div>}
                     {levelByProduct[p.id]?.status === "OUT" && <div className="text-[11px] font-semibold text-red-600">Out of stock</div>}
                     {p.product_type === "PROMO" && <div className="text-[10px] text-fuchsia-600">From components</div>}
-                  </td>
+                  </td>);
+                    let value = p[key];
+                    if (key === "supplier") value = suppliers.find((s) => s.id === p.supplier_id)?.company;
+                    if (key === "stock_value") value = peso(levelByProduct[p.id]?.stock_value || 0);
+                    if (key === "latest_cost") value = peso(p.latest_cost || 0);
+                    if (key === "product_type") value = p.product_type === "PROMO" ? "Promotional SKU" : "Regular";
+                    if (["track_inventory", "track_lots", "track_expiry", "discount_eligible"].includes(key)) value = value ? "Yes" : "No";
+                    return <td key={key} className={`px-4 py-2.5 ${PRODUCT_COLUMNS[key].numeric ? "text-right" : ""}`}>{value ?? "—"}</td>;
+                  })}
                   <td className="px-4 py-2.5 text-right">
                     <div className="inline-flex items-center gap-1">
                       <button onClick={() => setEditing(p)} aria-label={`Edit ${p.name}`} data-testid={`edit-product-${p.id}`} className="text-primary hover:bg-primary/10 p-1.5 rounded"><Pencil className="w-4 h-4" /></button>
@@ -237,6 +290,10 @@ export default function Products() {
         {!filtered.length && <Empty text="No products match your search." />}
       </Card>
 
+      {columnsOpen && <ColumnCustomizer columns={columns} defaults={defaultColumns} admin={admin}
+        definitions={PRODUCT_COLUMNS} normalize={normalizeProductColumns} allowed={allowedColumn}
+        settingKey="product_columns" viewName="products" onClose={() => setColumnsOpen(false)}
+        onSave={saveColumns} onDefaultSaved={setDefaultColumns} />}
       {editing && <ProductDialog product={editing} products={products} categories={categories} suppliers={suppliers} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
       {importOpen && <ImportDialog onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); load(); }} />}
       {catOpen && <CategoryDialog products={products} onClose={() => setCatOpen(false)} onChanged={loadCats} />}

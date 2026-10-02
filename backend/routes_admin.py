@@ -110,6 +110,7 @@ async def get_settings(principal=Depends(get_current_principal)):
 
 class SettingsIn(BaseModel):
     inventory_columns: Optional[list[str]] = None
+    product_columns: Optional[list[str]] = None
     business: Optional[dict] = None
     printing: Optional[dict] = None
     tax: Optional[dict] = None
