@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime, timedelta
 
@@ -89,11 +89,64 @@ async def list_lots(product_id: Optional[str] = None, store_id: Optional[str] = 
         q["store_id"] = store_id
     if status:
         q["status"] = status
-    lots = await db.inventory_lots.find(q, {"_id": 0}).to_list(2000)
-    pmap = {p["id"]: p for p in await db.products.find({"org_id": ORG_ID}, {"_id": 0, "id": 1, "name": 1, "sku": 1}).to_list(3000)}
-    for l in lots:
-        l["product_name"] = pmap.get(l["product_id"], {}).get("name")
-    return lots
+    products = await db.products.find({"org_id": ORG_ID, "active": True}, {"_id": 0}).to_list(10000)
+    pmap = {p["id"]: p for p in products}
+    q["product_id"] = product_id if product_id in pmap else {"$in": list(pmap)}
+    if product_id and product_id not in pmap:
+        return []
+    q["quantity"] = {"$gt": 0}
+    levels_q = {"org_id": ORG_ID}
+    if store_id:
+        levels_q["store_id"] = store_id
+    levels = await db.inventory_levels.find(levels_q, {"_id": 0}).to_list(20000)
+    positive = {(l["store_id"], l["product_id"]) for l in levels if float(l.get("quantity", 0)) > 0}
+    lots = await db.inventory_lots.find(q, {"_id": 0}).to_list(20000)
+    return [{**l, "product_name": pmap[l["product_id"]]["name"], "sku": pmap[l["product_id"]].get("sku")}
+            for l in lots if (l["store_id"], l["product_id"]) in positive]
+
+
+class LotEditIn(BaseModel):
+    lot_number: str
+    expiry_date: Optional[str] = None
+    quantity: int = Field(ge=0)
+
+
+@router.put("/inventory/lots/{lot_id}")
+async def edit_lot(lot_id: str, body: LotEditIn, principal=Depends(get_current_principal)):
+    if principal.get("role") not in ("owner", "admin"):
+        raise HTTPException(status_code=403, detail="Only Owner/Admin can edit batches and expiry dates")
+    if body.expiry_date:
+        try:
+            datetime.strptime(body.expiry_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Expiry date must be YYYY-MM-DD")
+    if not body.lot_number.strip():
+        raise HTTPException(status_code=422, detail="Batch number is required")
+    lot = await db.inventory_lots.find_one({"id": lot_id, "org_id": ORG_ID}, {"_id": 0})
+    if not lot or lot.get("status") != "ACTIVE":
+        raise HTTPException(status_code=404, detail="Active lot not found")
+    product = await db.products.find_one({"id": lot["product_id"], "org_id": ORG_ID, "active": True})
+    if not product:
+        raise HTTPException(status_code=409, detail="Product is inactive or missing")
+    change = D(body.quantity) - D(lot["quantity"])
+    level = await get_level(lot["store_id"], lot["product_id"])
+    if D(level) + change < 0:
+        raise HTTPException(status_code=409, detail="Lot correction would make stock negative")
+    updates = {"lot_number": body.lot_number.strip(), "expiry_date": body.expiry_date or None,
+               "quantity": body.quantity, "updated_at": now_iso()}
+    # Compare the original lot so a concurrent sale cannot be overwritten silently.
+    result = await db.inventory_lots.update_one(
+        {"org_id": ORG_ID, "id": lot_id, "quantity": lot["quantity"],
+         "lot_number": lot.get("lot_number"), "expiry_date": lot.get("expiry_date")}, {"$set": updates})
+    if result.matched_count != 1:
+        raise HTTPException(status_code=409, detail="Batch changed. Refresh and try again")
+    if change:
+        await record_movement(lot["store_id"], lot["product_id"], "ADJUSTMENT", m(change),
+                              lot.get("unit_cost", 0), lot_id=lot_id, reference="LOT_CORRECTION",
+                              principal=principal, note="Owner/Admin batch quantity correction")
+    await audit(principal, "inventory.lot.updated", "inventory_lot", lot_id,
+                before={k: lot.get(k) for k in updates}, after=updates, store_id=lot["store_id"])
+    return {**lot, **updates}
 
 
 # Drafts preserve incomplete input without changing inventory.
@@ -303,11 +356,8 @@ async def adjustment_reasons(principal=Depends(get_current_principal)):
 # ---------------- Expiry monitoring ----------------
 @router.get("/inventory/expiry")
 async def expiry_report(store_id: Optional[str] = None, principal=Depends(get_current_principal)):
-    q = {"org_id": ORG_ID, "status": "ACTIVE", "quantity": {"$gt": 0}, "expiry_date": {"$ne": None}}
-    if store_id:
-        q["store_id"] = store_id
-    lots = await db.inventory_lots.find(q, {"_id": 0}).to_list(5000)
-    pmap = {p["id"]: p for p in await db.products.find({"org_id": ORG_ID}, {"_id": 0}).to_list(3000)}
+    lots = await list_lots(store_id=store_id, product_id=None, status="ACTIVE", principal=principal)
+    pmap = {p["id"]: p for p in await db.products.find({"org_id": ORG_ID, "active": True}, {"_id": 0}).to_list(10000)}
     today = datetime.now(MANILA).date()
     buckets = {"EXPIRED": [], "0-30": [], "31-60": [], "61-90": [], "91-180": []}
     out = []

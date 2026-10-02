@@ -42,7 +42,7 @@ export default function Products() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [sort, setSort] = useState({ key: "name", direction: "asc" });
 
-  const load = () => api.get("/products?limit=10000").then((r) => setProducts(r.data));
+  const load = () => api.get("/products?limit=10000&active=true").then((r) => setProducts(r.data));
   const loadCats = () => api.get("/categories").then((r) => setCategories(r.data));
   const loadLevels = () => api.get(`/inventory/levels?store_id=${store}`).then((r) => setLevels(r.data));
   useEffect(() => {
@@ -469,7 +469,7 @@ function ProductDialog({ product, products, categories, suppliers, onClose, onSa
     try {
       const promo = f.product_type === "PROMO";
       const enteredCost = Number(manualCost) || 0;
-      const body = { ...f,
+      const body = { ...f, auto_sku: isNew && (!f.sku || f.sku === product.sku),
         acquisition_cost: costEdited ? enteredCost : Number(f.acquisition_cost) || 0,
         average_cost: costEdited ? enteredCost : Number(f.average_cost) || Number(f.acquisition_cost) || 0,
         latest_cost: costEdited ? enteredCost : Number(f.latest_cost) || Number(f.average_cost) || Number(f.acquisition_cost) || 0,

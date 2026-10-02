@@ -37,9 +37,9 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
         <StatCard label="Items Sold" value={num(k.items_sold)} icon={ShoppingBag} tone="accent" />
-        <Link to="/inventory"><StatCard label="Low Stock" value={num(k.low_stock)} sub="Reorder needed" icon={AlertTriangle} tone="warning" /></Link>
-        <Link to="/inventory"><StatCard label="Out of Stock" value={num(k.out_stock)} icon={PackageX} tone="critical" /></Link>
-        <Link to="/inventory"><StatCard label="Expiring ≤90d / Expired" value={`${num(k.expiring)} / ${num(k.expired)}`} icon={CalendarClock} tone="critical" /></Link>
+        <Link to="/inventory?filter=low"><StatCard label="Low Stock" value={num(k.low_stock)} sub="Reorder needed" icon={AlertTriangle} tone="warning" /></Link>
+        <Link to="/inventory?filter=out"><StatCard label="Out of Stock" value={num(k.out_stock)} icon={PackageX} tone="critical" /></Link>
+        <div className="space-y-2"><Link className="block" to="/inventory?filter=expiring"><StatCard label="Expiring ≤90d" value={num(k.expiring)} icon={CalendarClock} tone="warning" /></Link><Link className="block" to="/inventory?filter=expired"><StatCard label="Expired" value={num(k.expired)} icon={CalendarClock} tone="critical" /></Link></div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">

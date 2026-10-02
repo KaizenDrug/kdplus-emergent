@@ -115,7 +115,7 @@ async def dashboard(period: str = "today", store_id: Optional[str] = None,
     # category mix + top products
     cat = defaultdict(lambda: D(0))
     prod = defaultdict(lambda: {"qty": D(0), "sales": D(0), "name": ""})
-    pmap = {p["id"]: p for p in await db.products.find({"org_id": ORG_ID}, {"_id": 0}).to_list(5000)}
+    pmap = {p["id"]: p for p in await db.products.find({"org_id": ORG_ID}, {"_id": 0}).to_list(10000)}
     catmap = {c["id"]: c["name"] for c in await db.categories.find({"org_id": ORG_ID}, {"_id": 0}).to_list(500)}
     for s in sales:
         for i in s["items"]:
@@ -138,7 +138,8 @@ async def dashboard(period: str = "today", store_id: Optional[str] = None,
     top_rows = [{"name": t["name"], "qty": m(t["qty"]), "sales": m(t["sales"])} for t in top]
 
     # inventory alerts
-    levels = await db.inventory_levels.find({"org_id": ORG_ID}, {"_id": 0}).to_list(20000)
+    inventory_query = {"org_id": ORG_ID, "store_id": store_id if store_id else {"$ne": "store_annex"}}
+    levels = await db.inventory_levels.find(inventory_query, {"_id": 0}).to_list(20000)
     lmap = defaultdict(float)
     for l in levels:
         lmap[l["product_id"]] += float(l["quantity"])
@@ -157,7 +158,11 @@ async def dashboard(period: str = "today", store_id: Optional[str] = None,
     lots = await db.inventory_lots.find({"org_id": ORG_ID, "status": "ACTIVE", "quantity": {"$gt": 0},
                                          "expiry_date": {"$ne": None}}, {"_id": 0}).to_list(10000)
     expiring = expired = 0
+    positive_levels = {(l["store_id"], l["product_id"]) for l in levels if float(l.get("quantity", 0)) > 0}
     for l in lots:
+        product = pmap.get(l["product_id"], {})
+        if not product.get("active", False) or (l["store_id"], l["product_id"]) not in positive_levels:
+            continue
         try:
             d = (datetime.strptime(l["expiry_date"], "%Y-%m-%d").date() - today).days
         except Exception:
@@ -186,7 +191,7 @@ async def sales_summary(period: str = "30d", store_id: Optional[str] = None,
                         start: Optional[str] = None, end: Optional[str] = None, group: str = "item",
                         principal=Depends(get_current_principal)):
     sales = await fetch_sales(period, start, end, store_id)
-    pmap = {p["id"]: p for p in await db.products.find({"org_id": ORG_ID}, {"_id": 0}).to_list(5000)}
+    pmap = {p["id"]: p for p in await db.products.find({"org_id": ORG_ID}, {"_id": 0}).to_list(10000)}
     catmap = {c["id"]: c["name"] for c in await db.categories.find({"org_id": ORG_ID}, {"_id": 0}).to_list(500)}
     agg = defaultdict(lambda: {"qty": D(0), "gross": D(0), "net": D(0), "cogs": D(0)})
 

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
+from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 import re
 import csv
@@ -96,6 +97,7 @@ class ProductIn(BaseModel):
     subcategory: Optional[str] = ""
     manufacturer: Optional[str] = ""
     supplier_id: Optional[str] = None
+    auto_sku: bool = False
     sku: Optional[str] = ""
     barcode: Optional[str] = ""
     image_url: Optional[str] = ""
@@ -266,33 +268,31 @@ def product_search_clauses(search: str):
     ]
 
 
-async def next_product_sku() -> str:
-    """Return the next product SKU in the SKU10000, SKU10001... sequence."""
-    sku_pattern = re.compile(r"^SKU(\d{5,})$", re.IGNORECASE)
+async def next_product_sku(reserve: bool = True) -> str:
+    """Preview highest active SKU + 1; reserve only when saving, not opening a form."""
     existing = await db.products.find(
-        {"org_id": ORG_ID, "sku": {"$regex": r"^SKU\d{5,}$", "$options": "i"}},
+        {"org_id": ORG_ID, "active": {"$ne": False},
+         "sku": {"$regex": r"^SKU\d{5,}$", "$options": "i"}},
         {"_id": 0, "sku": 1},
     ).to_list(100000)
-    highest = max(
-        (int(match.group(1)) for product in existing
-         if (match := sku_pattern.fullmatch((product.get("sku") or "").strip()))),
-        default=9999,
-    )
-
-    # Keep a dedicated atomic sequence so simultaneous New Product forms never
-    # receive the same number.  $max also moves older installations forward to
-    # the highest SKU already present in their catalog.
-    await db.counters.update_one(
-        {"_id": "product-sku"}, {"$max": {"seq": highest}}, upsert=True,
-    )
+    number = max(9999, max((int(p["sku"][3:]) for p in existing), default=9999)) + 1
     while True:
-        counter = await db.counters.find_one_and_update(
-            {"_id": "product-sku"}, {"$inc": {"seq": 1}},
-            return_document=ReturnDocument.AFTER,
-        )
-        sku = f"SKU{counter['seq']:05d}"
-        if not await db.products.find_one({"org_id": ORG_ID, "sku": sku}, {"_id": 1}):
-            return sku
+        sku = f"SKU{number:05d}"
+        # Inactive records still own their identifiers; never introduce a collision.
+        used = await db.products.find_one(
+            {"org_id": ORG_ID, "sku": {"$regex": f"^{sku}$", "$options": "i"}}, {"_id": 1})
+        if not used:
+            if not reserve:
+                return sku
+            now = datetime.now(timezone.utc)
+            key = f"{ORG_ID}:{sku}"
+            await db.sku_reservations.delete_one({"_id": key, "expires_at": {"$lte": now}})
+            try:
+                await db.sku_reservations.insert_one({"_id": key, "expires_at": now + timedelta(minutes=5)})
+                return sku
+            except DuplicateKeyError:
+                pass  # Another save reserved this number concurrently.
+        number += 1
 
 
 @router.get("/products")
@@ -313,7 +313,7 @@ async def list_products(principal=Depends(get_current_principal),
 @router.post("/products/generate-sku")
 async def generate_product_sku(principal=Depends(require_perm("*"))):
     """Reserve a unique SKU for the new-product form."""
-    return {"sku": await next_product_sku()}
+    return {"sku": await next_product_sku(reserve=False)}
 
 
 @router.get("/products/{pid}")
@@ -327,7 +327,8 @@ async def get_product(pid: str, principal=Depends(get_current_principal)):
 @router.post("/products")
 async def create_product(body: ProductIn, principal=Depends(require_perm("*"))):
     data = body.model_dump()
-    data["sku"] = (data.get("sku") or "").strip() or await next_product_sku()
+    automatic = data.pop("auto_sku", False)
+    data["sku"] = await next_product_sku() if automatic else ((data.get("sku") or "").strip() or await next_product_sku())
     data = await prepare_product_components(data)
     await ensure_unique_product(data)
     if not data.get("average_cost"):
@@ -346,6 +347,7 @@ async def update_product(pid: str, body: ProductIn, principal=Depends(require_pe
     if not old:
         raise HTTPException(status_code=404, detail="Product not found")
     data = body.model_dump()
+    data.pop("auto_sku", None)
     data["sku"] = (data.get("sku") or "").strip() or old.get("sku") or await next_product_sku()
     data = await prepare_product_components(data, product_id=pid)
     # The product editor exposes one manual Cost field. Older clients changed the

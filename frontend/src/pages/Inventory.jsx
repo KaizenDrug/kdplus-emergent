@@ -1,3 +1,6 @@
+import { useSearchParams } from "react-router-dom";
+import { useAuth } from "@/context/AuthContext";
+import InventoryColumns, { DEFAULT_COLUMNS, INVENTORY_COLUMNS, normalizeColumns } from "@/components/InventoryColumns";
 import ProductSearchSelect from "@/components/ProductSearchSelect";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import api, { peso, fmtDay, fmtDate } from "@/lib/api";
@@ -13,6 +16,39 @@ import { matchesSearchTerms, sortTableRows } from "@/lib/utils";
 import { ACTIVE_STORES } from "@/lib/stores";
 
 export default function Inventory() {
+  const { user } = useAuth();
+  const [params, setParams] = useSearchParams();
+  const filter = params.get("filter") || "all";
+  const [tab, setTab] = useState(["expiring", "expired"].includes(filter) ? "expiry" : "levels");
+  const [lots, setLots] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [lotProduct, setLotProduct] = useState(null);
+  const [columnsOpen, setColumnsOpen] = useState(false);
+  const admin = ["owner", "admin"].includes(user?.role);
+  const canViewCost = (user?.permissions || []).some((p) => ["*", "reports.view"].includes(p));
+  const preferenceKey = `kdplus-inventory-columns:${user?.kind || "user"}:${user?.id}`;
+  const [columns, setColumns] = useState(DEFAULT_COLUMNS);
+  const [defaultColumns, setDefaultColumns] = useState(DEFAULT_COLUMNS);
+  useEffect(() => {
+    let personal;
+    try { personal = JSON.parse(localStorage.getItem(preferenceKey)); } catch {}
+    api.get("/settings").then(({ data }) => {
+      const defaults = normalizeColumns(data.inventory_columns || DEFAULT_COLUMNS);
+      setDefaultColumns(defaults);
+      setColumns(normalizeColumns(personal || defaults));
+    }).catch(() => setColumns(normalizeColumns(personal || DEFAULT_COLUMNS)));
+  }, [preferenceKey]);
+  const saveColumns = (value) => {
+    setColumns(value);
+    try { localStorage.setItem(preferenceKey, JSON.stringify(value)); } catch {}
+    setColumnsOpen(false);
+  };
+  const chooseFilter = (value) => {
+    setParams(value === "all" ? {} : { filter: value });
+    setTab(["expiring", "expired"].includes(value) ? "expiry" : "levels");
+    if (value === "all") setSearch("");
+  };
+  useEffect(() => { setTab(["expiring", "expired"].includes(filter) ? "expiry" : "levels"); }, [filter]);
   const [store, setStore] = useState("store_main");
   const [levels, setLevels] = useState([]);
   const [expiry, setExpiry] = useState(null);
@@ -29,30 +65,48 @@ export default function Inventory() {
   const [expirySort, setExpirySort] = useState({ key: "expiry_date", direction: "asc" });
 
   const loadLevels = useCallback(() => api.get(`/inventory/levels?store_id=${store}`).then((r) => setLevels(r.data)), [store]);
+  const loadLots = useCallback(() => api.get(`/inventory/lots?store_id=${store}`).then((r) => setLots(r.data)), [store]);
   const loadExpiry = useCallback(() => api.get(`/inventory/expiry?store_id=${store}`).then((r) => setExpiry(r.data)), [store]);
   useEffect(() => {
     api.get("/products?limit=10000").then((r) => setProducts(r.data));
+    api.get("/categories").then((r) => setCategories(r.data));
     api.get("/suppliers").then((r) => setSuppliers(r.data));
   }, []);
-  useEffect(() => { loadLevels(); loadExpiry(); }, [loadLevels, loadExpiry]);
+  useEffect(() => { loadLevels(); loadExpiry(); loadLots(); }, [loadLevels, loadExpiry, loadLots]);
 
   const low = levels.filter((l) => l.status === "LOW").length;
   const out = levels.filter((l) => l.status === "OUT").length;
   const totalValue = levels.reduce((s, l) => s + l.stock_value, 0);
+  const lotsByProduct = useMemo(() => {
+    const result = {};
+    lots.forEach((lot) => (result[lot.product_id] ||= []).push(lot));
+    return result;
+  }, [lots]);
+  const visibleColumns = columns.filter((key) => canViewCost || !["average_cost", "stock_value", "latest_cost"].includes(key));
   const productById = useMemo(() => Object.fromEntries(products.map((p) => [p.id, p])), [products]);
   const filteredLevels = useMemo(() => levels.filter((l) => {
     const p = productById[l.product_id] || {};
+    if (filter === "low" && l.status !== "LOW") return false;
+    if (filter === "out" && l.status !== "OUT") return false;
     return matchesSearchTerms(search, [l.name, l.sku, l.shelf_code, p.generic_name, p.brand, p.barcode, p.manufacturer]);
-  }), [levels, productById, search]);
+  }), [levels, productById, search, filter]);
   const filteredExpiry = useMemo(() => (expiry?.lots || []).filter((l) => {
     const p = productById[l.product_id] || {};
+    if (filter === "expiring" && (l.days_remaining < 0 || l.days_remaining > 90)) return false;
+    if (filter === "expired" && l.days_remaining >= 0) return false;
     return matchesSearchTerms(search, [l.product_name, l.sku, l.lot_number, l.expiry_date, p.generic_name, p.brand, p.barcode]);
-  }), [expiry, productById, search]);
+  }), [expiry, productById, search, filter]);
   const sortedLevels = useMemo(() => sortTableRows(filteredLevels, levelSort, {
+    category_id: (row) => categories.find((c) => c.id === row.category_id)?.name || "",
+    supplier_id: (row) => suppliers.find((v) => v.id === row.supplier_id)?.company || "",
+    expiry_date: (row) => (lotsByProduct[row.product_id] || []).map((lot) => lot.expiry_date || "9999-12-31").sort()[0] || "9999-12-31",
+    lot_number: (row) => (lotsByProduct[row.product_id] || []).map((lot) => lot.lot_number || "").join(" "),
+    last_received: (row) => (lotsByProduct[row.product_id] || []).map((lot) => lot.received_at || lot.created_at || "").sort().at(-1) || "",
+    ...Object.fromEntries(["barcode", "generic_name", "brand", "dosage_form", "latest_cost"].map((key) => [key, (row) => productById[row.product_id]?.[key] || ""])),
     quantity: (row) => Number(row.quantity || 0),
     reorder_level: (row) => Number(row.reorder_level || 0),
     stock_value: (row) => Number(row.stock_value || 0),
-  }), [filteredLevels, levelSort]);
+  }), [filteredLevels, levelSort, categories, suppliers, lotsByProduct, productById]);
   const sortedExpiry = useMemo(() => sortTableRows(filteredExpiry, expirySort, {
     days_remaining: (row) => Number(row.days_remaining || 0),
     quantity: (row) => Number(row.quantity || 0),
@@ -78,11 +132,23 @@ export default function Inventory() {
           <Button variant="outline" onClick={() => { setReceiveDraft(draft); setReceive(true); }}>Resume</Button>
         </div>)}
       </Card>}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-        <StatCard label="Inventory Value" value={peso(totalValue)} icon={PackagePlus} tone="primary" />
-        <StatCard label="Low Stock" value={low} icon={AlertTriangle} tone="warning" />
-        <StatCard label="Out of Stock" value={out} icon={PackageX} tone="critical" />
-        <StatCard label="Expiring ≤90d" value={expiry ? (expiry.summary["0-30"].count + expiry.summary["31-60"].count + expiry.summary["61-90"].count) : 0} icon={CalendarClock} tone="critical" />
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-4">
+        {[
+          ["all", "Inventory Value", canViewCost ? peso(totalValue) : "All items", PackagePlus, "primary"],
+          ["low", "Low Stock", low, AlertTriangle, "warning"],
+          ["out", "Out of Stock", out, PackageX, "critical"],
+          ["expiring", "Expiring ≤90d", expiry ? ["0-30", "31-60", "61-90"].reduce((n, b) => n + expiry.summary[b].count, 0) : 0, CalendarClock, "warning"],
+          ["expired", "Expired", expiry?.summary.EXPIRED.count || 0, CalendarClock, "critical"],
+        ].map(([key, label, value, icon, tone]) => (
+          <button type="button" key={key} onClick={() => chooseFilter(key)} aria-pressed={filter === key}
+            data-testid={`inventory-filter-${key}`} className={`text-left rounded-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${filter === key ? "ring-2 ring-primary" : ""}`}>
+            <StatCard label={label} value={value} icon={icon} tone={tone} />
+          </button>
+        ))}
+      </div>
+      <div className="flex flex-wrap justify-end gap-2 mb-3">
+        {filter !== "all" && <Button variant="outline" onClick={() => chooseFilter("all")}>Clear Filter</Button>}
+        <Button variant="outline" onClick={() => setColumnsOpen(true)}><SlidersHorizontal className="w-4 h-4 mr-1" />Customize Columns</Button>
       </div>
 
       <Card className="p-3 mb-4">
@@ -96,7 +162,7 @@ export default function Inventory() {
         </div>
       </Card>
 
-      <Tabs defaultValue="levels">
+      <Tabs value={tab} onValueChange={(value) => { setTab(value); if ((value === "levels" && ["expiring", "expired"].includes(filter)) || (value !== "levels" && ["low", "out"].includes(filter))) setParams({}); }}>
         <TabsList>
           <TabsTrigger value="levels" data-testid="tab-levels">Stock Levels</TabsTrigger>
           <TabsTrigger value="expiry" data-testid="tab-expiry">Expiry Monitor</TabsTrigger>
@@ -107,24 +173,26 @@ export default function Inventory() {
           <Card className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>
-                <SortableHeader column="name" label="Product" sort={levelSort} onSort={setLevelSort} />
-                <SortableHeader column="shelf_code" label="Shelf" sort={levelSort} onSort={setLevelSort} />
-                <SortableHeader column="quantity" label="On Hand" sort={levelSort} onSort={setLevelSort} numeric />
-                <SortableHeader column="reorder_level" label="Reorder" sort={levelSort} onSort={setLevelSort} numeric />
-                <SortableHeader column="stock_value" label="Value" sort={levelSort} onSort={setLevelSort} numeric />
-                <SortableHeader column="status" label="Status" sort={levelSort} onSort={setLevelSort} />
+                {visibleColumns.map((key) => <SortableHeader key={key} column={key} label={INVENTORY_COLUMNS[key].label} numeric={INVENTORY_COLUMNS[key].numeric} sort={levelSort} onSort={setLevelSort} />)}
                 <th className="px-4 py-3"></th></tr></thead>
               <tbody>
                 {sortedLevels.map((l) => (
                   <tr key={l.product_id} className="border-t border-slate-100 hover:bg-slate-50">
-                    <td className="px-4 py-2.5 font-medium text-slate-800">{l.name}<div className="text-xs text-slate-400">{l.sku}{l.virtual_promo_stock ? " · availability based on components" : ""}</div></td>
-                    <td className="px-4 py-2.5 font-mono text-xs">{l.shelf_code}</td>
-                    <td className="px-4 py-2.5 text-right font-semibold">{l.quantity} {l.uom}</td>
-                    <td className="px-4 py-2.5 text-right text-slate-500">{l.reorder_level}</td>
-                    <td className="px-4 py-2.5 text-right">{peso(l.stock_value)}</td>
-                    <td className="px-4 py-2.5"><StatusBadge value={l.status} label={l.status === "OK" ? "In Stock" : l.status === "LOW" ? "Low" : "Out"} /></td>
+                    {visibleColumns.map((key) => {
+                      const product = productById[l.product_id] || {};
+                      const batches = lotsByProduct[l.product_id] || [];
+                      let value = l[key] ?? product[key] ?? "—";
+                      if (key === "name") value = <>{l.name}<div className="text-xs text-slate-400">{l.sku}{l.virtual_promo_stock ? " · from components" : ""}</div></>;
+                      if (key === "category_id") value = categories.find((c) => c.id === product.category_id)?.name || "—";
+                      if (key === "supplier_id") value = suppliers.find((v) => v.id === product.supplier_id)?.company || "—";
+                      if (["average_cost", "stock_value", "latest_cost"].includes(key)) value = peso(value === "—" ? 0 : value);
+                      if (key === "last_received") value = batches.length ? fmtDate(batches.map((v) => v.received_at || v.created_at || "").sort().at(-1)) : "—";
+                      if (["expiry_date", "lot_number"].includes(key)) value = batches.length ? batches.map((lot) => <div key={lot.id} className="whitespace-nowrap">{key === "expiry_date" ? (lot.expiry_date ? fmtDay(lot.expiry_date) : "No expiry recorded") : lot.lot_number} <span className="text-xs text-slate-400">({lot.quantity} pcs)</span></div>) : "—";
+                      if (key === "status") value = <StatusBadge value={l.status} label={l.status === "OK" ? "In Stock" : l.status === "LOW" ? "Low" : "Out"} />;
+                      return <td key={key} className={`px-4 py-2.5 ${INVENTORY_COLUMNS[key].numeric ? "text-right" : ""}`}>{value}</td>;
+                    })}
                     <td className="px-4 py-2.5 text-right">{!l.virtual_promo_stock && <button type="button" onClick={() => setAdjust(l.product_id)}
-                      className="text-xs font-semibold text-primary hover:underline" data-testid={`adjust-product-${l.product_id}`}>Adjust</button>}</td>
+                      className="text-xs font-semibold text-primary hover:underline" data-testid={`adjust-product-${l.product_id}`}>Adjust</button>} {(lotsByProduct[l.product_id] || []).length > 0 && <button type="button" onClick={() => setLotProduct(l)} className="ml-3 text-xs font-semibold text-primary hover:underline">Batches</button>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -141,7 +209,7 @@ export default function Inventory() {
                   <Card key={b} className="p-3">
                     <div className="text-[11px] font-bold uppercase text-slate-400">{b === "EXPIRED" ? "Expired" : `${b} days`}</div>
                     <div className={`text-2xl font-extrabold mt-1 ${b === "EXPIRED" || b === "0-30" ? "text-red-600" : b === "31-60" ? "text-amber-600" : "text-slate-800"}`}>{expiry.summary[b].count}</div>
-                    <div className="text-xs text-slate-400">{peso(expiry.summary[b].value)}</div>
+                    <div className="text-xs text-slate-400">{canViewCost ? peso(expiry.summary[b].value) : ""}</div>
                   </Card>
                 ))}
               </div>
@@ -154,7 +222,7 @@ export default function Inventory() {
                     <SortableHeader column="days_remaining" label="Days Left" sort={expirySort} onSort={setExpirySort} numeric />
                     <SortableHeader column="quantity" label="Qty" sort={expirySort} onSort={setExpirySort} numeric />
                     <SortableHeader column="stock_value" label="Value" sort={expirySort} onSort={setExpirySort} numeric />
-                    <SortableHeader column="bucket" label="Bucket" sort={expirySort} onSort={setExpirySort} /></tr></thead>
+                    <SortableHeader column="bucket" label="Bucket" sort={expirySort} onSort={setExpirySort} />{admin && <th className="px-4 py-3">Edit</th>}</tr></thead>
                   <tbody>
                     {sortedExpiry.map((l) => (
                       <tr key={l.id} className="border-t border-slate-100 hover:bg-slate-50">
@@ -163,8 +231,8 @@ export default function Inventory() {
                         <td className="px-4 py-2.5">{fmtDay(l.expiry_date)}</td>
                         <td className={`px-4 py-2.5 text-right font-semibold ${l.days_remaining < 0 ? "text-red-600" : l.days_remaining <= 60 ? "text-amber-600" : "text-slate-600"}`}>{l.days_remaining}</td>
                         <td className="px-4 py-2.5 text-right">{l.quantity}</td>
-                        <td className="px-4 py-2.5 text-right">{peso(l.stock_value)}</td>
-                        <td className="px-4 py-2.5"><StatusBadge value={l.bucket} /></td>
+                        <td className="px-4 py-2.5 text-right">{canViewCost ? peso(l.stock_value) : "—"}</td>
+                        <td className="px-4 py-2.5"><StatusBadge value={l.bucket} /></td>{admin && <td className="px-4 py-2.5"><button onClick={() => setLotProduct({ product_id: l.product_id, name: l.product_name })} className="text-primary font-semibold">Edit batch</button></td>}
                       </tr>
                     ))}
                   </tbody>
@@ -178,11 +246,48 @@ export default function Inventory() {
         <TabsContent value="movements"><LedgerTab store={store} products={products} search={search} /></TabsContent>
       </Tabs>
 
-      {receive && <ReceiveDialog draft={receiveDraft} onDraftSaved={() => { setReceive(false); loadDrafts(); }} store={store} suppliers={suppliers} products={products.filter((p) => (p.product_type || "REGULAR") === "REGULAR")} onClose={() => setReceive(false)} onSaved={() => { setReceive(false); loadDrafts(); loadLevels(); loadExpiry(); toast.success("Stock received"); }} />}
+      {columnsOpen && <InventoryColumns columns={columns} defaults={defaultColumns} canViewCost={canViewCost} admin={admin} onClose={() => setColumnsOpen(false)} onSave={saveColumns} onDefaultSaved={setDefaultColumns} />}
+      {lotProduct && <LotDialog product={lotProduct} lots={lotsByProduct[lotProduct.product_id] || []} admin={admin} onClose={() => setLotProduct(null)} onSaved={() => { loadLevels(); loadExpiry(); loadLots(); }} />}
+      {receive && <ReceiveDialog draft={receiveDraft} onDraftSaved={() => { setReceive(false); loadDrafts(); }} store={store} suppliers={suppliers} products={products.filter((p) => (p.product_type || "REGULAR") === "REGULAR")} onClose={() => setReceive(false)} onSaved={() => { setReceive(false); loadDrafts(); loadLevels(); loadExpiry(); loadLots(); toast.success("Stock received"); }} />}
       {adjust && <AdjustDialog store={store} products={products.filter((p) => (p.product_type || "REGULAR") === "REGULAR")} levels={levels} initialProductId={typeof adjust === "string" ? adjust : ""}
-        onClose={() => setAdjust(false)} onSaved={() => { setAdjust(false); loadLevels(); loadExpiry(); }} />}
+        onClose={() => setAdjust(false)} onSaved={() => { setAdjust(false); loadLevels(); loadExpiry(); loadLots(); }} />}
     </div>
   );
+}
+
+function LotDialog({ product, lots, admin, onClose, onSaved }) {
+  const [editing, setEditing] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const save = async () => {
+    if (!Number.isInteger(Number(editing.quantity)) || Number(editing.quantity) < 0) {
+      toast.error("Quantity must be a whole number of zero or more"); return;
+    }
+    setBusy(true);
+    try {
+      await api.put(`/inventory/lots/${editing.id}`, { lot_number: editing.lot_number, expiry_date: editing.expiry_date || null, quantity: Number(editing.quantity) });
+      toast.success("Batch updated and recorded in Audit Log");
+      setEditing(null); setConfirming(false); onSaved();
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not update batch"); }
+    finally { setBusy(false); }
+  };
+  return <Dialog open onOpenChange={() => { if (!busy) onClose(); }}>
+    <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto">
+      <DialogHeader><DialogTitle>{product.name} — Batches</DialogTitle></DialogHeader>
+      {lots.map((lot) => <div key={lot.id} className="border rounded-lg p-3 flex flex-wrap justify-between gap-3">
+        <div><b>{lot.lot_number}</b><div>Expiry: {lot.expiry_date ? fmtDay(lot.expiry_date) : "Not recorded"} · Qty: {lot.quantity}</div></div>
+        {admin && <Button variant="outline" disabled={busy} onClick={() => { setEditing({ ...lot }); setConfirming(false); }}>Edit</Button>}
+      </div>)}
+      {editing && <div className="border rounded-lg p-3 space-y-3">
+        <label className="block">Batch / lot number<input disabled={busy || confirming} className="block border rounded p-2 w-full" value={editing.lot_number || ""} onChange={(e) => setEditing({ ...editing, lot_number: e.target.value })} /></label>
+        <label className="block">Expiry date<input disabled={busy || confirming} type="date" className="block border rounded p-2 w-full min-w-[190px]" value={editing.expiry_date || ""} onChange={(e) => setEditing({ ...editing, expiry_date: e.target.value })} /></label>
+        <label className="block">Batch quantity<input disabled={busy || confirming} type="number" min="0" step="1" className="block border rounded p-2 w-full" value={editing.quantity} onChange={(e) => setEditing({ ...editing, quantity: e.target.value })} /></label>
+        {confirming && <p className="text-sm text-amber-800">Confirm this correction? Batch quantity changes also update total stock on hand. All changes are recorded in Audit Log.</p>}
+        <div className="flex gap-2"><Button disabled={busy} variant="outline" onClick={() => { setEditing(null); setConfirming(false); }}>Cancel Edit</Button><Button disabled={busy} onClick={() => confirming ? save() : setConfirming(true)}>{busy ? "Saving…" : confirming ? "Confirm & Save" : "Review Changes"}</Button></div>
+      </div>}
+      <DialogFooter><Button disabled={busy} variant="outline" onClick={onClose}>Done</Button></DialogFooter>
+    </DialogContent>
+  </Dialog>;
 }
 
 function LedgerTab({ store, products, search }) {

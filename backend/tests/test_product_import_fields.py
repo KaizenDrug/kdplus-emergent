@@ -145,7 +145,8 @@ async def test_product_sku_continues_from_highest_existing_number(catalog_db):
     second = await routes_catalog.generate_product_sku(principal=MANAGER)
 
     assert first == {"sku": "SKU10009"}
-    assert second == {"sku": "SKU10010"}
+    # Opening another form is a preview, and must not consume an SKU.
+    assert second == {"sku": "SKU10009"}
 
 
 @pytest.mark.asyncio
