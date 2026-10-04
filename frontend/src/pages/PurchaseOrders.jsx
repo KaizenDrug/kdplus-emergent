@@ -1,5 +1,5 @@
 import ProductSearchSelect from "@/components/ProductSearchSelect";
-import React, { useCallback, useEffect, useState, useMemo } from "react";
+import React, { useCallback, useEffect, useState, useMemo, useRef } from "react";
 import api, { peso, fmtDay, apiError } from "@/lib/api";
 import { PageHeader, Card, Empty } from "@/components/kit";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -86,8 +86,22 @@ function POForm({ po, products, suppliers, onClose, onSaved }) {
   const [supplier, setSupplier] = useState(po?.supplier_id || "");
   const [expected, setExpected] = useState(po?.expected_date ? po.expected_date.slice(0, 10) : "");
   const [lines, setLines] = useState(
-    po ? [...po.items].sort(byProductName).map((i) => ({ product_id: i.product_id, qty_ordered: String(i.qty_ordered), unit_cost: String(i.ordered_unit_cost ?? i.unit_cost) }))
-       : [{ product_id: "", qty_ordered: "", unit_cost: "" }]);
+    po ? [...po.items].sort(byProductName).map((i, index) => ({ row_id: `existing-${index}`, product_id: i.product_id, qty_ordered: String(i.qty_ordered), unit_cost: String(i.ordered_unit_cost ?? i.unit_cost) }))
+       : [{ row_id: "initial", product_id: "", qty_ordered: "", unit_cost: "" }]);
+  const lineList = useRef(null);
+  const nextRow = useRef(0);
+  const focusNewRow = useRef(false);
+  const addLine = () => {
+    const row = { row_id: `new-${nextRow.current++}`, product_id: "", qty_ordered: "", unit_cost: "" };
+    focusNewRow.current = true;
+    setLines((current) => [row, ...current]);
+  };
+  useEffect(() => {
+    if (!focusNewRow.current || !lineList.current) return;
+    focusNewRow.current = false;
+    lineList.current.scrollTop = 0;
+    lineList.current.querySelector('[role="combobox"]')?.focus({ preventScroll: true });
+  }, [lines]);
   const [busy, setBusy] = useState(false);
   const upd = (i, k, v) => setLines((l) => l.map((x, idx) => idx === i ? { ...x, [k]: v } : x));
   const pickProduct = (i, pid) => { const p = products.find((x) => x.id === pid); setLines((l) => l.map((x, idx) => idx === i ? { ...x, product_id: pid, unit_cost: x.unit_cost || p?.average_cost || "" } : x)); };
@@ -120,16 +134,22 @@ function POForm({ po, products, suppliers, onClose, onSaved }) {
             <Select value={supplier} onValueChange={setSupplier}><SelectTrigger className="mt-1" data-testid="po-supplier"><SelectValue placeholder="Select" /></SelectTrigger><SelectContent>{suppliers.map((s) => <SelectItem key={s.id} value={s.id}>{s.company}</SelectItem>)}</SelectContent></Select></label>
           <label><span className="text-[11px] font-bold uppercase text-slate-500">Expected Date</span><input type="date" value={expected} onChange={(e) => setExpected(e.target.value)} className="w-full mt-1 px-3 py-2 border rounded-lg text-sm" /></label>
         </div>
-        <div className="space-y-2 max-h-[40vh] overflow-y-auto">
+        <button type="button" onClick={addLine} disabled={busy} data-testid="po-add-line" className="text-sm text-accent hover:underline justify-self-start">+ Add line</button>
+        <div ref={lineList} className="space-y-2 max-h-[40vh] overflow-y-auto">
           {lines.map((l, i) => (
-            <div key={i} className="grid grid-cols-12 gap-2 items-center rounded-lg border border-slate-100 p-2 sm:border-0 sm:p-0">
+            <div key={l.row_id} className="grid grid-cols-12 gap-2 items-end rounded-lg border border-slate-100 p-2 sm:border-0 sm:p-0" data-testid={`po-form-line-${i}`}>
               <div className="col-span-12"><ProductSearchSelect products={sortedProducts} value={l.product_id} onChange={(v) => pickProduct(i, v)} testId={`po-prod-${i}`} /></div>
-              <input className="col-span-4 sm:col-span-2 px-2 py-2 border rounded-lg text-sm" placeholder="Qty" type="number" value={l.qty_ordered} onChange={(e) => upd(i, "qty_ordered", e.target.value)} data-testid={`po-qty-${i}`} />
-              <input className="col-span-6 sm:col-span-3 px-2 py-2 border rounded-lg text-sm" placeholder="Cost" type="number" value={l.unit_cost} onChange={(e) => upd(i, "unit_cost", e.target.value)} data-testid={`po-cost-${i}`} />
-              <button className="col-span-2 sm:col-span-1 text-slate-400 hover:text-red-500" onClick={() => setLines((ls) => ls.filter((_, x) => x !== i))}><Trash2 className="w-4 h-4 mx-auto" /></button>
+              <label className="col-span-5 sm:col-span-2 min-w-0"><span className="text-[10px] font-bold uppercase text-slate-500">Quantity</span>
+                <input className="w-full px-2 py-2 border rounded-lg text-sm" placeholder="Qty" type="number" value={l.qty_ordered} onChange={(e) => upd(i, "qty_ordered", e.target.value)} data-testid={`po-qty-${i}`} /></label>
+              <label className="col-span-7 sm:col-span-3 min-w-0"><span className="text-[10px] font-bold uppercase text-slate-500">Unit Cost (₱)</span>
+                <input className="w-full px-2 py-2 border rounded-lg text-sm" placeholder="Cost" type="number" value={l.unit_cost} onChange={(e) => upd(i, "unit_cost", e.target.value)} data-testid={`po-cost-${i}`} /></label>
+              <div className="col-span-11 sm:col-span-6 min-w-0 text-right pr-2" aria-live="polite">
+                <div className="text-[10px] font-bold uppercase text-slate-500">Subtotal</div>
+                <div className="min-h-10 flex items-center justify-end font-semibold text-slate-800 break-all" data-testid={`po-subtotal-${i}`}>{peso((Number(l.qty_ordered) || 0) * (Number(l.unit_cost) || 0))}</div>
+              </div>
+              <button type="button" className="col-span-1 min-h-10 text-slate-400 hover:text-red-500 rounded hover:bg-red-50" aria-label={`Remove item ${i + 1}`} data-testid={`po-remove-${i}`} onClick={() => setLines((ls) => ls.filter((_, x) => x !== i))}><Trash2 className="w-4 h-4 mx-auto" /></button>
             </div>
           ))}
-          <button onClick={() => setLines((l) => [...l, { product_id: "", qty_ordered: "", unit_cost: "" }])} className="text-sm text-accent hover:underline">+ Add line</button>
         </div>
         <div className="text-right font-bold text-lg mt-2">Total: {peso(total)}</div>
         <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={busy} data-testid="save-po" className="bg-primary hover:bg-teal-800">{busy ? "Saving…" : "Save Draft"}</Button></DialogFooter>
