@@ -393,6 +393,26 @@ async def update_product(pid: str, body: ProductIn, principal=Depends(require_pe
     return await db.products.find_one({"id": pid}, {"_id": 0})
 
 
+class ProductStatusIn(BaseModel):
+    active: bool
+
+
+@router.patch("/products/{pid}/status")
+async def set_product_status(pid: str, body: ProductStatusIn, principal=Depends(require_perm("*"))):
+    product = await db.products.find_one({"id": pid, "org_id": ORG_ID}, {"_id": 0})
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if body.active and product.get("active") is False:
+        await ensure_unique_product(product, exclude_id=pid)
+    await db.products.update_one(
+        {"id": pid, "org_id": ORG_ID},
+        {"$set": {"active": body.active, "updated_at": now_iso()}},
+    )
+    await audit(principal, "item.status_changed", "product", pid,
+                before={"active": product.get("active", True)}, after={"active": body.active})
+    return await db.products.find_one({"id": pid, "org_id": ORG_ID}, {"_id": 0})
+
+
 @router.delete("/products/{pid}")
 async def delete_product(pid: str, principal=Depends(require_perm("*"))):
     """Delete an unused product without breaking inventory or transaction history."""

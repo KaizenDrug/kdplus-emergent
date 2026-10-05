@@ -84,6 +84,9 @@ export default function Products() {
   const [q, setQ] = useState(urlQuery);
   const [cat, setCat] = useState("all");
   const [stockFilter, setStockFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("active");
+  const [statusTarget, setStatusTarget] = useState(null);
+  const [statusBusy, setStatusBusy] = useState(false);
   const [editing, setEditing] = useState(null);
   const [preparingProduct, setPreparingProduct] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -92,7 +95,7 @@ export default function Products() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [sort, setSort] = useState({ key: "name", direction: "asc" });
 
-  const load = () => api.get("/products?limit=10000&active=true").then((r) => setProducts(r.data));
+  const load = () => api.get("/products?limit=10000").then((r) => { productsRef.current = r.data; setProducts(r.data); });
   const loadCats = () => api.get("/categories").then((r) => setCategories(r.data));
   const loadLevels = () => api.get(`/inventory/levels?store_id=${store}`).then((r) => setLevels(r.data));
   useEffect(() => {
@@ -126,7 +129,9 @@ export default function Products() {
     const next = previous.catch(() => {}).then(async () => {
       try {
         const current = productsRef.current.find((item) => item.id === product.id) || product;
-        const { data } = await api.put(`/products/${product.id}`, { ...current, ...changes });
+        const { data } = Object.keys(changes).length === 1 && "active" in changes
+          ? await api.patch(`/products/${product.id}/status`, changes)
+          : await api.put(`/products/${product.id}`, { ...current, ...changes });
         productsRef.current = productsRef.current.map((item) => item.id === product.id ? data : item);
         setProducts(productsRef.current);
         toast.success(`${label} updated`);
@@ -211,13 +216,15 @@ export default function Products() {
     } catch (e) { toast.error(apiError(e.response?.data?.detail) || "Export failed"); }
   };
   const filtered = useMemo(() => products.filter((p) => {
+    if (statusFilter === "active" && p.active === false) return false;
+    if (statusFilter === "inactive" && p.active !== false) return false;
     if (cat !== "all" && p.category_id !== cat) return false;
     const level = levelByProduct[p.id];
     if (stockFilter === "low" && level?.status !== "LOW") return false;
     if (stockFilter === "out" && level?.status !== "OUT") return false;
     if (!q) return true;
     return matchesSearchTerms(q, [p.name, p.generic_name, p.brand, p.sku, p.barcode, p.manufacturer]);
-  }), [products, q, cat, stockFilter, levelByProduct]);
+  }), [products, q, cat, stockFilter, statusFilter, levelByProduct]);
   const sortedProducts = useMemo(() => sortTableRows(filtered, sort, {
     category: (p) => catName(p.category_id),
     class: (p) => p.rx_classification,
@@ -232,7 +239,7 @@ export default function Products() {
 
   return (
     <div>
-      <PageHeader title="Products" subtitle={`${products.length} items in catalog`}>
+      <PageHeader title="Products" subtitle={`${filtered.length} items shown · ${products.length} total in catalog`}>
         <Button variant="outline" onClick={() => setColumnsOpen(true)} data-testid="product-customize-columns"><SlidersHorizontal className="w-4 h-4 mr-1" />Customize Columns</Button>
         <Button variant="outline" onClick={() => setCatOpen(true)} data-testid="manage-categories-btn"><Tags className="w-4 h-4 mr-1" />Categories</Button>
         <Button variant="outline" onClick={exportProducts} data-testid="export-products-btn"><FileDown className="w-4 h-4 mr-1" />Export Products</Button>
@@ -246,6 +253,10 @@ export default function Products() {
           <input value={q} onChange={(e) => setQ(e.target.value)} data-testid="product-search" placeholder="Search name, generic, SKU, barcode…"
             className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
         </div>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="w-full sm:w-44" data-testid="filter-product-status"><SelectValue /></SelectTrigger>
+          <SelectContent><SelectItem value="active">Active Products</SelectItem><SelectItem value="inactive">Inactive Products</SelectItem><SelectItem value="all">All Products</SelectItem></SelectContent>
+        </Select>
         <Select value={cat} onValueChange={setCat}>
           <SelectTrigger className="w-full sm:w-56" data-testid="filter-category"><SelectValue /></SelectTrigger>
           <SelectContent><SelectItem value="all">All Categories</SelectItem>{categories.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
@@ -274,6 +285,7 @@ export default function Products() {
                   {visibleColumns.map((key) => {
                     if (key === "name") return (<td key={key} className="px-4 py-2.5">
                     <InlineText value={p.name} multiline disabled={!canEditProducts} label={`Product name for ${p.sku}`} testId={`inline-name-${p.id}`} onSave={(value) => updateTextField(p, "name", value)} />
+                    {p.active === false && <span className="text-[10px] rounded-full bg-slate-100 text-slate-600 px-2 py-0.5">INACTIVE</span>}
                     {p.product_type === "PROMO" && <span className="text-[10px] rounded-full bg-fuchsia-100 text-fuchsia-700 px-2 py-0.5">PROMO</span>}
                   </td>);
                     if (key === "category") return (<td key={key} className="px-4 py-2.5 text-slate-600">
@@ -316,6 +328,11 @@ export default function Products() {
                   })}
                   <td className="px-4 py-2.5 text-right">
                     <div className="inline-flex items-center gap-1">
+                      {canEditProducts && <button type="button" onClick={() => setStatusTarget(p)} data-testid={`product-status-${p.id}`}
+                        aria-label={`${p.active === false ? "Reactivate" : "Deactivate"} ${p.name}`}
+                        className="text-xs font-semibold text-primary hover:bg-primary/10 px-2 py-1.5 rounded whitespace-nowrap">
+                        {p.active === false ? "Reactivate" : "Deactivate"}
+                      </button>}
                       <button onClick={() => setEditing(p)} aria-label={`Edit ${p.name}`} data-testid={`edit-product-${p.id}`} className="text-primary hover:bg-primary/10 p-1.5 rounded"><Pencil className="w-4 h-4" /></button>
                       {canDelete && <button onClick={() => setDeleting(p)} aria-label={`Delete ${p.name}`} data-testid={`delete-product-${p.id}`} className="text-red-500 hover:bg-red-50 p-1.5 rounded"><Trash2 className="w-4 h-4" /></button>}
                     </div>
@@ -335,6 +352,25 @@ export default function Products() {
       {editing && <ProductDialog product={editing} products={products} categories={categories} suppliers={suppliers} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
       {importOpen && <ImportDialog onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); load(); }} />}
       {catOpen && <CategoryDialog products={products} onClose={() => setCatOpen(false)} onChanged={loadCats} />}
+      {statusTarget && (
+        <Dialog open={true} onOpenChange={(open) => { if (!open && !statusBusy) setStatusTarget(null); }}>
+          <DialogContent className="max-w-md" data-testid="product-status-dialog">
+            <DialogHeader><DialogTitle>{statusTarget.active === false ? "Reactivate" : "Deactivate"} product?</DialogTitle></DialogHeader>
+            <p className="text-sm text-slate-600"><b>{statusTarget.name}</b> {statusTarget.active === false ? "will be available in the POS again." : "will be hidden from the POS. Stock and transaction history will be preserved."}</p>
+            <DialogFooter>
+              <Button variant="outline" disabled={statusBusy} onClick={() => setStatusTarget(null)}>Cancel</Button>
+              <Button disabled={statusBusy} data-testid="confirm-product-status" onClick={async () => {
+                setStatusBusy(true);
+                try {
+                  await updateProductFields(statusTarget, { active: statusTarget.active === false }, "Product status");
+                  setStatusTarget(null);
+                } catch (_) { /* updateProductFields displays the error; keep the dialog open. */ }
+                finally { setStatusBusy(false); }
+              }}>{statusBusy ? "Saving…" : statusTarget.active === false ? "Reactivate" : "Deactivate"}</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
       {deleting && (
         <Dialog open={true} onOpenChange={(value) => { if (!value && !deleteBusy) setDeleting(null); }}>
           <DialogContent className="max-w-md" data-testid="delete-product-dialog">
