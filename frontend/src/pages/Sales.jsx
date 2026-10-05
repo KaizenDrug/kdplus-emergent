@@ -5,10 +5,11 @@ import { PageHeader, Card, StatusBadge, Empty } from "@/components/kit";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Ban, ChevronLeft, ChevronRight, Eye, Printer, Search, Undo2 } from "lucide-react";
+import { ArrowLeft, Ban, ChevronLeft, ChevronRight, Eye, Printer, Search, Undo2, FileDown } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { printThermalReceipt } from "@/lib/receiptPrint";
+import { ACTIVE_STORES } from "@/lib/stores";
 
 const newTxnId = () => (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`);
 const lineId = (line) => line.sale_line_id || line.product_id;
@@ -27,10 +28,32 @@ export default function Sales({ cashierMode = false }) {
   const [meta, setMeta] = useState({ total: 0, pages: 1 });
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState({});
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const todayPH = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+  const today = ["year", "month", "day"].map((type) => todayPH.find((p) => p.type === type).value).join("-");
+  const [exportStart, setExportStart] = useState(today);
+  const [exportEnd, setExportEnd] = useState(today);
+  const [exportStore, setExportStore] = useState("all");
 
   const permissions = user?.permissions || [];
   const canRefund = permissions.includes("*") || permissions.includes("pos.refund");
   const canCancel = permissions.includes("*") || permissions.includes("pos.void");
+  const canExport = permissions.includes("*") || permissions.includes("reports.view");
+  const extractSales = async () => {
+    if (!exportStart || !exportEnd || exportStart > exportEnd) { toast.error("Select a valid date range"); return; }
+    setExportBusy(true);
+    try {
+      const { data } = await api.get("/reports/sales-export/csv", { params: {
+        start: exportStart, end: exportEnd, store_id: exportStore === "all" ? undefined : exportStore,
+      } });
+      const url = URL.createObjectURL(new Blob(["\uFEFF", data.csv], { type: "text/csv;charset=utf-8" }));
+      const a = document.createElement("a"); a.href = url; a.download = data.filename;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      toast.success(`Exported ${data.count} transactions`); setExportOpen(false);
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not export sales"); }
+    finally { setExportBusy(false); }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -87,6 +110,7 @@ export default function Sales({ cashierMode = false }) {
         subtitle={cashierMode ? "Find, reprint, or refund receipts from your register" : "Complete transaction history (retained indefinitely)"}
       >
         {cashierMode && <Button variant="outline" onClick={() => navigate("/pos")}><ArrowLeft className="w-4 h-4 mr-1" />Back to POS</Button>}
+        {canExport && <Button variant="outline" onClick={() => setExportOpen(true)} data-testid="export-sales"><FileDown className="w-4 h-4 mr-1" />Export Sales</Button>}
       </PageHeader>
 
       <form onSubmit={submitSearch} className="flex gap-2 mb-4 max-w-lg">
@@ -131,6 +155,18 @@ export default function Sales({ cashierMode = false }) {
         </div>
       </Card>
 
+      {exportOpen && <Dialog open onOpenChange={(open) => { if (!open && !exportBusy) setExportOpen(false); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Export Sales</DialogTitle></DialogHeader>
+          <p className="text-sm text-slate-500">Includes sales and separate negative refund/void rows within the selected Philippine dates. Exports all matching transactions, across all pages.</p>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="text-sm">Start date<input type="date" value={exportStart} onChange={(e) => setExportStart(e.target.value)} data-testid="sales-export-start" className="block w-full min-w-0 mt-1 border rounded-lg p-2" /></label>
+            <label className="text-sm">End date<input type="date" value={exportEnd} min={exportStart} onChange={(e) => setExportEnd(e.target.value)} data-testid="sales-export-end" className="block w-full min-w-0 mt-1 border rounded-lg p-2" /></label>
+          </div>
+          <Select value={exportStore} onValueChange={setExportStore}><SelectTrigger aria-label="Export branch"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All branches</SelectItem>{ACTIVE_STORES.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent></Select>
+          <DialogFooter><Button variant="outline" disabled={exportBusy} onClick={() => setExportOpen(false)}>Cancel</Button><Button onClick={extractSales} disabled={exportBusy} data-testid="download-sales-csv">{exportBusy ? "Exporting…" : "Download CSV"}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>}
       {viewing && <SaleView sale={viewing} refunds={refunds} settings={settings} canRefund={canRefund} canCancel={canCancel}
         onClose={() => setViewing(null)} onChanged={refreshViewing} />}
     </div>

@@ -495,9 +495,18 @@ IMPORT_FIELDS = (
 )
 
 
-def _csv_text(rows):
+# Excluded by field name so this stays tied to the original export's column
+# letters even after the remaining columns shift left.
+EXPORT_EXCLUDED_FIELDS = {
+    "manufacturer", "image_url", "uom", "purchase_uom", "conversion_factor",
+    "drug_classification", "therapeutic_category", "refrigerated", "controlled", "fda_reg_no",
+}
+EXPORT_FIELDS = tuple(field for field in IMPORT_FIELDS if field not in EXPORT_EXCLUDED_FIELDS)
+
+
+def _csv_text(rows, fields=IMPORT_FIELDS):
     stream = io.StringIO()
-    writer = csv.DictWriter(stream, fieldnames=IMPORT_FIELDS, lineterminator="\n")
+    writer = csv.DictWriter(stream, fieldnames=fields, lineterminator="\n")
     writer.writeheader()
     writer.writerows(rows)
     return stream.getvalue()
@@ -724,7 +733,8 @@ async def export_products(principal=Depends(require_perm("*"))):
             "vat_inclusive": str(p.get("vat_inclusive", True)).lower(), "shelf_code": p.get("shelf_code", ""),
             "active": str(p.get("active", True)).lower(), "batch": "", "expiry": "",
         })
-    return {"filename": "kdplus-products.csv", "csv": _csv_text(rows), "count": len(rows)}
+    export_rows = [{field: row[field] for field in EXPORT_FIELDS} for row in rows]
+    return {"filename": "kdplus-products.csv", "csv": _csv_text(export_rows, EXPORT_FIELDS), "count": len(rows)}
 
 @router.post("/products/import/validate")
 async def import_validate(body: ImportIn, principal=Depends(require_perm("*"))):

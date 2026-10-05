@@ -90,6 +90,28 @@ async def test_complete_template_and_round_trip(catalog_db):
 
 
 @pytest.mark.asyncio
+async def test_export_omits_requested_columns_but_preserves_template_and_data(catalog_db):
+    await routes_catalog.import_commit(
+        routes_catalog.ImportIn(csv=FULL_CSV, store_id="store_main"), principal=MANAGER,
+    )
+    before = await catalog_db.products.find_one({"sku": "AMOX-500"})
+    exported = await routes_catalog.export_products(principal=MANAGER)
+    reader = csv.DictReader(io.StringIO(exported["csv"]))
+    row = next(reader)
+    # G, L, M, N, O, T, U, W, X, Y in the original 44-column template.
+    excluded_indices = {6, 11, 12, 13, 14, 19, 20, 22, 23, 24}
+    assert reader.fieldnames == [field for i, field in enumerate(routes_catalog.IMPORT_FIELDS)
+                                if i not in excluded_indices]
+    assert len(reader.fieldnames) == 34
+    assert row["sku"] == "AMOX-500"
+    assert row["price"] == "8.0" and row["stock"] == "25.0"
+    assert row["strength"] == "500mg" and row["storage"] == "Store below 30C"
+    assert await catalog_db.products.find_one({"sku": "AMOX-500"}) == before
+    template = await routes_catalog.import_template(principal=MANAGER)
+    assert next(csv.reader(io.StringIO(template["template"]))) == list(routes_catalog.IMPORT_FIELDS)
+
+
+@pytest.mark.asyncio
 async def test_legacy_cost_header_remains_supported(catalog_db):
     rows = routes_catalog.parse_import_csv("name,cost,price\nLegacy Product,3.50,5.00\n")
     preview, summary = await routes_catalog._validate_rows(rows)

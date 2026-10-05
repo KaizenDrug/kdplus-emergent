@@ -1,11 +1,62 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
+import csv
+import io
 from typing import Optional
 from datetime import datetime, timedelta, time, timezone
 from collections import defaultdict
 
-from core import db, ORG_ID, m, D, MANILA, get_current_principal
+from core import db, ORG_ID, m, D, MANILA, get_current_principal, require_perm
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
+
+
+@router.get("/sales-export/csv")
+async def export_sales(start: str, end: str, store_id: Optional[str] = None,
+                       principal=Depends(require_perm("reports.view"))):
+    try:
+        first = datetime.strptime(start, "%Y-%m-%d").date()
+        last = datetime.strptime(end, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Enter valid start and end dates")
+    if first > last:
+        raise HTTPException(status_code=400, detail="Start date must be on or before end date")
+    lower = datetime.combine(first, time.min, tzinfo=MANILA).astimezone(timezone.utc).isoformat()
+    upper = datetime.combine(last + timedelta(days=1), time.min, tzinfo=MANILA).astimezone(timezone.utc).isoformat()
+    query = {"org_id": ORG_ID, "created_at": {"$gte": lower, "$lt": upper}}
+    if store_id:
+        query["store_id"] = store_id
+    fields = ["type", "receipt", "original_receipt", "date_time_ph", "store", "cashier", "customer",
+              "status", "items", "quantity", "subtotal", "discount", "vat", "total", "payments"]
+    rows = []
+    for collection, is_refund in ((db.sales, False), (db.refunds, True)):
+        async for record in collection.find(query, {"_id": 0}).sort("created_at", 1):
+            sign = -1 if is_refund else 1
+            items = record.get("items", [])
+            rows.append({
+                "type": record.get("type", "REFUND") if is_refund else "SALE",
+                "receipt": record.get("number", ""),
+                "original_receipt": record.get("sale_number", "") if is_refund else "",
+                "date_time_ph": datetime.fromisoformat(record["created_at"]).astimezone(MANILA).isoformat(),
+                "store": record.get("store_id", ""), "cashier": record.get("cashier_name", ""),
+                "customer": record.get("customer_name") or ("" if is_refund else "Walk-in"),
+                "status": record.get("status", ""),
+                "items": "; ".join(f"{i.get('name', i.get('product_id', ''))} × {i.get('qty', 0)}" for i in items),
+                "quantity": m(sign * sum((D(i.get("qty", 0)) for i in items), D(0))),
+                "subtotal": "" if is_refund else record.get("subtotal", 0),
+                "discount": "" if is_refund else record.get("discount_total", 0),
+                "vat": m(-D(record.get("vat_refunded", 0))) if is_refund else record.get("vat_amount", 0),
+                "total": m(sign * D(record.get("total", 0))),
+                "payments": "; ".join(f"{p.get('method', '')}: {p.get('amount', 0)}" for p in record.get("payments", [])),
+            })
+    rows.sort(key=lambda row: (row["date_time_ph"], row["receipt"]))
+    stream = io.StringIO()
+    writer = csv.DictWriter(stream, fieldnames=fields, lineterminator="\n")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({key: "'" + value if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@")) else value
+                         for key, value in row.items()})
+    return {"filename": f"kdplus-sales-{first.isoformat()}-to-{last.isoformat()}.csv",
+            "csv": stream.getvalue(), "count": len(rows)}
 
 
 def parse_range(period, start, end):
