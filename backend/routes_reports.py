@@ -26,28 +26,36 @@ async def export_sales(start: str, end: str, store_id: Optional[str] = None,
     if store_id:
         query["store_id"] = store_id
     fields = ["type", "receipt", "original_receipt", "date_time_ph", "store", "cashier", "customer",
-              "status", "items", "quantity", "subtotal", "discount", "vat", "total", "payments"]
+              "status", "item", "sku", "quantity", "unit_price", "line_total",
+              "subtotal", "discount", "vat", "total", "payments"]
     rows = []
     for collection, is_refund in ((db.sales, False), (db.refunds, True)):
         async for record in collection.find(query, {"_id": 0}).sort("created_at", 1):
             sign = -1 if is_refund else 1
             items = record.get("items", [])
-            rows.append({
-                "type": record.get("type", "REFUND") if is_refund else "SALE",
-                "receipt": record.get("number", ""),
-                "original_receipt": record.get("sale_number", "") if is_refund else "",
-                "date_time_ph": datetime.fromisoformat(record["created_at"]).astimezone(MANILA).isoformat(),
-                "store": record.get("store_id", ""), "cashier": record.get("cashier_name", ""),
-                "customer": record.get("customer_name") or ("" if is_refund else "Walk-in"),
-                "status": record.get("status", ""),
-                "items": "; ".join(f"{i.get('name', i.get('product_id', ''))} × {i.get('qty', 0)}" for i in items),
-                "quantity": m(sign * sum((D(i.get("qty", 0)) for i in items), D(0))),
-                "subtotal": "" if is_refund else record.get("subtotal", 0),
-                "discount": "" if is_refund else record.get("discount_total", 0),
-                "vat": m(-D(record.get("vat_refunded", 0))) if is_refund else record.get("vat_amount", 0),
-                "total": m(sign * D(record.get("total", 0))),
-                "payments": "; ".join(f"{p.get('method', '')}: {p.get('amount', 0)}" for p in record.get("payments", [])),
-            })
+            # Receipt amounts appear once; repeated item rows must not inflate totals.
+            for index, item in enumerate(items or [{}]):
+                first_line = index == 0
+                rows.append({
+                    "type": record.get("type", "REFUND") if is_refund else "SALE",
+                    "receipt": record.get("number", ""),
+                    "original_receipt": record.get("sale_number", "") if is_refund else "",
+                    "date_time_ph": datetime.fromisoformat(record["created_at"]).astimezone(MANILA).isoformat(),
+                    "store": record.get("store_id", ""), "cashier": record.get("cashier_name", ""),
+                    "customer": record.get("customer_name") or ("" if is_refund else "Walk-in"),
+                    "status": record.get("status", ""),
+                    "item": item.get("name", item.get("product_id", "")),
+                    "sku": item.get("sku", ""),
+                    "quantity": m(sign * D(item.get("qty", 0))),
+                    "unit_price": item.get("unit_price", ""),
+                    "line_total": (m(-D(item["amount"])) if is_refund and "amount" in item
+                                   else item.get("line_net", item.get("line_gross", "")) if not is_refund else ""),
+                    "subtotal": record.get("subtotal", 0) if first_line and not is_refund else "",
+                    "discount": record.get("discount_total", 0) if first_line and not is_refund else "",
+                    "vat": (m(-D(record.get("vat_refunded", 0))) if is_refund else record.get("vat_amount", 0)) if first_line else "",
+                    "total": m(sign * D(record.get("total", 0))) if first_line else "",
+                    "payments": "; ".join(f"{p.get('method', '')}: {p.get('amount', 0)}" for p in record.get("payments", [])) if first_line else "",
+                })
     rows.sort(key=lambda row: (row["date_time_ph"], row["receipt"]))
     stream = io.StringIO()
     writer = csv.DictWriter(stream, fieldnames=fields, lineterminator="\n")

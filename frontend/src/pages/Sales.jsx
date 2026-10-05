@@ -158,7 +158,7 @@ export default function Sales({ cashierMode = false }) {
       {exportOpen && <Dialog open onOpenChange={(open) => { if (!open && !exportBusy) setExportOpen(false); }}>
         <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>Export Sales</DialogTitle></DialogHeader>
-          <p className="text-sm text-slate-500">Includes sales and separate negative refund/void rows within the selected Philippine dates. Exports all matching transactions, across all pages.</p>
+          <p className="text-sm text-slate-500">Each item has its own row and quantity column. Receipt totals appear on the first row only; line totals are before receipt-level discounts. Includes negative refund/void item rows within the selected Philippine dates, across all pages.</p>
           <div className="grid grid-cols-2 gap-3">
             <label className="text-sm">Start date<input type="date" value={exportStart} onChange={(e) => setExportStart(e.target.value)} data-testid="sales-export-start" className="block w-full min-w-0 mt-1 border rounded-lg p-2" /></label>
             <label className="text-sm">End date<input type="date" value={exportEnd} min={exportStart} onChange={(e) => setExportEnd(e.target.value)} data-testid="sales-export-end" className="block w-full min-w-0 mt-1 border rounded-lg p-2" /></label>

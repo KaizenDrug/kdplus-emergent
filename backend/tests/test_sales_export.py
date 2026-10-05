@@ -34,7 +34,7 @@ async def test_sales_export_dates_branch_refunds_and_csv_quoting(monkeypatch):
     assert result["count"] == 3
     assert [r["receipt"] for r in rows] == ["included", "refund", "last"]
     assert rows[0]["date_time_ph"] == "2026-10-05T00:00:00+08:00"
-    assert rows[0]["cashier"] == "'=BAD()" and 'Item, "A"' in rows[0]["items"]
+    assert rows[0]["cashier"] == "'=BAD()" and 'Item, "A"' in rows[0]["item"]
     assert rows[1]["total"] == "-25.0" and rows[1]["original_receipt"] == "older-sale"
 
 @pytest.mark.asyncio
@@ -47,3 +47,32 @@ async def test_empty_export_and_invalid_ranges(monkeypatch):
         with pytest.raises(HTTPException) as error:
             await reports.export_sales(start, end, None, {})
         assert error.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_multiple_items_have_separate_quantities_without_repeated_totals(monkeypatch):
+    db = AsyncMongoMockClient()["test"]
+    monkeypatch.setattr(reports, "db", db)
+    base = {"org_id": core.ORG_ID, "store_id": "store_main", "created_at": "2026-10-05T00:00:00+00:00"}
+    await db.sales.insert_one({**base, "number": "sale-1", "subtotal": 150, "discount_total": 10,
+        "vat_amount": 15, "total": 140, "items": [
+            {"name": "Tablet", "sku": "SKU10000", "qty": 3, "unit_price": 20, "line_net": 60},
+            {"name": "Syrup", "sku": "SKU10001", "qty": 1, "unit_price": 90, "line_net": 90}]})
+    await db.refunds.insert_one({**base, "number": "refund-1", "sale_number": "sale-1", "total": 46.67,
+        "items": [{"name": "Tablet", "qty": 1, "amount": 18.67}, {"name": "Syrup", "qty": 1, "amount": 28}]})
+    result = await reports.export_sales("2026-10-05", "2026-10-05", "store_main", {})
+    rows = list(csv.DictReader(io.StringIO(result["csv"])))
+    sales = [r for r in rows if r["type"] == "SALE"]
+    refunds = [r for r in rows if r["type"] == "REFUND"]
+    assert result["count"] == 4
+    assert [r["receipt"] for r in sales] == ["sale-1", "sale-1"]
+    assert [r["item"] for r in sales] == ["Tablet", "Syrup"]
+    assert [r["sku"] for r in sales] == ["SKU10000", "SKU10001"]
+    assert [r["quantity"] for r in sales] == ["3.0", "1.0"]
+    assert [r["unit_price"] for r in sales] == ["20", "90"]
+    assert [r["line_total"] for r in sales] == ["60", "90"]
+    assert sales[1]["total"] == sales[1]["subtotal"] == sales[1]["discount"] == sales[1]["vat"] == ""
+    assert sum(float(r["total"] or 0) for r in rows) == pytest.approx(93.33)
+    assert [r["quantity"] for r in refunds] == ["-1.0", "-1.0"]
+    assert [r["line_total"] for r in refunds] == ["-18.67", "-28.0"]
+    assert [r["original_receipt"] for r in refunds] == ["sale-1", "sale-1"]
