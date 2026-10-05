@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Check, ChevronsUpDown } from "lucide-react";
@@ -7,6 +7,12 @@ import { matchesSearchTerms } from "@/lib/utils";
 export default function ProductSearchSelect({ products, value, onChange, testId, renderProductInfo }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [portalContainer, setPortalContainer] = useState(undefined);
+  const attachTrigger = useCallback((node) => {
+    // Keep the dropdown inside a modal's allowed scroll tree. A body portal
+    // falls outside Dialog's scroll lock and blocks mouse-wheel/trackpad input.
+    if (node) setPortalContainer(node.closest('[role="dialog"]') || undefined);
+  }, []);
   const selected = products.find((p) => p.id === value);
   const matches = useMemo(() => products.filter((p) => matchesSearchTerms(query, [
     p.name, p.description, p.generic_name, p.brand, p.strength, p.dosage_form, p.sku, p.barcode, p.manufacturer,
@@ -21,7 +27,7 @@ export default function ProductSearchSelect({ products, value, onChange, testId,
   return (
     <Popover open={open} onOpenChange={(next) => { setOpen(next); if (!next) setQuery(""); }}>
       <PopoverTrigger asChild>
-        <button type="button" role="combobox" aria-expanded={open} data-testid={testId}
+        <button ref={attachTrigger} type="button" role="combobox" aria-expanded={open} data-testid={testId}
           className="flex min-h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-left text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2">
           <span className={selected ? "min-w-0 whitespace-normal break-words" : "text-muted-foreground"}>
             {selected ? `${selected.name}${selected.sku ? ` · ${selected.sku}` : ""}` : "Search and select product"}
@@ -31,6 +37,7 @@ export default function ProductSearchSelect({ products, value, onChange, testId,
         </button>
       </PopoverTrigger>
       <PopoverContent
+        portalContainer={portalContainer}
         className="w-[min(36rem,calc(100vw-2rem))] overflow-hidden p-0"
         align="start" side="bottom" collisionPadding={16}
         style={{ maxHeight: "var(--radix-popover-content-available-height)" }}>
