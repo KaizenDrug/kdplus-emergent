@@ -15,6 +15,7 @@ import BrandLogo from "@/components/BrandLogo";
 import { matchesSearchTerms } from "@/lib/utils";
 import { openCashDrawerForSale, printThermalReceipt, printThermalTicket } from "@/lib/receiptPrint";
 import { ACTIVE_STORES } from "@/lib/stores";
+import { productMargin } from "@/lib/productMargin";
 
 const PAY_METHODS = ["Cash", "GCash", "Maya", "Credit Card", "Debit Card", "Bank Transfer"];
 
@@ -40,6 +41,7 @@ export default function POS() {
   const canBack = user?.kind === "user" || ["owner", "admin", "manager", "pharmacist", "inventory"].includes(user?.role);
   const goBack = () => { if (canBack) navigate("/"); else logout(); };
   const [products, setProducts] = useState([]);
+  const productsById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
   const [categories, setCategories] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [settings, setSettings] = useState({});
@@ -333,6 +335,7 @@ export default function POS() {
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3">
               {filtered.map((p) => {
                 const stk = levels[p.id] ?? 0;
+                const margin = productMargin(p, productsById);
                 return (
                   <button key={p.id} onClick={() => addToCart(p)} data-testid={`product-tile-${p.id}`}
                     title={p.name}
@@ -343,7 +346,14 @@ export default function POS() {
                     </div>
                     <div className="text-base font-semibold text-slate-800 leading-snug mt-2 line-clamp-3 min-h-[4rem] break-words">{p.name}</div>
                     <div className="text-sm text-slate-400 mt-1 min-h-5">{p.strength}</div>
-                    <div className="text-primary text-lg font-bold mt-1.5">{peso(p.price)}</div>
+                    <div className="flex flex-wrap items-end justify-between gap-x-2 gap-y-1 mt-1.5">
+                      <span className="text-primary text-lg font-bold">{peso(p.price)}</span>
+                      <span data-testid={`product-margin-${p.id}`}
+                        title="Gross margin before discounts: (selling price − cost) ÷ selling price"
+                        className={`text-xs font-semibold whitespace-nowrap ${margin !== null && margin <= 0 ? "text-red-600" : "text-slate-600"}`}>
+                        Margin {margin === null ? "—" : `${margin.toFixed(1)}%`}
+                      </span>
+                    </div>
                   </button>
                 );
               })}
