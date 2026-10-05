@@ -28,6 +28,7 @@ const PRODUCT_COLUMNS = Object.fromEntries([
   ["name", "Product"], ["sku", "SKU"], ["barcode", "Barcode"],
   ["category", "Category"], ["price", "Price", true], ["cost", "Cost", true],
   ["margin", "Margin", true], ["stock", "In Stock", true],
+  ["consumption", "Average Consumption", true],
   ["stock_value", "Inventory Value", true], ["generic_name", "Generic Name"],
   ["brand", "Brand"], ["strength", "Strength"], ["dosage_form", "Dosage Form"],
   ["pack_size", "Pack Size"], ["rx_classification", "RX Class"], ["tax_mode", "Tax Mode"],
@@ -84,6 +85,26 @@ export default function Products() {
   const [q, setQ] = useState(urlQuery);
   const [cat, setCat] = useState("all");
   const [stockFilter, setStockFilter] = useState("all");
+  const [consumptionBasis, setConsumptionBasis] = useState("daily");
+  const [consumption, setConsumption] = useState(null);
+  const [consumptionState, setConsumptionState] = useState("loading");
+  useEffect(() => {
+    let cancelled = false;
+    setConsumptionState("loading");
+    api.get(`/reports/product-consumption?store_id=${encodeURIComponent(store)}`).then(({ data }) => {
+      if (cancelled) return;
+      setConsumption({ ...data, byProduct: Object.fromEntries(data.rows.map((r) => [r.product_id, r])) });
+      setConsumptionState("ready");
+    }).catch(() => { if (!cancelled) setConsumptionState("error"); });
+    return () => { cancelled = true; };
+  }, [store]);
+  const chooseConsumption = (basis) => {
+    if (basis !== "hidden") setConsumptionBasis(basis);
+    const next = basis === "hidden" ? columns.filter((key) => key !== "consumption")
+      : columns.includes("consumption") ? columns : [...columns, "consumption"];
+    setColumns(next);
+    try { localStorage.setItem(preferenceKey, JSON.stringify(next)); } catch {}
+  };
   const [statusFilter, setStatusFilter] = useState("active");
   const [statusTarget, setStatusTarget] = useState(null);
   const [statusBusy, setStatusBusy] = useState(false);
@@ -233,9 +254,10 @@ export default function Products() {
     margin: (p) => Number(p.margin_pct || 0),
     stock: (p) => Number(levelByProduct[p.id]?.quantity || 0),
     stock_value: (p) => Number(levelByProduct[p.id]?.stock_value || 0),
+    consumption: (p) => consumptionState === "ready" ? Number(consumption?.byProduct[p.id]?.[consumptionBasis] || 0) : null,
     supplier: (p) => suppliers.find((s) => s.id === p.supplier_id)?.company || "",
     latest_cost: (p) => Number(p.latest_cost || 0),
-  }), [filtered, sort, categories, suppliers, levelByProduct]); // eslint-disable-line react-hooks/exhaustive-deps
+  }), [filtered, sort, categories, suppliers, levelByProduct, consumption, consumptionState, consumptionBasis]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div>
@@ -257,6 +279,10 @@ export default function Products() {
           <SelectTrigger className="w-full sm:w-44" data-testid="filter-product-status"><SelectValue /></SelectTrigger>
           <SelectContent><SelectItem value="active">Active Products</SelectItem><SelectItem value="inactive">Inactive Products</SelectItem><SelectItem value="all">All Products</SelectItem></SelectContent>
         </Select>
+        <Select value={columns.includes("consumption") ? consumptionBasis : "hidden"} onValueChange={chooseConsumption}>
+          <SelectTrigger className="w-full sm:w-56" aria-label="Average consumption basis" data-testid="consumption-basis"><SelectValue /></SelectTrigger>
+          <SelectContent><SelectItem value="hidden">Hide Consumption</SelectItem><SelectItem value="daily">Consumption: Daily</SelectItem><SelectItem value="weekly">Consumption: Weekly</SelectItem><SelectItem value="monthly">Consumption: Monthly</SelectItem></SelectContent>
+        </Select>
         <Select value={cat} onValueChange={setCat}>
           <SelectTrigger className="w-full sm:w-56" data-testid="filter-category"><SelectValue /></SelectTrigger>
           <SelectContent><SelectItem value="all">All Categories</SelectItem>{categories.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
@@ -271,6 +297,11 @@ export default function Products() {
         </Select>
       </Card>
 
+      {columns.includes("consumption") && <p className="mb-3 text-xs text-slate-500" role="status">
+        Average consumption: net units sold over the last 30 completed days, including stock used by promotions.
+        {consumptionState === "ready" && ` ${consumption.start_date} to ${consumption.end_date}.`}
+        {consumptionState === "error" && " Consumption could not be loaded. Refresh the page to retry."}
+      </p>}
       <Card className="overflow-hidden">
         {canEditProducts && <p className="px-4 py-2 text-xs text-slate-500 border-b border-slate-100">Edit fields directly. Press Enter or leave a field to save. Press Escape to cancel.</p>}
         <div className="overflow-x-auto">
@@ -319,6 +350,8 @@ export default function Products() {
                     if (["track_inventory", "track_lots", "track_expiry", "discount_eligible"].includes(key)) return <td key={key} className="px-4 py-2.5"><InlineChoice value={p[key] ? "true" : "false"} options={[["true", "Yes"], ["false", "No"]]} disabled={!canEditProducts || (p.product_type === "PROMO" && key !== "discount_eligible")} label={`${PRODUCT_COLUMNS[key].label} for ${p.name}`} testId={`inline-${key}-${p.id}`} onSave={(value) => updateProductFields(p, { [key]: value === "true" }, PRODUCT_COLUMNS[key].label)} /></td>;
                     if (key === "product_type") return <td key={key} className="px-4 py-2.5"><button type="button" disabled={!canEditProducts} onClick={() => setEditing(p)} className="text-primary underline disabled:text-slate-600 disabled:no-underline" title="Configure product type and included products">{p.product_type === "PROMO" ? "Promotional SKU" : "Regular"}</button></td>;
                     let value = p[key];
+                    if (key === "consumption") value = consumptionState === "loading" ? "Loading…" : consumptionState === "error" ? "—"
+                      : `${Number(consumption?.byProduct[p.id]?.[consumptionBasis] || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / ${consumptionBasis === "daily" ? "day" : consumptionBasis === "weekly" ? "week" : "30 days"}`;
                     if (key === "supplier") value = suppliers.find((s) => s.id === p.supplier_id)?.company;
                     if (key === "stock_value") value = peso(levelByProduct[p.id]?.stock_value || 0);
                     if (key === "latest_cost") value = peso(p.latest_cost || 0);

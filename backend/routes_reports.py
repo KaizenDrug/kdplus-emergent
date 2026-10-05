@@ -262,6 +262,36 @@ async def inventory_valuation(store_id: Optional[str] = None, principal=Depends(
     return {"total_value": m(total_val), "rows": rows}
 
 
+@router.get("/product-consumption")
+async def product_consumption(store_id: Optional[str] = None,
+                              principal=Depends(get_current_principal)):
+    today = datetime.now(MANILA).date()
+    start = datetime.combine(today - timedelta(days=30), time.min, tzinfo=MANILA).astimezone(timezone.utc).isoformat()
+    end = datetime.combine(today, time.min, tzinfo=MANILA).astimezone(timezone.utc).isoformat()
+    query = {"org_id": ORG_ID, "created_at": {"$gte": start, "$lt": end},
+             "status": {"$nin": ["CANCELLED", "DRAFT", "PENDING"]}}
+    if store_id:
+        query["store_id"] = store_id
+    quantities = defaultdict(lambda: D(0))
+    async for sale in db.sales.find(query, {"_id": 0, "items": 1}):
+        for item in sale.get("items", []):
+            net = max(D(0), D(item.get("qty", 0)) - D(item.get("refunded_qty", 0)))
+            pid = item.get("product_id")
+            if not pid:
+                continue
+            quantities[pid] += net
+            # Historical component quantities remain correct after a promotion is edited.
+            for component in item.get("inventory_components", []):
+                component_id = component.get("product_id")
+                if component_id and component_id != pid:
+                    quantities[component_id] += net * D(component.get("qty_per_sale", 0))
+    return {"days": 30, "start_date": (today - timedelta(days=30)).isoformat(),
+            "end_date": (today - timedelta(days=1)).isoformat(),
+            "rows": [{"product_id": pid, "net_quantity": m(qty),
+                      "daily": m(qty / 30), "weekly": m(qty * 7 / 30), "monthly": m(qty)}
+                     for pid, qty in quantities.items()]}
+
+
 @router.get("/reorder-suggestions")
 async def reorder_suggestions(days_window: int = 30, lead_time_days: int = 7,
                               supplier_id: Optional[str] = None, store_id: Optional[str] = None,
