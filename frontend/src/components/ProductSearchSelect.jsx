@@ -4,7 +4,7 @@ import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from "@
 import { Check, ChevronsUpDown } from "lucide-react";
 import { matchesSearchTerms } from "@/lib/utils";
 
-export default function ProductSearchSelect({ products, value, onChange, testId }) {
+export default function ProductSearchSelect({ products, value, onChange, testId, renderProductInfo }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const selected = products.find((p) => p.id === value);
@@ -25,6 +25,7 @@ export default function ProductSearchSelect({ products, value, onChange, testId 
           className="flex min-h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-left text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2">
           <span className={selected ? "min-w-0 whitespace-normal break-words" : "text-muted-foreground"}>
             {selected ? `${selected.name}${selected.sku ? ` · ${selected.sku}` : ""}` : "Search and select product"}
+            {selected && renderProductInfo && <span className="block mt-1">{renderProductInfo(selected)}</span>}
           </span>
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </button>
@@ -44,6 +45,7 @@ export default function ProductSearchSelect({ products, value, onChange, testId 
                   <Check className={`mr-2 h-4 w-4 ${value === p.id ? "opacity-100" : "opacity-0"}`} />
                   <div className="min-w-0 flex-1 whitespace-normal break-words py-0.5">
                     <div className="font-semibold leading-snug">{p.name}</div>
+                    {renderProductInfo && <div className="mt-1">{renderProductInfo(p)}</div>}
                     {(p.description || p.generic_name || p.strength || p.dosage_form || p.brand) && (
                       <div className="mt-1 text-xs leading-snug text-slate-500">
                         {[p.description, p.generic_name && `Generic: ${p.generic_name}`, p.strength && `Strength: ${p.strength}`,

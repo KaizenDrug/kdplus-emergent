@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Plus, Trash2, PackageCheck, Eye, Pencil, Send, XCircle, Printer, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
+import { ACTIVE_STORES } from "@/lib/stores";
 
 const PO_STATUS = {
   DRAFT: ["Draft", "bg-slate-100 text-slate-600"],
@@ -82,6 +83,30 @@ export default function PurchaseOrders() {
 
 function POForm({ po, products, suppliers, onClose, onSaved }) {
   const isEdit = !!po;
+  const storeId = po?.store_id || "store_main";
+  const storeName = ACTIVE_STORES.find((s) => s.id === storeId)?.name || storeId;
+  const [stock, setStock] = useState({});
+  const [stockState, setStockState] = useState("loading");
+  const [stockRefresh, setStockRefresh] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    setStockState("loading");
+    api.get(`/inventory/levels?store_id=${encodeURIComponent(storeId)}`).then(({ data }) => {
+      if (cancelled) return;
+      setStock(Object.fromEntries(data.map((row) => [row.product_id, row.quantity])));
+      setStockState("ready");
+    }).catch(() => { if (!cancelled) setStockState("error"); });
+    return () => { cancelled = true; };
+  }, [storeId, stockRefresh]);
+  const renderStock = (product) => {
+    const quantity = stock[product.id];
+    const available = stockState === "ready" && quantity !== undefined && Number.isFinite(Number(quantity));
+    const balance = available ? `${Number(quantity).toLocaleString()} ${product.uom || "units"}`
+      : stockState === "loading" ? "Loading…" : "Unavailable";
+    return <span className={`text-xs font-semibold ${available && Number(quantity) <= 0 ? "text-red-600" : "text-teal-700"}`}>
+      On hand: {balance}
+    </span>;
+  };
   const sortedProducts = useMemo(() => [...products].sort(byProductName), [products]);
   const [supplier, setSupplier] = useState(po?.supplier_id || "");
   const [expected, setExpected] = useState(po?.expected_date ? po.expected_date.slice(0, 10) : "");
@@ -134,11 +159,15 @@ function POForm({ po, products, suppliers, onClose, onSaved }) {
             <Select value={supplier} onValueChange={setSupplier}><SelectTrigger className="mt-1" data-testid="po-supplier"><SelectValue placeholder="Select" /></SelectTrigger><SelectContent>{suppliers.map((s) => <SelectItem key={s.id} value={s.id}>{s.company}</SelectItem>)}</SelectContent></Select></label>
           <label><span className="text-[11px] font-bold uppercase text-slate-500">Expected Date</span><input type="date" value={expected} onChange={(e) => setExpected(e.target.value)} className="w-full mt-1 px-3 py-2 border rounded-lg text-sm" /></label>
         </div>
-        <button type="button" onClick={addLine} disabled={busy} data-testid="po-add-line" className="text-sm text-accent hover:underline justify-self-start">+ Add line</button>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <button type="button" onClick={addLine} disabled={busy} data-testid="po-add-line" className="text-sm text-accent hover:underline">+ Add line</button>
+          <div className="text-xs text-slate-500">Stock on hand at {storeName} · <button type="button" onClick={() => setStockRefresh((v) => v + 1)} disabled={stockState === "loading"} className="text-primary underline disabled:opacity-50" data-testid="po-refresh-stock">Refresh stock</button></div>
+        </div>
+        {stockState === "error" && <p className="text-xs text-red-600" role="status">Stock balances could not be loaded. Use Refresh stock to retry.</p>}
         <div ref={lineList} className="space-y-2 max-h-[40vh] overflow-y-auto">
           {lines.map((l, i) => (
             <div key={l.row_id} className="grid grid-cols-12 gap-2 items-end rounded-lg border border-slate-100 p-2 sm:border-0 sm:p-0" data-testid={`po-form-line-${i}`}>
-              <div className="col-span-12"><ProductSearchSelect products={sortedProducts} value={l.product_id} onChange={(v) => pickProduct(i, v)} testId={`po-prod-${i}`} /></div>
+              <div className="col-span-12"><ProductSearchSelect products={sortedProducts} value={l.product_id} onChange={(v) => pickProduct(i, v)} testId={`po-prod-${i}`} renderProductInfo={renderStock} /></div>
               <label className="col-span-5 sm:col-span-2 min-w-0"><span className="text-[10px] font-bold uppercase text-slate-500">Quantity</span>
                 <input className="w-full px-2 py-2 border rounded-lg text-sm" placeholder="Qty" type="number" value={l.qty_ordered} onChange={(e) => upd(i, "qty_ordered", e.target.value)} data-testid={`po-qty-${i}`} /></label>
               <label className="col-span-7 sm:col-span-3 min-w-0"><span className="text-[10px] font-bold uppercase text-slate-500">Unit Cost (₱)</span>
