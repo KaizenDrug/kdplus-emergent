@@ -2,6 +2,7 @@ import { Capacitor, registerPlugin } from "@capacitor/core";
 import { toast } from "sonner";
 
 const BluetoothPrintIntent = registerPlugin("BluetoothPrintIntent");
+const BluetoothDirectPrinter = registerPlugin("BluetoothDirectPrinter");
 
 const escapeHtml = (value) => String(value ?? "")
   .replace(/&/g, "&amp;")
@@ -143,6 +144,127 @@ export function parkedTicketHtml(ticket, settings = {}) {
     </main></body></html>`;
 }
 
+const nativePrinterAddress = () => {
+  try { return window.localStorage.getItem("kdplus.androidPrinterAddress") || ""; }
+  catch { return ""; }
+};
+
+function nativeReceiptSegments(sale, settings = {}, refunds = []) {
+  const width = settings.printing?.paper_width === "80mm" ? 48 : 32;
+  const lines = [];
+  const add = (text, align = "left", bold = false) => lines.push({ text: String(text ?? ""), align, bold });
+  const rule = () => add("-".repeat(width));
+  const wrap = (text, align = "left", bold = false) => {
+    const words = String(text ?? "").split(/\s+/).filter(Boolean);
+    let line = "";
+    words.forEach((word) => {
+      if (word.length > width) {
+        if (line) { add(line, align, bold); line = ""; }
+        for (let i = 0; i < word.length; i += width) add(word.slice(i, i + width), align, bold);
+      } else if (!line) line = word;
+      else if (`${line} ${word}`.length <= width) line += ` ${word}`;
+      else { add(line, align, bold); line = word; }
+    });
+    if (line) add(line, align, bold);
+  };
+  const row = (label, value, bold = false) => {
+    const right = String(value ?? "");
+    const leftWidth = Math.max(1, width - right.length - 1);
+    const left = String(label ?? "");
+    if (left.length > leftWidth) wrap(left, "left", bold);
+    add(`${left.slice(0, leftWidth).padEnd(leftWidth)} ${right.slice(-Math.max(1, width - leftWidth - 1))}`, "left", bold);
+  };
+  const business = settings.business || {};
+  wrap(business.receipt_header || business.name || "KDPLUS Pharmacy", "center", true);
+  if (business.address) wrap(business.address, "center");
+  if (business.phone) wrap(`Tel: ${business.phone}`, "center");
+  if (business.tin) add(`TIN: ${business.tin}`, "center");
+  if (sale.status && sale.status !== "COMPLETED") add(sale.status, "center", true);
+  rule();
+  wrap(`Receipt: ${sale.number || ""}`);
+  wrap(`Date: ${receiptDate(sale.created_at)}`);
+  wrap(`Cashier: ${sale.cashier_name || ""}`);
+  wrap(`Customer: ${sale.customer_name || "Walk-in"}`);
+  rule();
+  (sale.items || []).forEach((item) => {
+    wrap(item.name || "Item");
+    const lineTotal = item.line_net ?? item.line_gross ?? Number(item.qty || 0) * Number(item.unit_price || 0);
+    row(`${quantity(item.qty)} x ${money(item.unit_price)}`, money(lineTotal));
+  });
+  rule();
+  row("Subtotal", money(sale.subtotal));
+  if (Number(sale.discount_total || 0) > 0) row("Discount", `-${money(sale.discount_total)}`);
+  if (Number(sale.vat_exempt_amount || 0) > 0) row("VAT Exempt", money(sale.vat_exempt_amount));
+  if (Number(sale.spwd_discount || 0) > 0) row("Senior/PWD Disc.", `-${money(sale.spwd_discount)}`);
+  if (Number(sale.vat_amount || 0) > 0) row(`VAT (${Number(settings.tax?.vat_rate || 12)}%)`, money(sale.vat_amount));
+  row("TOTAL", money(sale.total), true);
+  rule();
+  (sale.payments || []).forEach((payment) => row(payment.method || "Payment", money(payment.amount)));
+  const tendered = sale.amount_paid ?? (sale.payments || []).reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  row("Amount tendered", money(tendered));
+  row("Change", money(sale.change), true);
+  if (refunds.length) {
+    rule(); add("REFUNDS / VOIDS", "center", true);
+    refunds.forEach((refund) => row(refund.number || refund.type || "Refund", `-${money(refund.total)}`));
+  }
+  rule();
+  if (business.receipt_footer) wrap(business.receipt_footer, "center");
+  if (business.return_policy) wrap(business.return_policy, "center");
+  return lines;
+}
+
+function nativeTicketSegments(ticket, settings = {}) {
+  const width = settings.printing?.paper_width === "80mm" ? 48 : 32;
+  const lines = [];
+  const add = (text, align = "left", bold = false) => lines.push({ text: String(text ?? ""), align, bold });
+  const wrap = (text, align = "left", bold = false) => {
+    const value = String(text ?? "");
+    for (let i = 0; i < value.length; i += width) add(value.slice(i, i + width), align, bold);
+  };
+  const business = settings.business || {};
+  wrap(business.receipt_header || business.name || "KDPLUS Pharmacy", "center", true);
+  if (business.address) wrap(business.address, "center");
+  if (business.phone) wrap(`Tel: ${business.phone}`, "center");
+  add("!".repeat(width), "center");
+  add("SAVED TICKET - NOT A RECEIPT", "center", true);
+  const ticketNo = String(ticket.id || "").slice(-8).toUpperCase() || "CURRENT";
+  add(`Ticket: ${ticketNo}`);
+  wrap(`Date: ${receiptDate(ticket.created_at || new Date().toISOString())}`);
+  wrap(`Prepared by: ${ticket.created_by_name || "Cashier"}`);
+  add("-".repeat(width));
+  (ticket.items || []).forEach((item) => {
+    wrap(item.name || "Item");
+    const itemTotal = Number(item.unit_price || 0) * Number(item.qty || 0);
+    const left = `${quantity(item.qty)} x ${money(item.unit_price)}`;
+    const right = money(itemTotal);
+    add(`${left.slice(0, Math.max(1, width - right.length - 1)).padEnd(Math.max(1, width - right.length - 1))} ${right}`);
+  });
+  const total = (ticket.items || []).reduce((sum, item) => sum + Number(item.unit_price || 0) * Number(item.qty || 0), 0);
+  add("-".repeat(width));
+  add(`ESTIMATED TOTAL: ${money(total)}`, "left", true);
+  add("Payment due at checkout.", "center");
+  add("Final prices confirmed at sale.", "center");
+  if (business.receipt_footer) wrap(business.receipt_footer, "center");
+  return lines;
+}
+
+function nativePrint(segments, settings = {}, openDrawer = false) {
+  const printerAddress = nativePrinterAddress();
+  if (!printerAddress) {
+    toast.error("Choose a paired Bluetooth printer in Settings first.");
+    return false;
+  }
+  BluetoothDirectPrinter.print({
+    printerAddress, segments, openDrawer,
+    paperWidth: settings.printing?.paper_width === "80mm" ? "80mm" : "58mm",
+  }).catch((error) => {
+    toast.error(error?.message || "Bluetooth receipt printing failed.");
+    console.error("Direct Bluetooth receipt printing failed", error);
+  });
+  return true;
+}
+
+
 function isAndroid() {
   return Capacitor.getPlatform() === "android"
     || (typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent || ""));
@@ -200,7 +322,9 @@ function printHtmlInBrowser(html) {
 export function printThermalTicket(ticket, settings = {}) {
   if (!ticket || !ticket.items?.length) return false;
   const html = parkedTicketHtml(ticket, settings);
-  if (isAndroid() && settings.printing?.android_bluetooth_bridge !== false) {
+  if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android" && settings.printing?.android_bluetooth_bridge !== false) {
+    return nativePrint(nativeTicketSegments(ticket, settings), settings);
+  } else if (isAndroid() && settings.printing?.android_bluetooth_bridge !== false) {
     openAndroidBluetoothLink(androidBluetoothLink(html, false), html);
   } else {
     printHtmlInBrowser(html);
@@ -212,6 +336,14 @@ export function openCashDrawerForSale(sale, settings = {}) {
   const hasCashPayment = (sale?.payments || []).some((payment) => payment.method === "Cash");
   if (!sale || !hasCashPayment || settings.printing?.open_cash_drawer === false) return false;
   if (!isAndroid() || settings.printing?.android_bluetooth_bridge === false) return false;
+  if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android") {
+    const printerAddress = nativePrinterAddress();
+    if (!printerAddress) { toast.error("Choose a paired Bluetooth printer in Settings first."); return false; }
+    BluetoothDirectPrinter.openCashDrawer({ printerAddress }).catch((error) => {
+      toast.error(error?.message || "Could not open the cash drawer.");
+    });
+    return true;
+  }
   // The bridge requires a source document even for a drawer-only request. A zero-size
   // page sends no receipt content while openCashDrawer issues the printer pulse.
   const blank = "<!doctype html><html><head><style>@page{size:58mm 0;margin:0}html,body{width:0;height:0;margin:0;padding:0;overflow:hidden}</style></head><body></body></html>";
@@ -225,6 +357,9 @@ export function printThermalReceipt(sale, settings = {}, refunds = [], options =
     const hasCashPayment = (sale.payments || []).some((payment) => payment.method === "Cash");
     const openDrawer = options.openDrawer === true
       && settings.printing?.open_cash_drawer !== false && hasCashPayment;
+    if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android") {
+      return nativePrint(nativeReceiptSegments(sale, settings, refunds), settings, openDrawer);
+    }
     printWithAndroidBluetoothService(sale, settings, refunds, openDrawer);
     return true;
   }

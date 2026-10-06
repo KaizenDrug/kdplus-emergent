@@ -7,6 +7,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(BluetoothPrintIntentPlugin.class);
+        registerPlugin(BluetoothDirectPrinterPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

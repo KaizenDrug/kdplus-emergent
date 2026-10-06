@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { Capacitor, registerPlugin } from "@capacitor/core";
 import api, { apiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { PageHeader, Card } from "@/components/kit";
@@ -7,6 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, Download, CheckCircle2, Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+
+const BluetoothDirectPrinter = registerPlugin("BluetoothDirectPrinter");
 
 export default function Settings() {
   const { user } = useAuth();
@@ -49,10 +52,43 @@ function PrintingTab({ s, save }) {
     paper_width: "58mm", auto_print_receipt: false, android_bluetooth_bridge: true,
     open_cash_drawer: true, ...(s.printing || {}),
   });
+  const isAndroidApp = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
+  const [printers, setPrinters] = useState([]);
+  const [printerAddress, setPrinterAddress] = useState(() => {
+    try { return window.localStorage.getItem("kdplus.androidPrinterAddress") || ""; }
+    catch { return ""; }
+  });
+  const [loadingPrinters, setLoadingPrinters] = useState(false);
+  const refreshPrinters = async () => {
+    if (!isAndroidApp) return;
+    setLoadingPrinters(true);
+    try {
+      const result = await BluetoothDirectPrinter.getPairedPrinters();
+      setPrinters(result.printers || []);
+      if (!result.printers?.some((printer) => printer.address === printerAddress)) choosePrinter("");
+      if (!result.printers?.length) toast.info("No paired printers found. Pair your printer in Android Bluetooth settings first.");
+    } catch (error) {
+      toast.error(error?.message || "Could not read paired Bluetooth printers.");
+    } finally { setLoadingPrinters(false); }
+  };
+  const choosePrinter = (address) => {
+    setPrinterAddress(address);
+    try {
+      if (address) window.localStorage.setItem("kdplus.androidPrinterAddress", address);
+      else window.localStorage.removeItem("kdplus.androidPrinterAddress");
+    } catch { /* local printer preference is device-only */ }
+  };
+  const testPrinter = async () => {
+    if (!printerAddress) { toast.error("Select a paired printer first."); return; }
+    try {
+      await BluetoothDirectPrinter.testPrint({ printerAddress, paperWidth: printing.paper_width });
+      toast.success("Test page sent to the printer.");
+    } catch (error) { toast.error(error?.message || "Test print failed."); }
+  };
   return (
     <Card className="p-5 max-w-2xl">
       <h3 className="font-heading font-bold text-slate-800 mb-1">Thermal Receipt Printer</h3>
-      <p className="text-sm text-slate-500 mb-4">Pair the Bluetooth printer with this device first. KDPLUS will use the normal system print dialog to select it.</p>
+      <p className="text-sm text-slate-500 mb-4">For the KDPLUS Android app, pair your printer in Android Bluetooth settings, select it below, then print receipts directly from KDPLUS.</p>
       <Row label="Paper Width">
         <Select value={printing.paper_width} onValueChange={(value) => setPrinting((x) => ({ ...x, paper_width: value }))}>
           <SelectTrigger className={inputCls} data-testid="set-paper-width"><SelectValue /></SelectTrigger>
@@ -73,6 +109,23 @@ function PrintingTab({ s, save }) {
           <SelectContent><SelectItem value="bridge">Direct Bluetooth (Android app)</SelectItem><SelectItem value="system">Android system print dialog</SelectItem></SelectContent>
         </Select>
       </Row>
+      {isAndroidApp && <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 my-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <div><div className="text-sm font-semibold text-slate-700">Paired Bluetooth printer</div>
+            <div className="text-xs text-slate-500">Pair it from Android Settings → Bluetooth, then refresh this list.</div></div>
+          <Button type="button" variant="outline" onClick={refreshPrinters} disabled={loadingPrinters} data-testid="refresh-bluetooth-printers">
+            {loadingPrinters ? "Searching…" : "Refresh paired printers"}
+          </Button>
+        </div>
+        <Select value={printerAddress} onValueChange={choosePrinter}>
+          <SelectTrigger className={inputCls} data-testid="set-bluetooth-printer"><SelectValue placeholder="Select a paired printer" /></SelectTrigger>
+          <SelectContent>{printers.map((printer) => <SelectItem key={printer.address} value={printer.address}>{printer.name} · {printer.address}</SelectItem>)}</SelectContent>
+        </Select>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <Button type="button" variant="outline" onClick={testPrinter} disabled={!printerAddress} data-testid="test-bluetooth-printer">Print Test Page</Button>
+          {printerAddress && <span className="text-xs text-emerald-700">Printer selected on this device</span>}
+        </div>
+      </div>}
       <Row label="Cash Drawer">
         <label className="inline-flex items-center gap-2 text-sm text-slate-700">
           <input type="checkbox" checked={printing.open_cash_drawer}
@@ -82,10 +135,8 @@ function PrintingTab({ s, save }) {
         </label>
       </Row>
       <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
-        <div className="font-bold">Android tablet setup</div>
-        Install and configure <a className="underline" target="_blank" rel="noreferrer"
-          href="https://play.google.com/store/apps/details?id=com.loopedlabs.escposprintservice">ESC/POS Bluetooth Print Service</a>,
-        select the paired printer and 58 mm paper, then use its Test Print and Open Drawer tests. KDPLUS will send receipts directly to that app.
+        <div className="font-bold">Android setup</div>
+        The KDPLUS Android app prints directly to a paired Bluetooth ESC/POS printer; ESC/POS Print Service is not required. Select the printer above and confirm its paper width.
         With Cash Drawer enabled, completing a cash sale opens the drawer even when receipt printing is set to manual.
         When using Mac/PC system printing, select 58 mm paper, margins None, and disable browser headers and footers.
       </div>
