@@ -15,6 +15,10 @@ const money = (value) => `₱${Number(value || 0).toLocaleString("en-PH", {
   minimumFractionDigits: 2, maximumFractionDigits: 2,
 })}`;
 
+const nativeMoney = (value) => `PHP ${Number(value || 0).toLocaleString("en-PH", {
+  minimumFractionDigits: 2, maximumFractionDigits: 2,
+})}`;
+
 const quantity = (value) => Number(value || 0).toLocaleString("en-PH", {
   maximumFractionDigits: 3,
 });
@@ -150,7 +154,7 @@ const nativePrinterAddress = () => {
 };
 
 function nativeReceiptSegments(sale, settings = {}, refunds = []) {
-  const width = settings.printing?.paper_width === "80mm" ? 48 : 32;
+  const width = settings.printing?.paper_width === "80mm" ? 46 : 30;
   const lines = [];
   const add = (text, align = "left", bold = false) => lines.push({ text: String(text ?? ""), align, bold });
   const rule = () => add("-".repeat(width));
@@ -189,23 +193,23 @@ function nativeReceiptSegments(sale, settings = {}, refunds = []) {
   (sale.items || []).forEach((item) => {
     wrap(item.name || "Item");
     const lineTotal = item.line_net ?? item.line_gross ?? Number(item.qty || 0) * Number(item.unit_price || 0);
-    row(`${quantity(item.qty)} x ${money(item.unit_price)}`, money(lineTotal));
+    row(`${quantity(item.qty)} x ${nativeMoney(item.unit_price)}`, nativeMoney(lineTotal));
   });
   rule();
-  row("Subtotal", money(sale.subtotal));
-  if (Number(sale.discount_total || 0) > 0) row("Discount", `-${money(sale.discount_total)}`);
-  if (Number(sale.vat_exempt_amount || 0) > 0) row("VAT Exempt", money(sale.vat_exempt_amount));
-  if (Number(sale.spwd_discount || 0) > 0) row("Senior/PWD Disc.", `-${money(sale.spwd_discount)}`);
-  if (Number(sale.vat_amount || 0) > 0) row(`VAT (${Number(settings.tax?.vat_rate || 12)}%)`, money(sale.vat_amount));
-  row("TOTAL", money(sale.total), true);
+  row("Subtotal", nativeMoney(sale.subtotal));
+  if (Number(sale.discount_total || 0) > 0) row("Discount", `-${nativeMoney(sale.discount_total)}`);
+  if (Number(sale.vat_exempt_amount || 0) > 0) row("VAT Exempt", nativeMoney(sale.vat_exempt_amount));
+  if (Number(sale.spwd_discount || 0) > 0) row("Senior/PWD Disc.", `-${nativeMoney(sale.spwd_discount)}`);
+  if (Number(sale.vat_amount || 0) > 0) row(`VAT (${Number(settings.tax?.vat_rate || 12)}%)`, nativeMoney(sale.vat_amount));
+  row("TOTAL", nativeMoney(sale.total), true);
   rule();
-  (sale.payments || []).forEach((payment) => row(payment.method || "Payment", money(payment.amount)));
+  (sale.payments || []).forEach((payment) => row(payment.method || "Payment", nativeMoney(payment.amount)));
   const tendered = sale.amount_paid ?? (sale.payments || []).reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
-  row("Amount tendered", money(tendered));
-  row("Change", money(sale.change), true);
+  row("Amount tendered", nativeMoney(tendered));
+  row("Change", nativeMoney(sale.change), true);
   if (refunds.length) {
     rule(); add("REFUNDS / VOIDS", "center", true);
-    refunds.forEach((refund) => row(refund.number || refund.type || "Refund", `-${money(refund.total)}`));
+    refunds.forEach((refund) => row(refund.number || refund.type || "Refund", `-${nativeMoney(refund.total)}`));
   }
   rule();
   if (business.receipt_footer) wrap(business.receipt_footer, "center");
@@ -214,7 +218,7 @@ function nativeReceiptSegments(sale, settings = {}, refunds = []) {
 }
 
 function nativeTicketSegments(ticket, settings = {}) {
-  const width = settings.printing?.paper_width === "80mm" ? 48 : 32;
+  const width = settings.printing?.paper_width === "80mm" ? 46 : 30;
   const lines = [];
   const add = (text, align = "left", bold = false) => lines.push({ text: String(text ?? ""), align, bold });
   const wrap = (text, align = "left", bold = false) => {
@@ -235,13 +239,13 @@ function nativeTicketSegments(ticket, settings = {}) {
   (ticket.items || []).forEach((item) => {
     wrap(item.name || "Item");
     const itemTotal = Number(item.unit_price || 0) * Number(item.qty || 0);
-    const left = `${quantity(item.qty)} x ${money(item.unit_price)}`;
-    const right = money(itemTotal);
+    const left = `${quantity(item.qty)} x ${nativeMoney(item.unit_price)}`;
+    const right = nativeMoney(itemTotal);
     add(`${left.slice(0, Math.max(1, width - right.length - 1)).padEnd(Math.max(1, width - right.length - 1))} ${right}`);
   });
   const total = (ticket.items || []).reduce((sum, item) => sum + Number(item.unit_price || 0) * Number(item.qty || 0), 0);
   add("-".repeat(width));
-  add(`ESTIMATED TOTAL: ${money(total)}`, "left", true);
+  add(`ESTIMATED TOTAL: ${nativeMoney(total)}`, "left", true);
   add("Payment due at checkout.", "center");
   add("Final prices confirmed at sale.", "center");
   if (business.receipt_footer) wrap(business.receipt_footer, "center");

@@ -18,6 +18,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.text.Normalizer;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
@@ -135,7 +136,10 @@ public class BluetoothDirectPrinterPlugin extends Plugin {
             bytes.write(new byte[] { 0x1b, 0x61, (byte) alignment });
             bytes.write(new byte[] { 0x1b, 0x45, (byte) (segment.optBoolean("bold", false) ? 1 : 0) });
             String text = segment.optString("text", "");
-            String printable = text.replace("₱", "PHP ").replace("×", "x").replace("–", "-").replace("—", "-");
+            String printable = Normalizer.normalize(text, Normalizer.Form.NFD)
+                .replaceAll("\\p{M}+", "")
+                .replace("₱", "PHP ").replace("×", "x").replace("–", "-").replace("—", "-")
+                .replaceAll("[^\\x20-\\x7E]", "");
             bytes.write(printable.getBytes(StandardCharsets.US_ASCII));
             bytes.write(0x0a);
         }
