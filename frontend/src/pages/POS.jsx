@@ -306,6 +306,7 @@ export default function POS() {
               <div className="relative flex-1 min-w-[220px]">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input ref={searchRef} autoFocus value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onSearchKey}
+                  onFocus={(e) => e.currentTarget.select()} onClick={(e) => e.currentTarget.select()}
                   data-testid="pos-search" placeholder="Scan barcode or search name, generic, SKU… (Enter to add)"
                   className="w-full pl-9 pr-9 py-2.5 rounded-lg bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
                 <Barcode className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-300" />
@@ -887,7 +888,9 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
                   <SelectTrigger className="w-36" data-testid={`pay-method-${idx}`}><SelectValue /></SelectTrigger>
                   <SelectContent>{PAY_METHODS.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
                 </Select>
-                <input type="number" value={p.amount} onChange={(e) => updPayment(idx, "amount", e.target.value)} data-testid={`pay-amount-${idx}`} placeholder="0.00" className="flex-1 px-3 py-2 rounded-lg border border-slate-200 text-sm" />
+                <input type="text" inputMode="decimal" value={p.amount} onChange={(e) => updPayment(idx, "amount", e.target.value)}
+                  onFocus={(e) => e.currentTarget.select()} onClick={(e) => e.currentTarget.select()}
+                  data-testid={`pay-amount-${idx}`} placeholder="0.00" className="flex-1 px-3 py-2 rounded-lg border border-slate-200 text-sm" />
                 {payments.length > 1 && <button onClick={() => removePayment(idx)} className="text-slate-400 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>}
               </div>
             ))}
