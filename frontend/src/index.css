@@ -10,6 +10,15 @@ body {
     -moz-osx-font-smoothing: grayscale;
 }
 
+/* iOS Safari zooms the page when a focused form field uses text smaller than 16px. */
+@media (max-width: 767px) and (hover: none) and (pointer: coarse) {
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="button"]):not([type="submit"]):not([type="reset"]),
+    textarea,
+    select {
+        font-size: 16px !important;
+    }
+}
+
 h1, h2, h3, h4, .font-heading {
     font-family: 'Manrope', system-ui, sans-serif;
 }
