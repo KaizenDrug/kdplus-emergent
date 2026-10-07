@@ -337,7 +337,7 @@ function LedgerTab({ store, products, search }) {
 
 function ReceiveDialog({ store, suppliers, products, onClose, onSaved, draft, onDraftSaved }) {
   const [draftId] = useState(() => draft?.id || crypto.randomUUID());
-  const [lines, setLines] = useState(draft?.lines || [{ product_id: "", quantity: "", unit_cost: "", lot_number: "", expiry_date: "" }]);
+  const [lines, setLines] = useState(draft?.lines || [{ product_id: "", barcode: "", quantity: "", unit_cost: "", lot_number: "", expiry_date: "" }]);
   const [supplierId, setSupplierId] = useState(draft?.supplier_id || "");
   const [busy, setBusy] = useState(false);
   const upd = (i, k, v) => setLines((l) => l.map((x, idx) => idx === i ? { ...x, [k]: v } : x));
@@ -356,7 +356,7 @@ function ReceiveDialog({ store, suppliers, products, onClose, onSaved, draft, on
     if (!valid.length) { toast.error("Add at least one line"); return; }
     setBusy(true);
     try {
-      await api.post("/inventory/receive", { draft_id: draftId, store_id: store, supplier_id: supplierId, reference: "Manual GRN", lines: valid.map((l) => ({ product_id: l.product_id, quantity: Number(l.quantity), unit_cost: Number(l.unit_cost) || 0, lot_number: l.lot_number, expiry_date: l.expiry_date || null })) });
+      await api.post("/inventory/receive", { draft_id: draftId, store_id: store, supplier_id: supplierId, reference: "Manual GRN", lines: valid.map((l) => ({ product_id: l.product_id, barcode: l.barcode, quantity: Number(l.quantity), unit_cost: Number(l.unit_cost) || 0, lot_number: l.lot_number, expiry_date: l.expiry_date || null })) });
       onSaved();
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); } finally { setBusy(false); }
   };
@@ -376,7 +376,7 @@ function ReceiveDialog({ store, suppliers, products, onClose, onSaved, draft, on
         <div className="space-y-2 max-h-[55vh] overflow-y-auto">
           {supplierId && lines.map((l, i) => (
             <div key={i} className="space-y-3 rounded-lg border border-slate-200 p-3">
-              <ProductSearchSelect products={products} value={l.product_id} onChange={(v) => upd(i, "product_id", v)} testId={`recv-prod-${i}`} />
+              <ProductSearchSelect products={products} value={l.product_id} onChange={(v) => { upd(i, "product_id", v); upd(i, "barcode", ""); }} testId={`recv-prod-${i}`} />
               <div className="grid grid-cols-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(190px,1.3fr)] gap-3 items-end">
                 <label className="min-w-0 text-xs font-semibold text-slate-500">Quantity
                   <input className="mt-1 w-full min-w-0 px-2 py-2 border rounded-lg text-sm text-slate-900" placeholder="Qty" type="number" value={l.quantity} onChange={(e) => upd(i, "quantity", e.target.value)} data-testid={`recv-qty-${i}`} />
@@ -391,9 +391,17 @@ function ReceiveDialog({ store, suppliers, products, onClose, onSaved, draft, on
                   <input className="mt-1 w-full min-w-[190px] px-3 py-2 border rounded-lg text-base text-slate-900" type="date" value={l.expiry_date} onChange={(e) => upd(i, "expiry_date", e.target.value)} data-testid={`recv-expiry-${i}`} />
                 </label>
               </div>
+              {l.product_id && !products.find((p) => p.id === l.product_id)?.barcode && (
+                <label className="block text-xs font-semibold text-slate-500">
+                  Barcode (optional)
+                  <input className="mt-1 w-full px-2 py-2 border rounded-lg text-sm text-slate-900" value={l.barcode || ""}
+                    onChange={(e) => upd(i, "barcode", e.target.value)} placeholder="Scan or enter product barcode"
+                    autoComplete="off" data-testid={`recv-barcode-${i}`} />
+                </label>
+              )}
             </div>
           ))}
-          {supplierId && <button onClick={() => setLines((l) => [...l, { product_id: "", quantity: "", unit_cost: "", lot_number: "", expiry_date: "" }])} className="text-sm text-accent hover:underline" data-testid="recv-add-line">+ Add item</button>}
+          {supplierId && <button onClick={() => setLines((l) => [...l, { product_id: "", barcode: "", quantity: "", unit_cost: "", lot_number: "", expiry_date: "" }])} className="text-sm text-accent hover:underline" data-testid="recv-add-line">+ Add item</button>}
         </div>
         <DialogFooter><Button variant="outline" disabled={busy} onClick={onClose}>Cancel</Button><Button variant="outline" onClick={saveDraft} disabled={busy} data-testid="save-receive-draft">Save Draft</Button><Button onClick={save} disabled={busy || !supplierId} data-testid="save-receive" className="bg-primary hover:bg-teal-800">{busy ? "Saving…" : "Receive"}</Button></DialogFooter>
       </DialogContent>

@@ -1,5 +1,66 @@
-from core import db, ORG_ID, uid, now_iso, m, D
+from fastapi import HTTPException
+from core import db, ORG_ID, uid, now_iso, m, D, audit
 from datetime import datetime, timezone
+
+
+def _normalize_barcode(value):
+    return " ".join(str(value or "").strip().split()).casefold()
+
+
+async def set_missing_barcodes(assignments, principal=None):
+    """Assign barcodes only to products that do not already have one.
+
+    Validate the whole batch before updating any product so one duplicate cannot
+    leave a partially updated catalog.
+    """
+    products = await db.products.find(
+        {"org_id": ORG_ID}, {"_id": 0, "id": 1, "name": 1, "barcode": 1}
+    ).to_list(20000)
+    by_id = {product["id"]: product for product in products}
+    used = {
+        _normalize_barcode(product.get("barcode")): product
+        for product in products if _normalize_barcode(product.get("barcode"))
+    }
+    pending = {}
+    pending_owner = {}
+
+    for product_id, raw_barcode in assignments:
+        barcode = str(raw_barcode or "").strip()
+        normalized = _normalize_barcode(barcode)
+        if not normalized:
+            continue
+        product = by_id.get(product_id)
+        if not product:
+            raise HTTPException(status_code=404, detail="A product selected for receiving was not found")
+        current = str(product.get("barcode") or "").strip()
+        if current:
+            if _normalize_barcode(current) != normalized:
+                raise HTTPException(status_code=409, detail=f"{product.get('name', 'Product')} already has a barcode")
+            continue
+        duplicate = used.get(normalized)
+        if duplicate and duplicate.get("id") != product_id:
+            raise HTTPException(status_code=409, detail=f"Barcode already belongs to {duplicate.get('name', 'another product')}")
+        other_pending = pending_owner.get(normalized)
+        if other_pending and other_pending != product_id:
+            raise HTTPException(status_code=409, detail="The same barcode cannot be assigned to multiple products in one receipt")
+        pending[product_id] = barcode
+        pending_owner[normalized] = product_id
+
+    for product_id, barcode in pending.items():
+        product = by_id[product_id]
+        query = {"id": product_id, "org_id": ORG_ID}
+        if "barcode" in product:
+            query["barcode"] = product["barcode"]
+        else:
+            query["barcode"] = {"$exists": False}
+        result = await db.products.update_one(
+            query,
+            {"$set": {"barcode": barcode, "updated_at": now_iso()}},
+        )
+        if result.matched_count != 1:
+            raise HTTPException(status_code=409, detail="Product barcode changed during receipt; refresh and try again")
+        await audit(principal, "item.barcode_added", "product", product_id,
+                    after={"barcode": barcode})
 
 
 async def get_level(store_id: str, product_id: str) -> float:

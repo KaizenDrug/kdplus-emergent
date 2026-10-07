@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 from core import (db, ORG_ID, uid, now_iso, m, D, MANILA,
                   get_current_principal, require_perm, audit, next_number, notify)
-from inventory_lib import record_movement, get_level
+from inventory_lib import record_movement, get_level, set_missing_barcodes
 
 router = APIRouter(prefix="/api", tags=["inventory"])
 
@@ -186,6 +186,7 @@ async def delete_receive_draft(draft_id: str, principal=Depends(require_perm("in
 # ---------------- Goods receiving (creates lots + movements + avg cost) ----------------
 class ReceiveLine(BaseModel):
     product_id: str
+    barcode: Optional[str] = None
     lot_number: Optional[str] = ""
     expiry_date: Optional[str] = None      # YYYY-MM-DD
     quantity: float                          # in selling UOM (pieces)
@@ -202,13 +203,22 @@ class ReceiveIn(BaseModel):
 
 @router.post("/inventory/receive")
 async def receive_stock(body: ReceiveIn, principal=Depends(require_perm("inventory.receive"))):
+    # Validate product lines and barcode assignments before posting any stock.
+    for ln in body.lines:
+        p = await db.products.find_one(
+            {"id": ln.product_id, "org_id": ORG_ID},
+            {"_id": 0, "name": 1, "product_type": 1},
+        )
+        if not p:
+            raise HTTPException(status_code=404, detail="A selected product was not found")
+        if p.get("product_type", "REGULAR") == "PROMO":
+            raise HTTPException(status_code=400, detail=f"Receive stock under the regular products included in {p['name']}")
+        if D(ln.quantity) <= 0:
+            raise HTTPException(status_code=400, detail=f"{p['name']}: received quantity must be greater than zero")
+    await set_missing_barcodes([(ln.product_id, ln.barcode) for ln in body.lines], principal)
     number = await next_number("GRN")
     for ln in body.lines:
         p = await db.products.find_one({"id": ln.product_id, "org_id": ORG_ID})
-        if not p:
-            continue
-        if p.get("product_type", "REGULAR") == "PROMO":
-            raise HTTPException(status_code=400, detail=f"Receive stock under the regular products included in {p['name']}")
         lot_id = None
         if p.get("track_lots") or p.get("track_expiry"):
             lot_id = uid()

@@ -35,6 +35,7 @@ class POStatusIn(BaseModel):
 class POReceiveLine(BaseModel):
     product_id: str
     qty: float
+    barcode: Optional[str] = None
     substitution_decision: Optional[str] = None  # ACCEPT or REJECT when a different product was delivered
     received_product_id: Optional[str] = None    # catalog product actually delivered (accepted substitutions only)
     substitute_description: Optional[str] = ""   # optional description when a substitute is rejected
@@ -208,7 +209,7 @@ async def cancel_remaining(pid: str, body: CancelRemainingIn, principal=Depends(
 # ---------------- Receive (with cost variance) ----------------
 @router.post("/purchase-orders/{pid}/receive")
 async def receive_po(pid: str, body: POReceiveIn, principal=Depends(require_perm("inventory.receive"))):
-    from inventory_lib import record_movement, get_level
+    from inventory_lib import record_movement, get_level, set_missing_barcodes
 
     po = await db.purchase_orders.find_one({"id": pid, "org_id": ORG_ID})
     if not po:
@@ -274,6 +275,11 @@ async def receive_po(pid: str, body: POReceiveIn, principal=Depends(require_perm
 
     if not planned and not rejected:
         raise HTTPException(status_code=400, detail="Enter a received quantity for at least one line")
+
+    # Save barcodes only for accepted stock items; rejected deliveries never add catalog codes.
+    await set_missing_barcodes(
+        [(pl["received_product_id"], pl["ln"].barcode) for pl in planned], principal,
+    )
 
     # ---------- Phase 2: apply ----------
     receipt_group_id = uid()

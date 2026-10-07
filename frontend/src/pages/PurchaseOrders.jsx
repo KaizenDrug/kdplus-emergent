@@ -301,7 +301,7 @@ function ReceivePanel({ po, prodMap, levels, threshold, onCancel, onDone }) {
   const [rows, setRows] = useState(open.map((i) => ({
     product_id: i.product_id, name: i.name, ordered: Number(i.ordered_unit_cost), outstanding: Number(i.qty_outstanding),
     received: Number(i.qty_received), cancelled: Number(i.qty_cancelled), qty: "", actual: String(i.ordered_unit_cost),
-    lot_number: "", expiry_date: "", variance_reason: "", variance_note: "",
+    lot_number: "", expiry_date: "", barcode: "", variance_reason: "", variance_note: "",
     substitution_decision: "", received_product_id: "", substitute_description: "",
   })));
   const [busy, setBusy] = useState(false);
@@ -345,7 +345,7 @@ function ReceivePanel({ po, prodMap, levels, threshold, onCancel, onDone }) {
       if (over && row.variance_reason === "Other" && !row.variance_note.trim()) { toast.error(`${row.name}: add a note for 'Other'`); return; }
       lines.push({ product_id: row.product_id, qty, actual_unit_cost: Number(row.actual) || 0,
         ...(row.substitution_decision === "ACCEPT" ? { substitution_decision: "ACCEPT", received_product_id: row.received_product_id } : {}),
-        lot_number: row.lot_number, expiry_date: row.expiry_date || null,
+        barcode: row.barcode, lot_number: row.lot_number, expiry_date: row.expiry_date || null,
         variance_reason: row.variance_reason, variance_note: row.variance_note });
       void i;
     }
@@ -398,7 +398,7 @@ function ReceivePanel({ po, prodMap, levels, threshold, onCancel, onDone }) {
               </div>
               {row.substitution_decision === "ACCEPT" && (
                 <div className="space-y-1">
-                  <Select value={row.received_product_id} onValueChange={(value) => set(i, "received_product_id", value)}>
+                  <Select value={row.received_product_id} onValueChange={(value) => { set(i, "received_product_id", value); set(i, "barcode", ""); }}>
                     <SelectTrigger data-testid={`recv-substitute-product-${it.product_id}`}><SelectValue placeholder="Select the catalog item delivered" /></SelectTrigger>
                     <SelectContent>{Object.values(prodMap).filter((p) => p.id !== row.product_id && p.active !== false && p.track_inventory !== false && (p.product_type || "REGULAR") === "REGULAR").sort(byProductName).map((p) => <SelectItem key={p.id} value={p.id}>{p.name} · {p.sku || "No SKU"}</SelectItem>)}</SelectContent>
                   </Select>
@@ -418,6 +418,12 @@ function ReceivePanel({ po, prodMap, levels, threshold, onCancel, onDone }) {
                 <input className="w-full mt-1 px-2 py-1.5 border rounded text-sm" value={row.lot_number} onChange={(e) => set(i, "lot_number", e.target.value)} data-testid={`recv-lot-${it.product_id}`} /></label>
               <label className="block"><span className="text-[10px] font-bold uppercase text-slate-500">Expiry</span>
                 <input type="date" className="w-full mt-1 px-2 py-1.5 border rounded text-sm" value={row.expiry_date} onChange={(e) => set(i, "expiry_date", e.target.value)} data-testid={`recv-expiry-${it.product_id}`} /></label>
+              {row.substitution_decision !== "REJECT" && !prodMap[row.substitution_decision === "ACCEPT" ? row.received_product_id : it.product_id]?.barcode && (
+                <label className="block"><span className="text-[10px] font-bold uppercase text-slate-500">Barcode (optional)</span>
+                  <input className="w-full mt-1 px-2 py-1.5 border rounded text-sm" value={row.barcode || ""}
+                    onChange={(e) => set(i, "barcode", e.target.value)} placeholder="Scan or enter barcode"
+                    autoComplete="off" data-testid={`recv-barcode-${it.product_id}`} /></label>
+              )}
               <div className="col-span-2 text-xs text-slate-500 bg-slate-50 rounded p-2 self-end">
                 On Hand <b className="text-slate-700">{c.onhand}</b> · Avg <b className="text-slate-700">{peso(c.avg)}</b> · Latest <b className="text-slate-700">{peso(c.latest)}</b>
                 {c.qty > 0 && <> → Est. New On Hand <b className="text-slate-700">{c.newHand}</b> · Est. Avg <b className="text-slate-700">{peso(c.newAvg)}</b></>}
