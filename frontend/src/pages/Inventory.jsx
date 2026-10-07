@@ -9,7 +9,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { PackagePlus, SlidersHorizontal, CalendarClock, AlertTriangle, PackageX, Search, X } from "lucide-react";
+import { PackagePlus, SlidersHorizontal, CalendarClock, AlertTriangle, PackageX, Search, X, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import SortableHeader from "@/components/SortableHeader";
 import { matchesSearchTerms, sortTableRows } from "@/lib/utils";
@@ -58,6 +58,21 @@ export default function Inventory() {
   const [receiveDraft, setReceiveDraft] = useState(null);
   const [drafts, setDrafts] = useState([]);
   const loadDrafts = useCallback(() => api.get(`/inventory/receive-drafts?store_id=${store}`).then((r) => setDrafts(r.data)).catch(() => setDrafts([])), [store]);
+  const deleteDraft = async (draft) => {
+    const supplier = suppliers.find((s) => s.id === draft.supplier_id)?.company || "this receipt";
+    if (!window.confirm(`Delete the saved stock receipt for ${supplier}? This only removes the unfinished draft; it does not change stock.`)) return;
+    try {
+      await api.delete(`/inventory/receive-drafts/${draft.id}`);
+      setDrafts((current) => current.filter((item) => item.id !== draft.id));
+      if (receiveDraft?.id === draft.id) {
+        setReceive(false);
+        setReceiveDraft(null);
+      }
+      toast.success("Saved stock receipt deleted");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not delete saved stock receipt");
+    }
+  };
   useEffect(() => { loadDrafts(); }, [loadDrafts]);
   const [adjust, setAdjust] = useState(false);
   const [search, setSearch] = useState("");
@@ -129,7 +144,12 @@ export default function Inventory() {
         {drafts.map((draft) => <div key={draft.id} className="flex flex-wrap items-center justify-between gap-2 border-t pt-2">
           <div><span className="font-medium">{suppliers.find((s) => s.id === draft.supplier_id)?.company || "Supplier not selected"}</span>
             <div className="text-sm text-slate-500">{draft.lines.length} line(s) · {fmtDate(draft.updated_at)}</div></div>
-          <Button variant="outline" onClick={() => { setReceiveDraft(draft); setReceive(true); }}>Resume</Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => { setReceiveDraft(draft); setReceive(true); }}>Resume</Button>
+            <Button variant="destructive" onClick={() => deleteDraft(draft)} aria-label="Delete saved stock receipt" title="Delete saved stock receipt" data-testid={`delete-receive-draft-${draft.id}`}>
+              <Trash2 className="mr-1 h-4 w-4" />Delete
+            </Button>
+          </div>
         </div>)}
       </Card>}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-4">
