@@ -64,6 +64,7 @@ class ParkedTicketLineIn(BaseModel):
 class ParkedTicketIn(BaseModel):
     store_id: str
     items: List[ParkedTicketLineIn]
+    ticket_name: str = ""
 
 
 async def get_settings():
@@ -85,6 +86,9 @@ async def save_parked_ticket(body: ParkedTicketIn,
                              principal=Depends(require_perm("pos.sell"))):
     if not body.items:
         raise HTTPException(status_code=400, detail="A ticket must contain at least one item")
+    ticket_name = body.ticket_name.strip()
+    if len(ticket_name) > 80:
+        raise HTTPException(status_code=422, detail="Ticket name must be 80 characters or fewer")
     items = []
     for line in body.items:
         if not math.isfinite(line.qty) or line.qty <= 0:
@@ -104,6 +108,7 @@ async def save_parked_ticket(body: ParkedTicketIn,
     now = now_iso()
     doc = {
         "id": uid(), "org_id": ORG_ID, "store_id": body.store_id, "items": items,
+        "ticket_name": ticket_name,
         "created_by_id": principal.get("id"), "created_by_name": principal.get("name"),
         "created_at": now, "updated_at": now,
     }
