@@ -54,6 +54,8 @@ export default function POS() {
   const [showParkedTickets, setShowParkedTickets] = useState(false);
   const [ticketBusy, setTicketBusy] = useState(false);
   const [activeParkedTicketId, setActiveParkedTicketId] = useState(null);
+  const [showTicketNameDialog, setShowTicketNameDialog] = useState(false);
+  const [ticketName, setTicketName] = useState("");
   const [online, setOnline] = useState(navigator.onLine);
   const [syncStatus, setSyncStatus] = useState("idle"); // idle | syncing | error
   const [pending, setPending] = useState(queueCount());
@@ -98,18 +100,25 @@ export default function POS() {
     .then((r) => setParkedTickets(r.data)).catch(() => setParkedTickets([])), [storeId]);
   useEffect(() => { loadParkedTickets(); }, [loadParkedTickets]);
 
+  const openSaveTicketDialog = () => {
+    if (!activeParkedTicketId) setTicketName("");
+    setShowTicketNameDialog(true);
+  };
+
   const saveTicket = async () => {
     if (!cart.length) return;
     setTicketBusy(true);
     try {
       const { data } = await api.post("/pos/parked-tickets", {
-        store_id: storeId, items: cart.map(({ product_id, qty }) => ({ product_id, qty })),
+        store_id: storeId, ticket_name: ticketName.trim(),
+        items: cart.map(({ product_id, qty }) => ({ product_id, qty })),
       });
       if (activeParkedTicketId) {
         await api.delete(`/pos/parked-tickets/${activeParkedTicketId}`).catch(() => {});
       }
       setParkedTickets((old) => [data, ...old.filter((t) => t.id !== activeParkedTicketId)]);
       setCart([]); setActiveParkedTicketId(null); setMobileCartOpen(false);
+      setShowTicketNameDialog(false); setTicketName("");
       toast.success("Ticket saved. You can resume it from Saved Tickets.");
     } catch (e) { toast.error(e.response?.data?.detail || "Could not save ticket"); }
     finally { setTicketBusy(false); }
@@ -127,6 +136,7 @@ export default function POS() {
       toast.error("This ticket contains a product that is no longer available. It remains saved."); return;
     }
     setCart(resumed); setActiveParkedTicketId(ticket.id); setShowParkedTickets(false);
+    setTicketName(ticket.ticket_name || "");
     setMobileCartOpen(true); toast.success("Ticket resumed");
   };
 
@@ -319,7 +329,7 @@ export default function POS() {
                 </button>
               )}
               {cart.length > 0 && (
-                <button type="button" onClick={saveTicket} disabled={ticketBusy || !online}
+                <button type="button" onClick={openSaveTicketDialog} disabled={ticketBusy || !online}
                   data-testid="save-ticket-toolbar"
                   className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 text-sm font-bold text-amber-900 hover:bg-amber-100 disabled:opacity-40">
                   <BookmarkPlus className="h-4 w-4" />{ticketBusy ? "Saving…" : "Save Ticket"}
@@ -402,7 +412,7 @@ export default function POS() {
               data-testid="print-current-ticket" className="w-full mb-2 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-semibold hover:bg-slate-50 disabled:opacity-40">
               <Printer className="w-4 h-4 inline mr-1" />Print Ticket
             </button>
-            <button type="button" onClick={saveTicket} disabled={!cart.length || ticketBusy || !online}
+            <button type="button" onClick={openSaveTicketDialog} disabled={!cart.length || ticketBusy || !online}
               data-testid="save-ticket" className="w-full mb-2 py-2.5 rounded-xl border border-amber-300 bg-amber-50 text-amber-900 font-semibold hover:bg-amber-100 disabled:opacity-40">
               <BookmarkPlus className="w-4 h-4 inline mr-1" />{ticketBusy ? "Saving…" : "Save Ticket"}
             </button>
@@ -439,6 +449,23 @@ export default function POS() {
           onSaved={() => { setShowUnavailable(false); setQ(""); searchRef.current?.focus(); }}
         />
       )}
+      {showTicketNameDialog && <Dialog open onOpenChange={(open) => { if (!open && !ticketBusy) setShowTicketNameDialog(false); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Name this ticket</DialogTitle></DialogHeader>
+          <label className="block text-sm font-medium text-slate-700" htmlFor="saved-ticket-name">Ticket name <span className="font-normal text-slate-400">(optional)</span></label>
+          <input id="saved-ticket-name" value={ticketName} maxLength={80} autoFocus
+            onChange={(e) => setTicketName(e.target.value)} onFocus={(e) => e.currentTarget.select()}
+            placeholder="e.g. Customer name or prescription number"
+            className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            data-testid="saved-ticket-name" />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowTicketNameDialog(false)} disabled={ticketBusy}>Cancel</Button>
+            <Button onClick={saveTicket} disabled={ticketBusy || !cart.length || !online} data-testid="confirm-save-ticket">
+              {ticketBusy ? "Saving…" : "Save Ticket"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>}
       {showParkedTickets && <ParkedTicketsDialog tickets={parkedTickets} busy={ticketBusy} hasCurrentCart={cart.length > 0}
         onResume={resumeTicket} onPrint={(ticket) => {
           if (!printThermalTicket(ticket, settings)) toast.error("Could not prepare the ticket for printing");
@@ -465,7 +492,7 @@ function ParkedTicketsDialog({ tickets, busy, hasCurrentCart, onResume, onPrint,
             return (
               <div key={ticket.id} className="rounded-lg border border-slate-200 p-3 flex flex-wrap items-center gap-3" data-testid={`parked-ticket-${ticket.id}`}>
                 <div className="flex-1 min-w-[180px]">
-                  <div className="font-semibold text-slate-800">Ticket · {fmtDate(ticket.created_at)}</div>
+                  <div className="font-semibold text-slate-800">{ticket.ticket_name || `Ticket · ${fmtDate(ticket.created_at)}`}</div>
                   <div className="text-xs text-slate-500">{count} item(s) · {peso(total)} · Saved by {ticket.created_by_name || "Cashier"}</div>
                   <div className="text-xs text-slate-400 mt-1 line-clamp-2">{(ticket.items || []).map((item) => `${item.name} × ${item.qty}`).join(", ")}</div>
                 </div>
