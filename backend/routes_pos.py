@@ -394,8 +394,10 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
     if discount_scheme:
         selected_products = set(discount_scheme.get("product_ids") or [])
         eligible_subtotal = sum(
-            (D(line.get("line_gross", 0)) for line in line_docs
-             if not selected_products or line.get("product_id") in selected_products), D(0)
+            (D(line.get("line_gross", 0)) * D(line.get("discount_eligible_qty", 0)) / D(line.get("qty", 1))
+             for line in line_docs
+             if D(line.get("qty", 0)) > 0
+             and (not selected_products or line.get("product_id") in selected_products)), D(0)
         )
         minimum_subtotal = D(discount_scheme.get("min_subtotal", 0))
         if eligible_subtotal <= 0:

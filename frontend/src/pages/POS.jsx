@@ -129,7 +129,7 @@ export default function POS() {
     const resumed = (ticket.items || []).map((line) => {
       const p = products.find((product) => product.id === line.product_id);
       if (!p || p.active === false) return null;
-      return { product_id: p.id, name: p.name, unit_price: Number(p.price), qty: Number(line.qty),
+      return { product_id: p.id, name: p.name, unit_price: Number(p.price), average_cost: Number(p.average_cost || 0), qty: Number(line.qty),
         tax_mode: p.tax_mode, discount_eligible: p.discount_eligible !== false };
     });
     if (!resumed.length || resumed.some((line) => !line)) {
@@ -206,7 +206,7 @@ export default function POS() {
     setCart((c) => {
       const ex = c.find((i) => i.product_id === p.id);
       if (ex) return c.map((i) => (i.product_id === p.id ? { ...i, qty: i.qty + 1 } : i));
-      return [...c, { product_id: p.id, name: p.name, unit_price: p.price, qty: 1, tax_mode: p.tax_mode, discount_eligible: p.discount_eligible !== false }];
+      return [...c, { product_id: p.id, name: p.name, unit_price: p.price, average_cost: Number(p.average_cost || 0), qty: 1, tax_mode: p.tax_mode, discount_eligible: p.discount_eligible !== false }];
     });
   };
 
@@ -709,7 +709,11 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
   const selectedScheme = discountType === "REGULAR" ? activeSchemes.find((scheme) => scheme.id === discountSchemeId) : null;
   const selectedProducts = new Set(selectedScheme?.product_ids || []);
   const schemeEligibleSubtotal = selectedScheme
-    ? cart.reduce((sum, item) => sum + ((!selectedProducts.size || selectedProducts.has(item.product_id)) ? item.unit_price * item.qty : 0), 0)
+    ? cart.reduce((sum, item) => {
+      if (selectedProducts.size && !selectedProducts.has(item.product_id)) return sum;
+      const eligible = Math.min(item.qty, Math.max(0, Number(eligibleQty[item.product_id]) || 0));
+      return sum + item.unit_price * eligible;
+    }, 0)
     : 0;
   const schemeMinimum = Number(selectedScheme?.min_subtotal || 0);
   const schemeMinimumMet = !selectedScheme || schemeEligibleSubtotal >= schemeMinimum;
@@ -753,8 +757,12 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
     const nextId = value === "manual" ? "" : value;
     const nextScheme = activeSchemes.find((scheme) => scheme.id === nextId);
     const nextProducts = new Set(nextScheme?.product_ids || []);
+    const nextEligibleQty = Object.fromEntries(cart.map((item) => [
+      item.product_id,
+      !nextProducts.size || nextProducts.has(item.product_id) ? item.qty : 0,
+    ]));
     const eligibleSubtotal = nextScheme
-      ? cart.reduce((sum, item) => sum + ((!nextProducts.size || nextProducts.has(item.product_id)) ? item.unit_price * item.qty : 0), 0)
+      ? cart.reduce((sum, item) => sum + item.unit_price * (Number(nextEligibleQty[item.product_id]) || 0), 0)
       : 0;
     const minimumMet = !nextScheme || eligibleSubtotal >= Number(nextScheme.min_subtotal || 0);
     const discount = nextScheme && minimumMet
@@ -768,6 +776,7 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
       return wasExact ? [{ ...current[0], amount: nextTotal.toFixed(2) }] : current;
     });
     setDiscountSchemeId(nextId);
+    if (nextScheme) setEligibleQty((current) => ({ ...current, ...nextEligibleQty }));
     if (nextId) setOrderDiscount("");
   };
 
@@ -832,7 +841,14 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label className="text-[11px] font-bold uppercase text-slate-500">Discount Type</label>
-              <Select value={discountType} onValueChange={(value) => { setDiscountType(value); if (value !== "REGULAR") setDiscountSchemeId(""); }}>
+              <Select value={discountType} onValueChange={(value) => {
+                setDiscountType(value);
+                if (value !== "REGULAR") {
+                  setDiscountSchemeId("");
+                  setEligibleQty(Object.fromEntries(cart.map((item) => [item.product_id,
+                    item.discount_eligible !== false ? item.qty : 0])));
+                }
+              }}>
                 <SelectTrigger className="mt-1" data-testid="discount-type"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="REGULAR">Regular</SelectItem>
@@ -861,22 +877,6 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
                 <div><label className="text-[11px] font-bold uppercase text-slate-500">Name</label>
                   <input value={spName} onChange={(e) => setSpName(e.target.value)} data-testid="spwd-name" className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 text-sm" placeholder="Cardholder name" /></div>
               </div>
-              <div>
-                <div className="text-[11px] font-bold uppercase text-slate-500 mb-1">Items eligible for discount</div>
-                <div className="space-y-1.5">
-                  {cart.map((i) => <label key={i.product_id} className="flex items-center gap-2 text-sm bg-white/70 rounded px-2 py-1.5">
-                    <input type="checkbox" checked={Number(eligibleQty[i.product_id]) > 0}
-                      onChange={(e) => setEligibleQty((x) => ({ ...x, [i.product_id]: e.target.checked ? i.qty : 0 }))}
-                      data-testid={`discount-eligible-${i.product_id}`} className="w-4 h-4 accent-teal-600" />
-                    <span className="flex-1">{i.name}</span>
-                    {i.qty > 1 && Number(eligibleQty[i.product_id]) > 0 && <input type="number" min="0" max={i.qty} step="1"
-                      value={eligibleQty[i.product_id]} onChange={(e) => setEligibleQty((x) => ({ ...x, [i.product_id]: e.target.value }))}
-                      onClick={(e) => e.stopPropagation()} data-testid={`discount-eligible-qty-${i.product_id}`}
-                      className="w-16 px-2 py-1 border rounded text-right text-sm" title="Eligible quantity" />}
-                    <span className="text-xs text-slate-500">of {i.qty}</span>
-                  </label>)}
-                </div>
-              </div>
             </div>
           )}
 
@@ -892,9 +892,40 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
                 </Select>
                 {selectedScheme && !schemeMinimumMet && <p className="text-xs text-amber-700 mt-1">Eligible items need {peso(schemeMinimum)} minimum; current eligible subtotal is {peso(schemeEligibleSubtotal)}.</p>}
                 {selectedScheme && schemeMinimumMet && schemeEligibleSubtotal <= 0 && <p className="text-xs text-amber-700 mt-1">There are no eligible products in this ticket.</p>}
+                {selectedScheme && <p className="text-xs text-slate-500 mt-1">Choose which items and quantities receive this scheme discount.</p>}
               </div>
               {!selectedScheme && <div><label className="text-[11px] font-bold uppercase text-slate-500">Manual Order Discount (₱)</label>
                 <input type="number" min="0" step="0.01" value={orderDiscount} onChange={(e) => setOrderDiscount(e.target.value)} data-testid="order-discount" className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 text-sm" placeholder="0.00" /></div>}
+            </div>
+          )}
+
+          {(discountType !== "REGULAR" || selectedScheme) && (
+            <div className="space-y-1.5 p-3 bg-teal-50 rounded-lg">
+              <div className="text-[11px] font-bold uppercase text-slate-500 mb-1">
+                Items eligible for {selectedScheme ? selectedScheme.name : "discount"}
+              </div>
+              {cart.map((i) => {
+                const schemeAllowsProduct = !selectedScheme || !selectedProducts.size || selectedProducts.has(i.product_id);
+                const discountTypeAllowsProduct = Boolean(selectedScheme) || i.discount_eligible !== false;
+                const eligibleCount = Math.min(i.qty, Math.max(0, Number(eligibleQty[i.product_id]) || 0));
+                const margin = Number(i.unit_price) > 0 && Number(i.average_cost) > 0
+                  ? ((Number(i.unit_price) - Number(i.average_cost)) / Number(i.unit_price)) * 100
+                  : null;
+                return <label key={i.product_id} className={`flex items-center gap-2 text-sm bg-white/70 rounded px-2 py-1.5 ${!schemeAllowsProduct || !discountTypeAllowsProduct ? "opacity-50" : ""}`}>
+                  <input type="checkbox" checked={eligibleCount > 0} disabled={!schemeAllowsProduct || !discountTypeAllowsProduct}
+                    onChange={(e) => setEligibleQty((x) => ({ ...x, [i.product_id]: e.target.checked ? i.qty : 0 }))}
+                    data-testid={`discount-eligible-${i.product_id}`} className="w-4 h-4 accent-teal-600" />
+                  <span className="flex-1 min-w-0">
+                    <span className="block truncate">{i.name}</span>
+                    <span className="text-xs text-slate-500">Gross margin: {margin === null ? "—" : `${margin.toFixed(1)}%`}</span>
+                  </span>
+                  {i.qty > 1 && eligibleCount > 0 && <input type="number" min="0" max={i.qty} step="1"
+                    value={eligibleQty[i.product_id]} onChange={(e) => setEligibleQty((x) => ({ ...x, [i.product_id]: e.target.value }))}
+                    onClick={(e) => e.stopPropagation()} data-testid={`discount-eligible-qty-${i.product_id}`}
+                    className="w-16 px-2 py-1 border rounded text-right text-sm" title="Eligible quantity" />}
+                  <span className="text-xs text-slate-500">of {i.qty}</span>
+                </label>;
+              })}
             </div>
           )}
 

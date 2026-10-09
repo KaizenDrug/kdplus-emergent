@@ -120,6 +120,23 @@ async def test_discount_scheme_is_calculated_and_saved_from_server_settings(pos_
     assert sale["discount_total"] == 11.2
     assert sale["total"] == 100.8
 
+@pytest.mark.asyncio
+async def test_discount_scheme_only_applies_to_cashier_selected_quantity(pos_db):
+    await pos_db.settings.update_one({"org_id": core.ORG_ID}, {"$set": {"discount_schemes": [{
+        "id": "scheme-10", "name": "Eligible Medicine 10%", "discount_type": "PERCENT",
+        "value": 10, "min_subtotal": 0, "product_ids": ["p_med"], "enabled": True,
+    }]}})
+    sale = await routes_pos.create_sale(routes_pos.SaleIn(
+        store_id="store_main", register_id="reg_1", shift_id="shift1",
+        items=[routes_pos.SaleLine(product_id="p_med", qty=2, discount_eligible_qty=1)],
+        payments=[routes_pos.PaymentIn(method="Cash", amount=224)],
+        discount_scheme_id="scheme-10", client_txn_id="txn-scheme-partial-qty",
+    ), principal=PRINCIPAL)
+
+    assert sale["order_discount"] == 11.2
+    assert sale["total"] == 212.8
+    assert sale["items"][0]["discount_eligible_qty"] == 1
+
 
 @pytest.mark.asyncio
 async def test_discount_scheme_rejects_below_minimum_and_manual_stacking(pos_db):
