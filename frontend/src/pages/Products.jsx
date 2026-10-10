@@ -105,7 +105,7 @@ export default function Products() {
     setColumns(next);
     try { localStorage.setItem(preferenceKey, JSON.stringify(next)); } catch {}
   };
-  const [statusFilter, setStatusFilter] = useState("active");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [statusTarget, setStatusTarget] = useState(null);
   const [statusBusy, setStatusBusy] = useState(false);
   const [editing, setEditing] = useState(null);

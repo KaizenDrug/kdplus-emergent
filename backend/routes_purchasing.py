@@ -127,7 +127,14 @@ async def po_receipts(pid: str, principal=Depends(get_current_principal)):
 # ---------------- Create ----------------
 async def _build_items(body_items):
     items = []
+    seen_product_ids = set()
     for it in body_items:
+        if it.product_id in seen_product_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="A product can only appear once on a purchase order. Combine its quantity on the existing line.",
+            )
+        seen_product_ids.add(it.product_id)
         p = await db.products.find_one({"id": it.product_id, "org_id": ORG_ID}, {"_id": 0})
         if not p:
             raise HTTPException(status_code=404, detail="A selected purchase-order product was not found")

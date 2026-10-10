@@ -1,4 +1,4 @@
-import React, { Suspense, lazy } from "react";
+import React, { Suspense, lazy, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "sonner";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
@@ -66,6 +66,17 @@ function DashboardIndex() {
 }
 
 function App() {
+  useEffect(() => {
+    // Blur a focused number field before the browser's wheel default can change its value.
+    // The wheel still scrolls the surrounding page or list.
+    const blurNumberInputOnWheel = (event) => {
+      const target = event.target instanceof Element ? event.target.closest('input[type="number"]') : null;
+      if (target && target === document.activeElement) target.blur();
+    };
+    window.addEventListener("wheel", blurNumberInputOnWheel, { capture: true });
+    return () => window.removeEventListener("wheel", blurNumberInputOnWheel, { capture: true });
+  }, []);
+
   return (
     <AuthProvider>
       <Toaster position="top-right" richColors />

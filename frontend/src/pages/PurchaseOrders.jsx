@@ -129,7 +129,15 @@ function POForm({ po, products, suppliers, onClose, onSaved }) {
   }, [lines]);
   const [busy, setBusy] = useState(false);
   const upd = (i, k, v) => setLines((l) => l.map((x, idx) => idx === i ? { ...x, [k]: v } : x));
-  const pickProduct = (i, pid) => { const p = products.find((x) => x.id === pid); setLines((l) => l.map((x, idx) => idx === i ? { ...x, product_id: pid, unit_cost: x.unit_cost || p?.average_cost || "" } : x)); };
+  const pickProduct = (i, pid) => {
+    if (pid && lines.some((line, index) => index !== i && line.product_id === pid)) {
+      const name = products.find((product) => product.id === pid)?.name || "This item";
+      toast.error(`${name} is already on this purchase order. Add its quantity to the existing line.`);
+      return;
+    }
+    const p = products.find((x) => x.id === pid);
+    setLines((l) => l.map((x, idx) => idx === i ? { ...x, product_id: pid, unit_cost: x.unit_cost || p?.average_cost || "" } : x));
+  };
   const total = lines.reduce((s, l) => s + (Number(l.qty_ordered) || 0) * (Number(l.unit_cost) || 0), 0);
 
   const save = async () => {
@@ -140,6 +148,12 @@ function POForm({ po, products, suppliers, onClose, onSaved }) {
     }
     const valid = entered;
     if (!valid.length) { toast.error("Add a line"); return; }
+    const duplicateLine = valid.find((line, index) => valid.some((other, otherIndex) => otherIndex !== index && other.product_id === line.product_id));
+    if (duplicateLine) {
+      const name = products.find((product) => product.id === duplicateLine.product_id)?.name || "An item";
+      toast.error(`${name} appears more than once. Keep one line and combine the quantities.`);
+      return;
+    }
     setBusy(true);
     const payload = { discount: po?.discount || 0, tax: po?.tax || 0, shipping: po?.shipping || 0, additional_costs: po?.additional_costs || 0, notes: po?.notes || "", supplier_id: supplier, store_id: po?.store_id || "store_main", expected_date: expected || null,
       items: valid.map((l) => ({ product_id: l.product_id, name: products.find((p) => p.id === l.product_id)?.name, qty_ordered: Number(l.qty_ordered), unit_cost: Number(l.unit_cost) || 0 })) };
