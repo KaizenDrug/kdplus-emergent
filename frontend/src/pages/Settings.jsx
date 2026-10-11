@@ -186,7 +186,7 @@ function TaxTab({ s, save }) {
 }
 
 const newScheme = () => ({
-  id: `disc-${Date.now()}`, name: "", discount_type: "PERCENT", value: 10,
+  id: `disc-${Date.now()}`, name: "", discount_type: "PERCENT", value: 10, additional_percent: 0,
   min_subtotal: 0, product_scope: "ALL", product_ids: [], start_date: "", end_date: "", enabled: true,
 });
 
@@ -206,15 +206,19 @@ function DiscountSchemesTab({ s, save }) {
   const saveScheme = () => {
     const name = form?.name?.trim();
     const value = Number(form?.value);
+    const additionalPercent = Number(form?.additional_percent || 0);
     const minimum = Number(form?.min_subtotal || 0);
     if (!name) { toast.error("Enter a scheme name"); return; }
     if (!Number.isFinite(value) || value <= 0 || (form.discount_type === "PERCENT" && value > 100)) {
       toast.error(form.discount_type === "PERCENT" ? "Enter a percentage from 0.01 to 100" : "Enter a discount amount greater than zero"); return;
     }
+    if (form.discount_type === "PERCENT" && (!Number.isFinite(additionalPercent) || additionalPercent < 0 || additionalPercent > 100)) {
+      toast.error("Enter an additional percentage from 0 to 100"); return;
+    }
     if (!Number.isFinite(minimum) || minimum < 0) { toast.error("Minimum purchase cannot be negative"); return; }
     if (form.product_scope === "SELECTED" && !form.product_ids.length) { toast.error("Choose at least one eligible product"); return; }
     if (form.start_date && form.end_date && form.end_date < form.start_date) { toast.error("End date must be on or after start date"); return; }
-    const normalized = { ...form, name, value, min_subtotal: minimum, product_ids: form.product_ids || [] };
+    const normalized = { ...form, name, value, additional_percent: form.discount_type === "PERCENT" ? additionalPercent : 0, min_subtotal: minimum, product_ids: form.product_ids || [] };
     const next = schemes.some((x) => x.id === normalized.id)
       ? schemes.map((x) => x.id === normalized.id ? normalized : x)
       : [...schemes, normalized];
@@ -254,6 +258,7 @@ function DiscountSchemesTab({ s, save }) {
             </Select>
           </label>
           <label className="text-xs font-semibold text-slate-600">{form.discount_type === "PERCENT" ? "Percent (%)" : "Amount (₱)"}<input type="number" min="0.01" step="0.01" className={`${inputCls} mt-1`} value={form.value} onChange={(e) => setForm((x) => ({ ...x, value: e.target.value }))} data-testid="scheme-value" /></label>
+          {form.discount_type === "PERCENT" && <label className="text-xs font-semibold text-slate-600">Additional percent after first discount (%)<input type="number" min="0" max="100" step="0.01" className={`${inputCls} mt-1`} value={form.additional_percent ?? 0} onChange={(e) => setForm((x) => ({ ...x, additional_percent: e.target.value }))} data-testid="scheme-additional-percent" /><span className="block mt-1 font-normal text-slate-500">Applied to the price remaining after the first discount.</span></label>}
           <label className="text-xs font-semibold text-slate-600">Minimum eligible purchase (₱)<input type="number" min="0" step="0.01" className={`${inputCls} mt-1`} value={form.min_subtotal} onChange={(e) => setForm((x) => ({ ...x, min_subtotal: e.target.value }))} data-testid="scheme-minimum" /></label>
           <label className="text-xs font-semibold text-slate-600">Start date (optional)<input type="date" className={`${inputCls} mt-1`} value={form.start_date || ""} onChange={(e) => setForm((x) => ({ ...x, start_date: e.target.value }))} data-testid="scheme-start-date" /></label>
           <label className="text-xs font-semibold text-slate-600">End date (optional)<input type="date" className={`${inputCls} mt-1`} value={form.end_date || ""} onChange={(e) => setForm((x) => ({ ...x, end_date: e.target.value }))} data-testid="scheme-end-date" /></label>
@@ -286,7 +291,7 @@ function DiscountSchemesTab({ s, save }) {
           <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr><th className="px-3 py-2">Scheme</th><th className="px-3 py-2">Discount</th><th className="px-3 py-2">Eligibility</th><th className="px-3 py-2">Dates</th><th className="px-3 py-2">Status</th><th className="px-3 py-2"></th></tr></thead>
           <tbody>{schemes.map((scheme) => <tr key={scheme.id} className="border-t border-slate-100">
             <td className="px-3 py-2 font-semibold">{scheme.name}</td>
-            <td className="px-3 py-2">{scheme.discount_type === "PERCENT" ? `${scheme.value}%` : `₱${Number(scheme.value).toFixed(2)}`}</td>
+            <td className="px-3 py-2">{scheme.discount_type === "PERCENT" ? `${scheme.value}%${Number(scheme.additional_percent) > 0 ? `, then ${scheme.additional_percent}%` : ""}` : `₱${Number(scheme.value).toFixed(2)}`}</td>
             <td className="px-3 py-2 text-slate-500">{scheme.product_ids?.length ? `${scheme.product_ids.length} selected product(s)` : "All products"}{Number(scheme.min_subtotal) > 0 ? ` · min ₱${Number(scheme.min_subtotal).toFixed(2)}` : ""}</td>
             <td className="px-3 py-2 text-slate-500">{scheme.start_date || "Any date"} – {scheme.end_date || "No end"}</td>
             <td className="px-3 py-2"><span className={scheme.enabled ? "text-emerald-700" : "text-slate-400"}>{scheme.enabled ? "Active" : "Inactive"}</span></td>

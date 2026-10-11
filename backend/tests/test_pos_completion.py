@@ -121,6 +121,25 @@ async def test_discount_scheme_is_calculated_and_saved_from_server_settings(pos_
     assert sale["total"] == 100.8
 
 @pytest.mark.asyncio
+async def test_discount_scheme_applies_additional_percent_to_remaining_balance(pos_db):
+    await pos_db.settings.update_one({"org_id": core.ORG_ID}, {"$set": {"discount_schemes": [{
+        "id": "scheme-stack", "name": "20% then 10%", "discount_type": "PERCENT",
+        "value": 20, "additional_percent": 10, "min_subtotal": 0,
+        "product_ids": ["p_med"], "enabled": True,
+    }]}})
+    sale = await routes_pos.create_sale(routes_pos.SaleIn(
+        store_id="store_main", register_id="reg_1", shift_id="shift1",
+        items=[routes_pos.SaleLine(product_id="p_med", qty=1)],
+        payments=[routes_pos.PaymentIn(method="Cash", amount=112)],
+        discount_scheme_id="scheme-stack", client_txn_id="txn-scheme-stack",
+    ), principal=PRINCIPAL)
+
+    # ₱112 less 20% (₱22.40) = ₱89.60; then less 10% (₱8.96) = ₱80.64.
+    assert sale["order_discount"] == 31.36
+    assert sale["discount_total"] == 31.36
+    assert sale["total"] == 80.64
+
+@pytest.mark.asyncio
 async def test_discount_scheme_only_applies_to_cashier_selected_quantity(pos_db):
     await pos_db.settings.update_one({"org_id": core.ORG_ID}, {"$set": {"discount_schemes": [{
         "id": "scheme-10", "name": "Eligible Medicine 10%", "discount_type": "PERCENT",

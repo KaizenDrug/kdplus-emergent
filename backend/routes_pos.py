@@ -213,12 +213,14 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
             raise HTTPException(status_code=400, detail="This discount scheme has expired")
         try:
             scheme_value = D(discount_scheme.get("value", 0))
+            additional_percent = D(discount_scheme.get("additional_percent", 0))
             minimum_subtotal = D(discount_scheme.get("min_subtotal", 0))
         except Exception:
             raise HTTPException(status_code=400, detail="The discount scheme has invalid settings")
         if (discount_scheme.get("discount_type") not in ("PERCENT", "FIXED")
                 or scheme_value <= 0 or minimum_subtotal < 0
                 or (discount_scheme.get("discount_type") == "PERCENT" and scheme_value > 100)
+                or (discount_scheme.get("discount_type") == "PERCENT" and (additional_percent < 0 or additional_percent > 100))
                 or (discount_scheme.get("product_scope") == "SELECTED" and not discount_scheme.get("product_ids"))
                 or (start_date and end_date and end_date < start_date)):
             raise HTTPException(status_code=400, detail="The discount scheme has invalid settings")
@@ -406,7 +408,10 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
             raise HTTPException(status_code=400, detail=f"Eligible items must total at least {m(minimum_subtotal)} for this scheme")
         value = D(discount_scheme["value"])
         if discount_scheme["discount_type"] == "PERCENT":
-            order_disc = eligible_subtotal * value / D(100)
+            first_discount = eligible_subtotal * value / D(100)
+            remaining_after_first = eligible_subtotal - first_discount
+            additional_percent = D(discount_scheme.get("additional_percent", 0))
+            order_disc = first_discount + remaining_after_first * additional_percent / D(100)
         else:
             order_disc = value
         order_disc = min(order_disc, eligible_subtotal)
