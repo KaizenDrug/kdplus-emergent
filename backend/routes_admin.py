@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from typing import Optional, List
 import re
 
@@ -151,30 +151,168 @@ async def read_notification(nid: str, principal=Depends(get_current_principal)):
 
 
 # ---------------- Prescriptions ----------------
-class PrescriptionIn(BaseModel):
-    reference: str
-    customer_id: Optional[str] = None
-    patient_name: Optional[str] = ""
-    prescriber: Optional[str] = ""
+class PrescriptionItemIn(BaseModel):
     product_id: Optional[str] = None
-    product_name: Optional[str] = ""
-    qty_prescribed: float = 0
-    qty_dispensed: float = 0
-    status: str = "COMPLETED"
-    notes: Optional[str] = ""
+    product_name: str = Field(min_length=1, max_length=250)
+    qty_prescribed: int = Field(ge=1)
+    qty_dispensed: int = Field(default=0, ge=0)
+    directions: Optional[str] = Field(default="", max_length=500)
+
+class PrescriptionIn(BaseModel):
+    reference: Optional[str] = Field(default="", max_length=100)
+    customer_id: Optional[str] = None
+    patient_name: str = Field(min_length=1, max_length=200)
+    prescription_date: Optional[str] = None
+    dispensing_date: Optional[str] = None
+    prescriber: str = Field(min_length=1, max_length=200)
+    license_number: Optional[str] = Field(default="", max_length=100)
+    ptr_number: Optional[str] = Field(default="", max_length=100)
+    diagnosis: Optional[str] = Field(default="", max_length=500)
+    sale_reference: Optional[str] = Field(default="", max_length=100)
+    items: List[PrescriptionItemIn] = Field(default_factory=list, min_length=1)
+    prescription_image: Optional[str] = Field(default=None, max_length=6_000_000)
+    notes: Optional[str] = Field(default="", max_length=2000)
+
+class PrescriptionCancelIn(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+def _prescription_status(items):
+    prescribed = sum(int(item.get("qty_prescribed", 0)) for item in items)
+    dispensed = sum(int(item.get("qty_dispensed", 0)) for item in items)
+    if dispensed <= 0:
+        return "UNFILLED"
+    if dispensed < prescribed:
+        return "PARTIALLY_FILLED"
+    return "FULLY_FILLED"
+
+def _prescription_summary(doc):
+    result = {k: v for k, v in doc.items() if k not in ("_id", "prescription_image")}
+    if not result.get("items") and result.get("product_name"):
+        result["items"] = [{"product_id": result.get("product_id"), "product_name": result["product_name"],
+                            "qty_prescribed": int(result.get("qty_prescribed", 0)),
+                            "qty_dispensed": int(result.get("qty_dispensed", 0)), "directions": ""}]
+    result["item_count"] = len(result.get("items") or [])
+    result["total_prescribed"] = sum(int(i.get("qty_prescribed", 0)) for i in result.get("items", []))
+    result["total_dispensed"] = sum(int(i.get("qty_dispensed", 0)) for i in result.get("items", []))
+    return result
+
+def _validate_prescription_items(items):
+    for item in items:
+        if item["qty_dispensed"] > item["qty_prescribed"]:
+            raise HTTPException(status_code=422, detail=f"Dispensed quantity cannot exceed prescribed quantity for {item['product_name']}")
+
+def _prescription_image_value(image):
+    if not image:
+        return None
+    if not image.startswith(("data:image/jpeg;base64,", "data:image/png;base64,", "data:image/webp;base64,")):
+        raise HTTPException(status_code=422, detail="Prescription image must be a JPEG, PNG, or WebP image")
+    return image
 
 @router.get("/prescriptions")
-async def list_prescriptions(principal=Depends(require_perm("pharmacy.prescription"))):
-    return await db.prescriptions.find({"org_id": ORG_ID}, {"_id": 0}).sort("created_at", -1).to_list(500)
+async def list_prescriptions(q: Optional[str] = Query(default=None, max_length=120),
+                             date_from: Optional[str] = None, date_to: Optional[str] = None,
+                             principal=Depends(require_perm("pharmacy.prescription"))):
+    query = {"org_id": ORG_ID}
+    if date_from or date_to:
+        query["prescription_date"] = {}
+        if date_from: query["prescription_date"]["$gte"] = date_from
+        if date_to: query["prescription_date"]["$lte"] = date_to
+    if q and q.strip():
+        term = re.escape(q.strip())
+        query["$or"] = [{key: {"$regex": term, "$options": "i"}} for key in
+                        ("reference", "patient_name", "prescriber", "sale_reference", "diagnosis", "items.product_name", "product_name")]
+    docs = await db.prescriptions.find(query, {"_id": 0, "prescription_image": 0}).sort("created_at", -1).to_list(500)
+    return [_prescription_summary(doc) for doc in docs]
+
+@router.get("/prescriptions/{prescription_id}")
+async def get_prescription(prescription_id: str, principal=Depends(require_perm("pharmacy.prescription"))):
+    doc = await db.prescriptions.find_one({"id": prescription_id, "org_id": ORG_ID}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Prescription record not found")
+    if not doc.get("items") and doc.get("product_name"):
+        doc["items"] = [{"product_id": doc.get("product_id"), "product_name": doc["product_name"],
+                         "qty_prescribed": int(doc.get("qty_prescribed", 0)),
+                         "qty_dispensed": int(doc.get("qty_dispensed", 0)), "directions": ""}]
+    doc["total_prescribed"] = sum(int(i.get("qty_prescribed", 0)) for i in doc.get("items", []))
+    doc["total_dispensed"] = sum(int(i.get("qty_dispensed", 0)) for i in doc.get("items", []))
+    return doc
+
+async def _save_prescription(body, principal, prescription_id=None):
+    data = body.model_dump()
+    data["patient_name"] = (data.get("patient_name") or "").strip()
+    data["prescriber"] = (data.get("prescriber") or "").strip()
+    if not data["patient_name"] or not data["prescriber"]:
+        raise HTTPException(status_code=422, detail="Patient name and prescribing physician are required")
+    items = [item.model_dump() for item in data["items"]]
+    for item in items:
+        item["product_name"] = item["product_name"].strip()
+        if not item["product_name"]:
+            raise HTTPException(status_code=422, detail="Medicine name is required for each prescription line")
+    _validate_prescription_items(items)
+    image = _prescription_image_value(data.pop("prescription_image", None))
+    reference = (data.get("reference") or "").strip() or f"RX-{uid()[:8].upper()}"
+    data["reference"] = reference
+    data["prescription_date"] = data.get("prescription_date") or now_iso()[:10]
+    data["items"] = items
+    data["status"] = _prescription_status(items)
+    data["dispensing_date"] = data.get("dispensing_date") or (now_iso()[:10] if data["status"] != "UNFILLED" else None)
+    # Keep legacy single-item fields populated for older reports/integrations.
+    first = items[0]
+    data.update({"product_id": first.get("product_id"), "product_name": first["product_name"],
+                 "qty_prescribed": first["qty_prescribed"], "qty_dispensed": first["qty_dispensed"]})
+    if prescription_id:
+        existing = await db.prescriptions.find_one({"id": prescription_id, "org_id": ORG_ID})
+        if not existing:
+            raise HTTPException(status_code=404, detail="Prescription record not found")
+        if existing.get("status") == "CANCELLED":
+            raise HTTPException(status_code=409, detail="Cancelled prescriptions cannot be edited")
+        data.update({"updated_at": now_iso(), "updated_by": principal.get("name")})
+        if data["status"] != "UNFILLED":
+            data["pharmacist"] = principal.get("name")
+        update = {"$set": data}
+        if image is not None:
+            data["prescription_image"] = image
+        else:
+            update["$unset"] = {"prescription_image": ""}
+        await db.prescriptions.update_one({"id": prescription_id, "org_id": ORG_ID}, update)
+        await audit(principal, "prescription.updated", "prescription", prescription_id,
+                    after={"reference": reference, "status": data["status"], "item_count": len(items)})
+        doc = await db.prescriptions.find_one({"id": prescription_id, "org_id": ORG_ID}, {"_id": 0})
+    else:
+        doc = {"id": uid(), "org_id": ORG_ID, **data,
+               "pharmacist": principal.get("name"), "created_at": now_iso()}
+        if image is not None:
+            doc["prescription_image"] = image
+        await db.prescriptions.insert_one(doc)
+        await audit(principal, "prescription.created", "prescription", doc["id"],
+                    after={"reference": reference, "status": data["status"], "item_count": len(items)})
+    doc.pop("_id", None)
+    return doc
 
 @router.post("/prescriptions")
 async def create_prescription(body: PrescriptionIn, principal=Depends(require_perm("pharmacy.prescription"))):
-    doc = {"id": uid(), "org_id": ORG_ID, **body.model_dump(),
-           "pharmacist": principal.get("name"), "created_at": now_iso()}
-    await db.prescriptions.insert_one(doc)
-    await audit(principal, "prescription.created", "prescription", doc["id"], after={"reference": body.reference})
-    doc.pop("_id", None)
-    return doc
+    return await _save_prescription(body, principal)
+
+@router.put("/prescriptions/{prescription_id}")
+async def update_prescription(prescription_id: str, body: PrescriptionIn,
+                              principal=Depends(require_perm("pharmacy.prescription"))):
+    return await _save_prescription(body, principal, prescription_id)
+
+@router.post("/prescriptions/{prescription_id}/cancel")
+async def cancel_prescription(prescription_id: str, body: PrescriptionCancelIn,
+                              principal=Depends(require_perm("pharmacy.prescription"))):
+    reason = body.reason.strip()
+    if len(reason) < 3:
+        raise HTTPException(status_code=422, detail="Enter a cancellation reason")
+    result = await db.prescriptions.update_one(
+        {"id": prescription_id, "org_id": ORG_ID, "status": {"$ne": "CANCELLED"}},
+        {"$set": {"status": "CANCELLED", "cancel_reason": reason,
+                  "cancelled_at": now_iso(), "cancelled_by": principal.get("name")}})
+    if not result.matched_count:
+        raise HTTPException(status_code=404, detail="Active prescription record not found")
+    await audit(principal, "prescription.cancelled", "prescription", prescription_id,
+                after={"reason": reason})
+    return {"ok": True, "id": prescription_id, "status": "CANCELLED"}
 
 
 # ---------------- Global search ----------------
