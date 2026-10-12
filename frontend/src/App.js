@@ -19,6 +19,7 @@ const ReorderSuggestions = lazy(() => import("@/pages/ReorderSuggestions"));
 const Suppliers = lazy(() => import("@/pages/Suppliers"));
 const PurchaseOrders = lazy(() => import("@/pages/PurchaseOrders"));
 const Customers = lazy(() => import("@/pages/Customers"));
+const Prescriptions = lazy(() => import("@/pages/Prescriptions"));
 const Reports = lazy(() => import("@/pages/Reports"));
 const Employees = lazy(() => import("@/pages/Employees"));
 const Settings = lazy(() => import("@/pages/Settings"));
@@ -98,6 +99,7 @@ function App() {
             <Route path="suppliers" element={<Suppliers />} />
             <Route path="purchase-orders" element={<PurchaseOrders />} />
             <Route path="customers" element={<Customers />} />
+            <Route path="prescriptions" element={<Prescriptions />} />
             <Route path="reports" element={<Reports />} />
             <Route path="sales" element={<Sales />} />
             <Route path="shifts" element={<Shifts />} />
