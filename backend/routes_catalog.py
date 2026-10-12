@@ -397,6 +397,32 @@ class ProductStatusIn(BaseModel):
     active: bool
 
 
+class ProductPreferredSupplierIn(BaseModel):
+    supplier_id: Optional[str] = None
+
+
+@router.patch("/products/{pid}/preferred-supplier")
+async def set_product_preferred_supplier(pid: str, body: ProductPreferredSupplierIn,
+                                         principal=Depends(require_perm("*"))):
+    product = await db.products.find_one({"id": pid, "org_id": ORG_ID}, {"_id": 0})
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if body.supplier_id:
+        supplier = await db.suppliers.find_one(
+            {"id": body.supplier_id, "org_id": ORG_ID, "active": {"$ne": False}}, {"_id": 0, "id": 1})
+        if not supplier:
+            raise HTTPException(status_code=400, detail="Select an active supplier")
+    before = product.get("preferred_supplier_id")
+    await db.products.update_one(
+        {"id": pid, "org_id": ORG_ID},
+        {"$set": {"preferred_supplier_id": body.supplier_id, "updated_at": now_iso()}},
+    )
+    await audit(principal, "item.preferred_supplier_changed", "product", pid,
+                before={"preferred_supplier_id": before},
+                after={"preferred_supplier_id": body.supplier_id})
+    return await db.products.find_one({"id": pid, "org_id": ORG_ID}, {"_id": 0})
+
+
 @router.patch("/products/{pid}/status")
 async def set_product_status(pid: str, body: ProductStatusIn, principal=Depends(require_perm("*"))):
     product = await db.products.find_one({"id": pid, "org_id": ORG_ID}, {"_id": 0})
