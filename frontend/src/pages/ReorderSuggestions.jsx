@@ -6,12 +6,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
-import { Check, ChevronsUpDown, ClipboardList, SlidersHorizontal, TrendingDown } from "lucide-react";
+import { Check, ChevronsUpDown, ClipboardList, SlidersHorizontal, TrendingDown, Truck } from "lucide-react";
 import { toast } from "sonner";
 
 const REORDER_COLUMNS = Object.fromEntries([
   ["name", "Product"],
-  ["supplier", "Assigned Supplier"],
   ["current_stock", "On Hand"],
   ["incoming", "Incoming"],
   ["avg_daily_sales", "Avg/Day"],
@@ -25,7 +24,7 @@ const REORDER_COLUMNS = Object.fromEntries([
 ].map(([key, label]) => [key, { label }]));
 
 const DEFAULT_REORDER_COLUMNS = [
-  "name", "supplier", "current_stock", "incoming", "avg_daily_sales",
+  "name", "current_stock", "incoming", "avg_daily_sales",
   "days_of_stock", "suggested_qty", "unit_cost", "est_cost",
 ];
 
@@ -58,6 +57,43 @@ function SupplierPicker({ suppliers, value, onChange, testId }) {
                 <CommandItem key={s.id} value={s.company} onSelect={() => { onChange(s.id); setOpen(false); }}>
                   <Check className={`mr-2 h-4 w-4 ${value === s.id ? "opacity-100" : "opacity-0"}`} />
                   {s.company}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function SupplierReassignButton({ suppliers, value, onChange, disabled, testId }) {
+  const [open, setOpen] = useState(false);
+  const selected = suppliers.find((supplier) => supplier.id === value);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button type="button" aria-label={`Reassign supplier; currently ${selected?.company || "none"}`}
+          title={`Preferred supplier: ${selected?.company || "none"}. Click to change.`}
+          data-testid={testId} disabled={disabled}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-teal-50 hover:text-primary focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50">
+          <Truck className="h-4 w-4" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[280px] p-0" align="end">
+        <Command>
+          <CommandInput placeholder="Search supplier…" />
+          <CommandList>
+            <CommandEmpty>No active supplier found.</CommandEmpty>
+            <CommandGroup>
+              {suppliers.map((supplier) => (
+                <CommandItem key={supplier.id} value={supplier.company}
+                  onSelect={async () => {
+                    if (supplier.id !== value) await onChange(supplier.id);
+                    setOpen(false);
+                  }}>
+                  <Check className={`mr-2 h-4 w-4 ${value === supplier.id ? "opacity-100" : "opacity-0"}`} />
+                  {supplier.company}
                 </CommandItem>
               ))}
             </CommandGroup>
@@ -150,7 +186,14 @@ export default function ReorderSuggestions() {
     try {
       await api.patch(`/products/${row.product_id}/preferred-supplier`, { supplier_id: row.assigned_supplier_id });
       setRows((current) => current.map((item) => item.product_id === row.product_id
-        ? { ...item, preferred_supplier_id: row.assigned_supplier_id, supplier_id: row.assigned_supplier_id }
+        ? {
+            ...item,
+            preferred_supplier_id: row.assigned_supplier_id,
+            supplier_id: row.assigned_supplier_id,
+            supplier_name: supplierName(row.assigned_supplier_id),
+            assigned_supplier_id: row.assigned_supplier_id,
+            assigned_supplier_name: supplierName(row.assigned_supplier_id),
+          }
         : item));
       toast.success(`${supplierName(row.assigned_supplier_id)} saved as preferred supplier for ${row.name}`);
     } catch (e) {
@@ -201,21 +244,6 @@ export default function ReorderSuggestions() {
           <input type="checkbox" className="mt-1" checked={selected.includes(row.product_id)}
             onChange={() => toggleSelected(row.product_id)} aria-label={`Select ${row.name}`} />
           <div>{row.name}<div className="text-xs text-slate-400">{row.sku}</div></div>
-        </div>
-      </td>
-    );
-    if (key === "supplier") return (
-      <td key={key} className="px-4 py-2.5">
-        <SupplierPicker suppliers={activeSuppliers} value={row.assigned_supplier_id}
-          onChange={(id) => assignSupplier(row.product_id, id)} testId={`reorder-supplier-${row.product_id}`} />
-        <div className="mt-1 flex items-center gap-2 text-[10px]">
-          <span className="text-slate-400">
-            {row.assigned_supplier_id === row.preferred_supplier_id ? "Preferred supplier" : "For this PO only"}
-          </span>
-          {row.assigned_supplier_id && row.assigned_supplier_id !== row.preferred_supplier_id && (
-            <button type="button" className="font-semibold text-primary hover:underline" disabled={busy}
-              onClick={() => savePreferredSupplier(row)}>Set as Preferred Supplier</button>
-          )}
         </div>
       </td>
     );
@@ -284,12 +312,18 @@ export default function ReorderSuggestions() {
           </div>
           <table className="w-full min-w-[900px] text-sm">
             <thead className="text-left text-xs uppercase text-slate-500"><tr>
-              {columns.map((key) => <th key={key} className={`px-4 py-2.5 ${key === "name" || key === "supplier" ? "" : "text-right"}`}>{REORDER_COLUMNS[key].label}</th>)}
+              {columns.map((key) => <th key={key} className={`px-4 py-2.5 ${key === "name" ? "" : "text-right"}`}>{REORDER_COLUMNS[key].label}</th>)}
+          <th className="w-10 px-2 py-2.5"><span className="sr-only">Reassign supplier</span></th>
             </tr></thead>
             <tbody>
               {group.items.map((row) => (
                 <tr key={row.product_id} className="border-t border-slate-100 hover:bg-slate-50">
                   {columns.map((key) => renderCell(key, row))}
+                  <td className="w-10 px-2 py-2.5 text-center">
+                    <SupplierReassignButton suppliers={activeSuppliers} value={row.assigned_supplier_id}
+                      disabled={busy} testId={`reassign-supplier-${row.product_id}`}
+                      onChange={(id) => savePreferredSupplier({ ...row, assigned_supplier_id: id })} />
+                  </td>
                 </tr>
               ))}
             </tbody>
