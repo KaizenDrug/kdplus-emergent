@@ -891,6 +891,11 @@ class CloseShiftIn(BaseModel):
     shift_id: str
     counted_cash: float
 
+
+class CorrectShiftCountIn(BaseModel):
+    counted_cash: float
+    reason: str
+
 @router.post("/shifts/close")
 async def close_shift(body: CloseShiftIn, principal=Depends(require_perm("pos.sell"))):
     shift = await db.shifts.find_one({"id": body.shift_id, "org_id": ORG_ID})
@@ -933,3 +938,53 @@ async def close_shift(body: CloseShiftIn, principal=Depends(require_perm("pos.se
     await db.shifts.update_one({"id": body.shift_id}, {"$set": upd})
     await audit(principal, "shift.closed", "shift", body.shift_id, after={"difference": m(diff)}, store_id=shift["store_id"])
     return {**{k: v for k, v in shift.items() if k != "_id"}, **upd}
+
+@router.patch("/shifts/{shift_id}/correction")
+async def correct_closed_shift_count(shift_id: str, body: CorrectShiftCountIn,
+                                     principal=Depends(get_current_principal)):
+    # Reconciliation corrections are restricted to the owner and cannot reopen a shift.
+    if principal.get("kind") != "user" or principal.get("role") != "owner":
+        raise HTTPException(status_code=403, detail="Only the owner can correct a closed shift")
+    if not math.isfinite(body.counted_cash) or body.counted_cash < 0:
+        raise HTTPException(status_code=400, detail="Counted cash must be zero or a positive amount")
+    reason = body.reason.strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="Enter a reason for correcting the counted cash")
+    if len(reason) > 500:
+        raise HTTPException(status_code=400, detail="Correction reason must be 500 characters or fewer")
+
+    shift = await db.shifts.find_one({"id": shift_id, "org_id": ORG_ID}, {"_id": 0})
+    if not shift:
+        raise HTTPException(status_code=404, detail="Shift not found")
+    if shift.get("status") != "CLOSED":
+        raise HTTPException(status_code=409, detail="Only a closed shift can be corrected")
+    if shift.get("expected_cash") is None or shift.get("counted_cash") is None:
+        raise HTTPException(status_code=409, detail="This shift has no saved reconciliation values to correct")
+
+    old_counted = m(shift["counted_cash"])
+    old_difference = m(shift.get("difference", D(old_counted) - D(shift["expected_cash"])))
+    new_counted = m(body.counted_cash)
+    new_difference = m(D(new_counted) - D(shift["expected_cash"]))
+    corrected_at = now_iso()
+    update = {
+        "counted_cash": new_counted,
+        "difference": new_difference,
+        "count_corrected_at": corrected_at,
+        "count_corrected_by": principal.get("name"),
+        "count_correction_reason": reason,
+    }
+    result = await db.shifts.update_one(
+        {"id": shift_id, "org_id": ORG_ID, "status": "CLOSED",
+         "counted_cash": shift["counted_cash"]},
+        {"$set": update},
+    )
+    if result.modified_count != 1:
+        raise HTTPException(status_code=409, detail="This shift changed while you were correcting it. Refresh and try again.")
+
+    await audit(
+        principal, "shift.count_corrected", "shift", shift_id,
+        before={"counted_cash": old_counted, "difference": old_difference},
+        after={"counted_cash": new_counted, "difference": new_difference, "reason": reason},
+        store_id=shift.get("store_id"),
+    )
+    return {**shift, **update}
