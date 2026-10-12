@@ -21,6 +21,7 @@ const NAV = [
   { to: "/purchase-orders", label: "Purchase Orders", icon: ClipboardList },
   { to: "/suppliers", label: "Suppliers", icon: Truck },
   { to: "/customers", label: "Customers", icon: Users },
+  { to: "/prescriptions", label: "Prescription Log", icon: ClipboardList, permission: "pharmacy.prescription" },
   { to: "/sales", label: "Sales & Refunds", icon: Receipt, permission: "pos.view_receipts" },
   { to: "/reports", label: "Reports", icon: BarChart3, full: true },
   { to: "/shifts", label: "Shifts & Cash", icon: Clock, full: true },
