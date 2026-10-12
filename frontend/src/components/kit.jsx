@@ -55,6 +55,7 @@ const badgeTones = {
   SENT: "bg-sky-100 text-sky-700", RECEIVED: "bg-emerald-100 text-emerald-700",
   IN_TRANSIT: "bg-indigo-100 text-indigo-700", CANCELLED: "bg-slate-200 text-slate-600", APPROVED: "bg-emerald-100 text-emerald-700", OPEN: "bg-sky-100 text-sky-700",
   PARTIALLY_RECEIVED: "bg-amber-100 text-amber-700", RX: "bg-purple-100 text-purple-700", OTC: "bg-slate-100 text-slate-600",
+  UNFILLED: "bg-slate-100 text-slate-600", PARTIALLY_FILLED: "bg-amber-100 text-amber-700", FULLY_FILLED: "bg-emerald-100 text-emerald-700",
   SENIOR: "bg-teal-100 text-teal-700", PWD: "bg-indigo-100 text-indigo-700",
 };
 
