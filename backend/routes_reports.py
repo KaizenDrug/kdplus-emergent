@@ -408,10 +408,14 @@ async def reorder_suggestions(days_window: int = 30, lead_time_days: int = 7,
         days_of_stock = float(cur / avg_daily) if avg_daily > 0 else None
         rows.append({"product_id": p["id"], "name": p["name"], "sku": p.get("sku"),
                      "supplier_id": sid, "supplier_name": sup_map.get(sid, "— No supplier —"),
+                     "preferred_supplier_id": p.get("preferred_supplier_id"),
+                     "catalog_supplier_id": p.get("supplier_id"),
                      "current_stock": m(cur), "incoming": m(inc), "reorder_level": p.get("reorder_level", 0),
                      "avg_daily_sales": round(float(avg_daily), 2),
                      "days_of_stock": (round(days_of_stock, 1) if days_of_stock is not None else None),
                      "suggested_qty": qty, "unit_cost": p.get("average_cost", 0),
+                     "latest_cost": p.get("latest_cost", 0), "price": p.get("price", 0),
+                     "uom": p.get("uom", "piece"),
                      "est_cost": m(D(qty) * D(p.get("average_cost", 0)))})
     rows.sort(key=lambda r: (r["supplier_name"], -(r["suggested_qty"] or 0)))
     return {"rows": rows, "params": {"days_window": days_window, "lead_time_days": lead_time_days}}
