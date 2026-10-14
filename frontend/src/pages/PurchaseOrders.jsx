@@ -5,7 +5,7 @@ import { PageHeader, Card, Empty } from "@/components/kit";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Plus, Trash2, PackageCheck, Eye, Pencil, Send, XCircle, Printer, AlertTriangle } from "lucide-react";
+import { Plus, Trash2, PackageCheck, Eye, Pencil, Send, XCircle, Printer, AlertTriangle, ArrowLeftRight } from "lucide-react";
 import { toast } from "sonner";
 import { ACTIVE_STORES } from "@/lib/stores";
 
@@ -319,6 +319,7 @@ function ReceivePanel({ po, prodMap, levels, threshold, onCancel, onDone }) {
     substitution_decision: "", received_product_id: "", substitute_description: "",
   })));
   const [busy, setBusy] = useState(false);
+  const [substitutionOpen, setSubstitutionOpen] = useState({});
   const set = (i, k, v) => setRows((r) => r.map((x, idx) => idx === i ? { ...x, [k]: v } : x));
 
   const calc = (row) => {
@@ -399,39 +400,18 @@ function ReceivePanel({ po, prodMap, levels, threshold, onCancel, onDone }) {
                   {c.varAmt > 0 ? "+" : ""}{peso(c.varAmt)} ({c.varPct > 0 ? "+" : ""}{c.varPct.toFixed(2)}%)</div></label>
             </div>
 
-            <div className="mt-3 rounded-lg border border-slate-200 p-3 space-y-2" data-testid={`recv-substitution-${it.product_id}`}>
-              <div className="text-xs font-semibold text-slate-700">Did the supplier deliver a different brand or product?</div>
-              <div className="flex flex-wrap gap-2">
-                <Button type="button" size="sm" variant={row.substitution_decision === "ACCEPT" ? "default" : "outline"}
-                  onClick={() => setRows((all) => all.map((item, idx) => idx === i ? { ...item, substitution_decision: "ACCEPT" } : item))}
-                  data-testid={`recv-substitute-accept-${it.product_id}`}>Accept substitute</Button>
-                <Button type="button" size="sm" variant={row.substitution_decision === "REJECT" ? "destructive" : "outline"}
-                  onClick={() => setRows((all) => all.map((item, idx) => idx === i ? { ...item, substitution_decision: "REJECT", received_product_id: "" } : item))}
-                  data-testid={`recv-substitute-reject-${it.product_id}`}>Reject delivery</Button>
-                {row.substitution_decision && <Button type="button" size="sm" variant="ghost" onClick={() => setRows((all) => all.map((item, idx) => idx === i ? { ...item, substitution_decision: "", received_product_id: "", substitute_description: "" } : item))}>Clear choice</Button>}
-              </div>
-              {row.substitution_decision === "ACCEPT" && (
-                <div className="space-y-1">
-                  <Select value={row.received_product_id} onValueChange={(value) => { set(i, "received_product_id", value); set(i, "barcode", ""); }}>
-                    <SelectTrigger data-testid={`recv-substitute-product-${it.product_id}`}><SelectValue placeholder="Select the catalog item delivered" /></SelectTrigger>
-                    <SelectContent>{Object.values(prodMap).filter((p) => p.id !== row.product_id && p.active !== false && p.track_inventory !== false && (p.product_type || "REGULAR") === "REGULAR").sort(byProductName).map((p) => <SelectItem key={p.id} value={p.id}>{p.name} · {p.sku || "No SKU"}</SelectItem>)}</SelectContent>
-                  </Select>
-                  <div className="text-[11px] text-slate-500">Accepted quantity will fulfill this PO line and be added to the selected item's stock. The substitute must already exist in Products.</div>
-                </div>
-              )}
-              {row.substitution_decision === "REJECT" && (
-                <div className="space-y-1">
-                  <input className="w-full px-2 py-1.5 border rounded text-sm" placeholder="Delivered brand / item (optional)" value={row.substitute_description} onChange={(e) => set(i, "substitute_description", e.target.value)} data-testid={`recv-rejected-description-${it.product_id}`} />
-                  <div className="text-[11px] text-slate-500">Rejected quantity will not enter stock and will remain outstanding on the PO.</div>
-                </div>
-              )}
-            </div>
-
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
               <label className="block"><span className="text-[10px] font-bold uppercase text-slate-500">Lot No.</span>
                 <input className="w-full mt-1 px-2 py-1.5 border rounded text-sm" value={row.lot_number} onChange={(e) => set(i, "lot_number", e.target.value)} data-testid={`recv-lot-${it.product_id}`} /></label>
               <label className="block"><span className="text-[10px] font-bold uppercase text-slate-500">Expiry</span>
                 <input type="date" className="w-full mt-1 px-2 py-1.5 border rounded text-sm" value={row.expiry_date} onChange={(e) => set(i, "expiry_date", e.target.value)} data-testid={`recv-expiry-${it.product_id}`} /></label>
+              <button type="button" onClick={() => setSubstitutionOpen((state) => ({ ...state, [it.product_id]: !state[it.product_id] }))}
+                aria-label="Substitution options" aria-expanded={Boolean(substitutionOpen[it.product_id])}
+                title={row.substitution_decision ? `Substitution: ${row.substitution_decision.toLowerCase()}` : "Substitution"}
+                data-testid={`recv-substitution-toggle-${it.product_id}`}
+                className={`self-end mb-0.5 inline-flex h-9 w-9 items-center justify-center rounded-lg border transition-colors ${row.substitution_decision ? "border-primary bg-primary/10 text-primary" : "border-slate-200 text-slate-500 hover:bg-slate-50"}`}>
+                <ArrowLeftRight className="h-4 w-4" />
+              </button>
               {row.substitution_decision !== "REJECT" && !prodMap[row.substitution_decision === "ACCEPT" ? row.received_product_id : it.product_id]?.barcode && (
                 <label className="block"><span className="text-[10px] font-bold uppercase text-slate-500">Barcode (optional)</span>
                   <input className="w-full mt-1 px-2 py-1.5 border rounded text-sm" value={row.barcode || ""}
@@ -443,6 +423,36 @@ function ReceivePanel({ po, prodMap, levels, threshold, onCancel, onDone }) {
                 {c.qty > 0 && <> → Est. New On Hand <b className="text-slate-700">{c.newHand}</b> · Est. Avg <b className="text-slate-700">{peso(c.newAvg)}</b></>}
               </div>
             </div>
+
+            {substitutionOpen[it.product_id] && (
+              <div className="mt-3 rounded-lg border border-slate-200 p-3 space-y-2" data-testid={`recv-substitution-${it.product_id}`}>
+                <div className="text-xs font-semibold text-slate-700">Did the supplier deliver a different brand or product?</div>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" size="sm" variant={row.substitution_decision === "ACCEPT" ? "default" : "outline"}
+                    onClick={() => { setRows((all) => all.map((item, idx) => idx === i ? { ...item, substitution_decision: "ACCEPT" } : item)); setSubstitutionOpen((state) => ({ ...state, [it.product_id]: true })); }}
+                    data-testid={`recv-substitute-accept-${it.product_id}`}>Accept substitute</Button>
+                  <Button type="button" size="sm" variant={row.substitution_decision === "REJECT" ? "destructive" : "outline"}
+                    onClick={() => { setRows((all) => all.map((item, idx) => idx === i ? { ...item, substitution_decision: "REJECT", received_product_id: "" } : item)); setSubstitutionOpen((state) => ({ ...state, [it.product_id]: true })); }}
+                    data-testid={`recv-substitute-reject-${it.product_id}`}>Reject delivery</Button>
+                  {row.substitution_decision && <Button type="button" size="sm" variant="ghost" onClick={() => setRows((all) => all.map((item, idx) => idx === i ? { ...item, substitution_decision: "", received_product_id: "", substitute_description: "" } : item))}>Clear choice</Button>}
+                </div>
+                {row.substitution_decision === "ACCEPT" && (
+                  <div className="space-y-1">
+                    <Select value={row.received_product_id} onValueChange={(value) => { set(i, "received_product_id", value); set(i, "barcode", ""); }}>
+                      <SelectTrigger data-testid={`recv-substitute-product-${it.product_id}`}><SelectValue placeholder="Select the catalog item delivered" /></SelectTrigger>
+                      <SelectContent>{Object.values(prodMap).filter((p) => p.id !== row.product_id && p.active !== false && p.track_inventory !== false && (p.product_type || "REGULAR") === "REGULAR").sort(byProductName).map((p) => <SelectItem key={p.id} value={p.id}>{p.name} · {p.sku || "No SKU"}</SelectItem>)}</SelectContent>
+                    </Select>
+                    <div className="text-[11px] text-slate-500">Accepted quantity will fulfill this PO line and be added to the selected item's stock. The substitute must already exist in Products.</div>
+                  </div>
+                )}
+                {row.substitution_decision === "REJECT" && (
+                  <div className="space-y-1">
+                    <input className="w-full px-2 py-1.5 border rounded text-sm" placeholder="Delivered brand / item (optional)" value={row.substitute_description} onChange={(e) => set(i, "substitute_description", e.target.value)} data-testid={`recv-rejected-description-${it.product_id}`} />
+                    <div className="text-[11px] text-slate-500">Rejected quantity will not enter stock and will remain outstanding on the PO.</div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {c.overDeliveryQty > 0 && (
               <div className="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-800" data-testid={`recv-over-delivery-${it.product_id}`}>
