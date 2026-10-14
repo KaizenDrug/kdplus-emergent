@@ -134,7 +134,9 @@ export default function POS() {
     try {
       const { data } = await api.post("/pos/parked-tickets", {
         store_id: storeId, ticket_name: ticketName.trim(), ticket_id: activeParkedTicketId || undefined,
-        items: cart.map(({ product_id, qty }) => ({ product_id, qty })),
+        items: cart.map(({ product_id, qty, unit_price, open_price }) => ({
+          product_id, qty, ...(open_price ? { unit_price: Number(unit_price) || 0 } : {}),
+        })),
       });
       setParkedTickets((old) => [data, ...old.filter((t) => t.id !== activeParkedTicketId)]);
       setCart([]); setActiveParkedTicketId(null); setMobileCartOpen(false);
@@ -149,7 +151,7 @@ export default function POS() {
     const resumed = (ticket.items || []).map((line) => {
       const p = products.find((product) => product.id === line.product_id);
       if (!p || p.active === false) return null;
-      return { product_id: p.id, name: p.name, unit_price: Number(p.price), average_cost: Number(p.average_cost || 0), qty: Number(line.qty),
+      return { product_id: p.id, name: p.name, unit_price: p.open_price ? Number(line.unit_price ?? p.price ?? 0) : Number(p.price), open_price: !!p.open_price, average_cost: Number(p.average_cost || 0), qty: Number(line.qty),
         tax_mode: p.tax_mode, discount_eligible: p.discount_eligible !== false };
     });
     if (!resumed.length || resumed.some((line) => !line)) {
@@ -258,7 +260,7 @@ export default function POS() {
     const existing = cart.find((i) => i.product_id === p.id);
     const nextCart = existing
       ? cart.map((i) => (i.product_id === p.id ? { ...i, qty: i.qty + 1 } : i))
-      : [...cart, { product_id: p.id, name: p.name, unit_price: p.price, average_cost: Number(p.average_cost || 0), qty: 1, tax_mode: p.tax_mode, discount_eligible: p.discount_eligible !== false }];
+      : [...cart, { product_id: p.id, name: p.name, unit_price: p.price, open_price: !!p.open_price, average_cost: Number(p.average_cost || 0), qty: 1, tax_mode: p.tax_mode, discount_eligible: p.discount_eligible !== false }];
     warnIfStockExceeded(nextCart);
     setCart(nextCart);
   };
@@ -282,9 +284,12 @@ export default function POS() {
     warnIfStockExceeded(nextCart);
     setCart(nextCart);
   };
+  const setUnitPrice = (id, value) => setCart((current) => current.map((item) =>
+    item.product_id === id ? { ...item, unit_price: value } : item
+  ));
   const removeItem = (id) => setCart((c) => c.filter((i) => i.product_id !== id));
 
-  const subtotal = cart.reduce((s, i) => s + i.unit_price * i.qty, 0);
+  const subtotal = cart.reduce((s, i) => s + (Number(i.unit_price) || 0) * i.qty, 0);
   const printCurrentTicket = () => {
     const ticket = {
       id: `CURRENT-${Date.now()}`, created_at: new Date().toISOString(), created_by_name: user?.name,
@@ -420,7 +425,7 @@ export default function POS() {
                     <div className="text-base font-semibold text-slate-800 leading-snug mt-2 line-clamp-3 min-h-[4rem] break-words">{p.name}</div>
                     <div className="text-sm text-slate-400 mt-1 min-h-5">{p.strength}</div>
                     <div className="flex flex-wrap items-end justify-between gap-x-2 gap-y-1 mt-1.5">
-                      <span className="text-primary text-lg font-bold">{peso(p.price)}</span>
+                      <span className="text-primary text-lg font-bold">{p.open_price ? "Open price" : peso(p.price)}</span>
                       <span data-testid={`product-margin-${p.id}`}
                         title="Gross margin before discounts: (selling price − cost) ÷ selling price"
                         className={`text-xs font-semibold whitespace-nowrap ${margin !== null && margin <= 0 ? "text-red-600" : "text-slate-600"}`}>
@@ -460,8 +465,17 @@ export default function POS() {
                     <button onClick={() => setQty(i.product_id, 1)} className="w-7 h-7 rounded-md bg-white border border-slate-200 flex items-center justify-center hover:bg-slate-100"><Plus className="w-3.5 h-3.5" /></button>
                   </div>
                   <div className="text-right">
-                    <div className="text-xs text-slate-400">{peso(i.unit_price)}</div>
-                    <div className="text-sm font-bold text-slate-800">{peso(i.unit_price * i.qty)}</div>
+                    {i.open_price ? (
+                      <label className="block text-[10px] font-semibold uppercase text-slate-500">Unit price
+                        <input type="number" min="0" step="0.01" inputMode="decimal" value={i.unit_price}
+                          onFocus={(e) => e.currentTarget.select()} onClick={(e) => e.currentTarget.select()}
+                          onChange={(e) => setUnitPrice(i.product_id, e.target.value)}
+                          onWheel={(e) => e.currentTarget.blur()}
+                          className="mt-1 w-24 rounded-md border border-primary/40 bg-white px-2 py-1 text-right text-sm font-semibold"
+                          data-testid={`open-price-${i.product_id}`} aria-label={`Selling price for ${i.name}`} />
+                      </label>
+                    ) : <div className="text-xs text-slate-400">{peso(i.unit_price)}</div>}
+                    <div className="text-sm font-bold text-slate-800">{peso((Number(i.unit_price) || 0) * i.qty)}</div>
                   </div>
                 </div>
               </div>
@@ -478,9 +492,11 @@ export default function POS() {
               data-testid="save-ticket" className="w-full mb-2 py-2.5 rounded-xl border border-amber-300 bg-amber-50 text-amber-900 font-semibold hover:bg-amber-100 disabled:opacity-40">
               <BookmarkPlus className="w-4 h-4 inline mr-1" />{ticketBusy ? "Saving…" : "Save Ticket"}
             </button>
-            <button onClick={() => { setCheckout(true); setMobileCartOpen(false); }} disabled={!cart.length || !shift} data-testid="checkout-btn"
+            <button onClick={() => { setCheckout(true); setMobileCartOpen(false); }}
+              disabled={!cart.length || !shift || cart.some((item) => item.open_price && !(Number(item.unit_price) > 0))}
+              data-testid="checkout-btn"
               className="w-full py-3.5 rounded-xl bg-primary text-white font-bold text-lg hover:bg-teal-800 transition-colors active:scale-[0.99] disabled:opacity-40">
-              {shift ? `Charge ${peso(subtotal)}` : "Start Shift to Charge"}
+              {!shift ? "Start Shift to Charge" : cart.some((item) => item.open_price && !(Number(item.unit_price) > 0)) ? "Enter item price" : `Charge ${peso(subtotal)}`}
             </button>
           </div>
         </div>
@@ -851,6 +867,10 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
   };
 
   const submit = async () => {
+    if (cart.some((item) => item.open_price && (!Number.isFinite(Number(item.unit_price)) || Number(item.unit_price) <= 0))) {
+      toast.error("Enter a selling price greater than zero for every open-price item");
+      return;
+    }
     if (!shiftId) { toast.error("Open a shift before completing a sale"); return; }
     if (selectedScheme && !schemeMinimumMet) { toast.error(`Eligible items must total at least ${peso(schemeMinimum)} for this scheme`); return; }
     if (selectedScheme && schemeEligibleSubtotal <= 0) { toast.error("This scheme has no eligible items in the ticket"); return; }
@@ -866,7 +886,9 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
       parked_ticket_id: parkedTicketId || null,
       items: cart.map((i) => {
         const eq = Math.min(i.qty, Math.max(0, Number(eligibleQty[i.product_id]) || 0));
-        return { product_id: i.product_id, qty: i.qty, discount_eligible: eq > 0, discount_eligible_qty: eq };
+        return { product_id: i.product_id, qty: i.qty,
+          ...(i.open_price ? { unit_price: Number(i.unit_price) } : {}),
+          discount_eligible: eq > 0, discount_eligible_qty: eq };
       }),
       payments: validPayments,
       // Scheme amounts are recomputed and validated by the backend; send only
@@ -879,7 +901,7 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
     const localSale = {
       number: "OFFLINE-" + String(Date.now()).slice(-8), cashier_name: cashierName,
       customer_name: customers.find((c) => c.id === customerId) ? `${customers.find((c) => c.id === customerId).first_name} ${customers.find((c) => c.id === customerId).last_name}` : null,
-      items: cart.map((i) => ({ name: i.name, qty: i.qty, unit_price: i.unit_price, line_gross: i.unit_price * i.qty,
+      items: cart.map((i) => ({ name: i.name, qty: i.qty, unit_price: Number(i.unit_price) || 0, line_gross: (Number(i.unit_price) || 0) * i.qty,
         discount_eligible: Number(eligibleQty[i.product_id]) > 0,
         discount_eligible_qty: Math.min(i.qty, Math.max(0, Number(eligibleQty[i.product_id]) || 0)) })),
       subtotal: gross, vat_exempt_amount: vatExempt, spwd_discount: spDisc, vat_amount: vatAmt,
