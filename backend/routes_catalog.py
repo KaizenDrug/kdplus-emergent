@@ -120,6 +120,7 @@ class ProductIn(BaseModel):
     average_cost: float = 0
     latest_cost: float = 0
     price: float = 0
+    open_price: bool = False
     wholesale_price: float = 0
     # Whether this product is normally eligible for statutory/customer discounts.
     # Cashiers may still confirm eligibility per sale; legacy products default to eligible.
