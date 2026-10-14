@@ -54,6 +54,7 @@ export default function Products() {
   const canViewCost = (user?.permissions || []).some((p) => ["*", "reports.view"].includes(p));
   const allowedColumn = (key) => canViewCost || !COST_COLUMNS.includes(key);
   const visibleColumns = columns.filter(allowedColumn);
+  const showConsumption = columns.includes("consumption");
   const preferenceKey = `kdplus-product-columns:${user?.kind || "user"}:${user?.id}`;
   useEffect(() => {
     let personal;
@@ -89,6 +90,7 @@ export default function Products() {
   const [consumption, setConsumption] = useState(null);
   const [consumptionState, setConsumptionState] = useState("loading");
   useEffect(() => {
+    if (!showConsumption) { setConsumptionState("idle"); return; }
     let cancelled = false;
     setConsumptionState("loading");
     api.get(`/reports/product-consumption?store_id=${encodeURIComponent(store)}`).then(({ data }) => {
@@ -97,7 +99,7 @@ export default function Products() {
       setConsumptionState("ready");
     }).catch(() => { if (!cancelled) setConsumptionState("error"); });
     return () => { cancelled = true; };
-  }, [store]);
+  }, [store, showConsumption]);
   const chooseConsumption = (basis) => {
     if (basis !== "hidden") setConsumptionBasis(basis);
     const next = basis === "hidden" ? columns.filter((key) => key !== "consumption")
@@ -115,6 +117,8 @@ export default function Products() {
   const [deleting, setDeleting] = useState(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [sort, setSort] = useState({ key: "name", direction: "asc" });
+  const [page, setPage] = useState(1);
+  const pageSize = 100;
 
   const load = () => api.get("/products?limit=10000").then((r) => { productsRef.current = r.data; setProducts(r.data); });
   const loadCats = () => api.get("/categories").then((r) => setCategories(r.data));
@@ -259,6 +263,10 @@ export default function Products() {
     latest_cost: (p) => Number(p.latest_cost || 0),
   }), [filtered, sort, categories, suppliers, levelByProduct, consumption, consumptionState, consumptionBasis]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const pageCount = Math.max(1, Math.ceil(sortedProducts.length / pageSize));
+  const pageProducts = sortedProducts.slice((page - 1) * pageSize, page * pageSize);
+  useEffect(() => { setPage(1); }, [q, cat, stockFilter, statusFilter, store, sort]);
+
   return (
     <div>
       <PageHeader title="Products" subtitle={`${filtered.length} items shown · ${products.length} total in catalog`}>
@@ -311,7 +319,7 @@ export default function Products() {
                 <th className="px-4 py-3"></th></tr>
             </thead>
             <tbody>
-              {sortedProducts.map((p) => (
+              {pageProducts.map((p) => (
                 <tr key={p.id} className="border-t border-slate-100 hover:bg-slate-50" data-testid={`product-row-${p.id}`}>
                   {visibleColumns.map((key) => {
                     if (key === "name") return (<td key={key} className="px-4 py-2.5">
@@ -375,6 +383,14 @@ export default function Products() {
             </tbody>
           </table>
         </div>
+        {filtered.length > 0 && <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-slate-100 text-sm text-slate-500">
+          <span>Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, sortedProducts.length)} of {sortedProducts.length}</span>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</Button>
+            <span>Page {page} of {pageCount}</span>
+            <Button variant="outline" size="sm" disabled={page >= pageCount} onClick={() => setPage((current) => Math.min(pageCount, current + 1))}>Next</Button>
+          </div>
+        </div>}
         {!filtered.length && <Empty text="No products match your search." />}
       </Card>
 
