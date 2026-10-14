@@ -106,6 +106,7 @@ function SupplierReassignButton({ suppliers, value, onChange, disabled, testId }
 
 export default function ReorderSuggestions() {
   const [rows, setRows] = useState([]);
+  const [sort, setSort] = useState({ key: "name", direction: "asc" });
   const [windowDays, setWindowDays] = useState("30");
   const [lead, setLead] = useState("7");
   const [supplierFilter, setSupplierFilter] = useState("all");
@@ -158,6 +159,26 @@ export default function ReorderSuggestions() {
     return Number.isFinite(qty) && qty > 0 ? qty * Number(row.unit_cost || 0) : 0;
   };
   const totalCost = rows.reduce((sum, row) => sum + estimatedCost(row), 0);
+
+  const toggleSort = (key) => {
+    setSort((current) => current.key === key
+      ? { key, direction: current.direction === "asc" ? "desc" : "asc" }
+      : { key, direction: "asc" });
+  };
+
+  const sortItems = (items) => [...items].sort((a, b) => {
+    const left = a[sort.key];
+    const right = b[sort.key];
+    let comparison;
+    const hasLeft = left !== null && left !== undefined && left !== "";
+    const hasRight = right !== null && right !== undefined && right !== "";
+    if (hasLeft && hasRight && Number.isFinite(Number(left)) && Number.isFinite(Number(right))) {
+      comparison = Number(left) - Number(right);
+    } else {
+      comparison = String(left ?? "").localeCompare(String(right ?? ""), undefined, { sensitivity: "base", numeric: true });
+    }
+    return sort.direction === "asc" ? comparison : -comparison;
+  });
 
   const updateQuantity = (productId, value) => {
     setRows((current) => current.map((row) => (
@@ -388,11 +409,26 @@ export default function ReorderSuggestions() {
           </div>
           <table className="w-full min-w-[900px] text-sm">
             <thead className="text-left text-xs uppercase text-slate-500"><tr>
-              {columns.map((key) => <th key={key} className={`px-4 py-2.5 ${key === "name" ? "" : "text-right"}`}>{REORDER_COLUMNS[key].label}</th>)}
+              {columns.map((key) => {
+                const active = sort.key === key;
+                return (
+                  <th key={key} className={`px-4 py-2.5 ${key === "name" ? "" : "text-right"}`}>
+                    <button type="button" onClick={() => toggleSort(key)}
+                      aria-sort={active ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}
+                      title={`Sort by ${REORDER_COLUMNS[key].label}`}
+                      className={`inline-flex items-center gap-1 hover:text-primary focus:outline-none focus:underline ${key === "name" ? "" : "ml-auto"}`}>
+                      {REORDER_COLUMNS[key].label}
+                      <span aria-hidden="true" className={active ? "text-primary" : "text-slate-300"}>
+                        {active ? (sort.direction === "asc" ? "↑" : "↓") : "↕"}
+                      </span>
+                    </button>
+                  </th>
+                );
+              })}
           <th className="w-20 px-2 py-2.5 text-center"><span className="sr-only">Add to PO or reassign supplier</span></th>
             </tr></thead>
             <tbody>
-              {group.items.map((row) => (
+              {sortItems(group.items).map((row) => (
                 <tr key={row.product_id} className="border-t border-slate-100 hover:bg-slate-50">
                   {columns.map((key) => renderCell(key, row))}
                   <td className="w-20 px-2 py-2.5 text-center">
