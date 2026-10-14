@@ -102,28 +102,33 @@ def local_day(iso_timestamp):
         return str(iso_timestamp or "")[:10]
 
 
-async def fetch_sales(period, start, end, store_id=None):
+async def fetch_sales(period, start, end, store_id=None, projection=None):
     s, e = parse_range(period, start, end)
     q = {"org_id": ORG_ID, "created_at": {"$gte": s, "$lte": e}}
     if store_id:
         q["store_id"] = store_id
-    return await db.sales.find(q, {"_id": 0}).to_list(50000)
+    return await db.sales.find(q, projection or {"_id": 0}).to_list(50000)
 
 
-async def fetch_refunds(period, start, end, store_id=None):
+async def fetch_refunds(period, start, end, store_id=None, projection=None):
     s, e = parse_range(period, start, end)
     q = {"org_id": ORG_ID, "created_at": {"$gte": s, "$lte": e}}
     if store_id:
         q["store_id"] = store_id
-    return await db.refunds.find(q, {"_id": 0}).to_list(50000)
+    return await db.refunds.find(q, projection or {"_id": 0}).to_list(50000)
 
 
 @router.get("/dashboard")
 async def dashboard(period: str = "today", store_id: Optional[str] = None,
                     start: Optional[str] = None, end: Optional[str] = None,
                     principal=Depends(get_current_principal)):
-    sales = await fetch_sales(period, start, end, store_id)
-    refunds = await fetch_refunds(period, start, end, store_id)
+    dashboard_sales_fields = {"_id": 0, "id": 1, "number": 1, "cashier_name": 1, "customer_name": 1,
+                              "created_at": 1, "status": 1, "subtotal": 1, "total": 1, "cost_total": 1,
+                              "gross_profit": 1, "items": 1, "discount_total": 1, "vat_amount": 1, "payments": 1}
+    dashboard_refund_fields = {"_id": 0, "total": 1, "cost_restored": 1, "items": 1,
+                               "vat_refunded": 1, "created_at": 1, "payments": 1}
+    sales = await fetch_sales(period, start, end, store_id, dashboard_sales_fields)
+    refunds = await fetch_refunds(period, start, end, store_id, dashboard_refund_fields)
     refund_total = sum(D(r.get("total", 0)) for r in refunds)
     restored_cost = sum(D(r.get("cost_restored", 0)) for r in refunds)
     gross = sum(D(s["subtotal"]) for s in sales)
@@ -174,8 +179,11 @@ async def dashboard(period: str = "today", store_id: Optional[str] = None,
     # category mix + top products
     cat = defaultdict(lambda: D(0))
     prod = defaultdict(lambda: {"qty": D(0), "sales": D(0), "name": ""})
-    pmap = {p["id"]: p for p in await db.products.find({"org_id": ORG_ID}, {"_id": 0}).to_list(10000)}
-    catmap = {c["id"]: c["name"] for c in await db.categories.find({"org_id": ORG_ID}, {"_id": 0}).to_list(500)}
+    pmap = {p["id"]: p for p in await db.products.find(
+        {"org_id": ORG_ID}, {"_id": 0, "id": 1, "category_id": 1, "active": 1,
+                           "track_inventory": 1, "reorder_level": 1}).to_list(10000)}
+    catmap = {c["id"]: c["name"] for c in await db.categories.find(
+        {"org_id": ORG_ID}, {"_id": 0, "id": 1, "name": 1}).to_list(500)}
     for s in sales:
         for i in s["items"]:
             p = pmap.get(i["product_id"], {})
@@ -198,7 +206,8 @@ async def dashboard(period: str = "today", store_id: Optional[str] = None,
 
     # inventory alerts
     inventory_query = {"org_id": ORG_ID, "store_id": store_id if store_id else {"$ne": "store_annex"}}
-    levels = await db.inventory_levels.find(inventory_query, {"_id": 0}).to_list(20000)
+    levels = await db.inventory_levels.find(inventory_query,
+        {"_id": 0, "product_id": 1, "store_id": 1, "quantity": 1}).to_list(20000)
     lmap = defaultdict(float)
     for l in levels:
         lmap[l["product_id"]] += float(l["quantity"])
@@ -215,7 +224,8 @@ async def dashboard(period: str = "today", store_id: Optional[str] = None,
     # expiring lots within 90 days
     today = datetime.now(MANILA).date()
     lots = await db.inventory_lots.find({"org_id": ORG_ID, "status": "ACTIVE", "quantity": {"$gt": 0},
-                                         "expiry_date": {"$ne": None}}, {"_id": 0}).to_list(10000)
+                                         "expiry_date": {"$ne": None}},
+        {"_id": 0, "product_id": 1, "store_id": 1, "expiry_date": 1}).to_list(10000)
     expiring = expired = 0
     positive_levels = {(l["store_id"], l["product_id"]) for l in levels if float(l.get("quantity", 0)) > 0}
     for l in lots:
