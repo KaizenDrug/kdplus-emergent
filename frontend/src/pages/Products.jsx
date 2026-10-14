@@ -269,7 +269,7 @@ export default function Products() {
 
   return (
     <div>
-      <PageHeader title="Products" subtitle={`${filtered.length} items shown · ${products.length} total in catalog`}>
+      <PageHeader title="Products" subtitle={`${filtered.length} matching items · ${products.length} total in catalog`}>
         <Button variant="outline" onClick={() => setColumnsOpen(true)} data-testid="product-customize-columns"><SlidersHorizontal className="w-4 h-4 mr-1" />Customize Columns</Button>
         <Button variant="outline" onClick={() => setCatOpen(true)} data-testid="manage-categories-btn"><Tags className="w-4 h-4 mr-1" />Categories</Button>
         <Button variant="outline" onClick={exportProducts} data-testid="export-products-btn"><FileDown className="w-4 h-4 mr-1" />Export Products</Button>
