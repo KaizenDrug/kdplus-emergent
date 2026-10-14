@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
-import { Check, ChevronsUpDown, ClipboardList, SlidersHorizontal, TrendingDown, Truck } from "lucide-react";
+import { Check, ChevronsUpDown, ClipboardList, Plus, SlidersHorizontal, TrendingDown, Truck } from "lucide-react";
 import { toast } from "sonner";
 
 const REORDER_COLUMNS = Object.fromEntries([
@@ -225,6 +225,71 @@ export default function ReorderSuggestions() {
     } finally { setBusy(false); }
   };
 
+  const addItemToDraftPO = async (row) => {
+    const supplierId = row.assigned_supplier_id;
+    const qty = Number(row.suggested_qty);
+    if (!supplierId) { toast.error("Assign a supplier before adding this item to a PO"); return; }
+    if (!Number.isFinite(qty) || qty <= 0) { toast.error("Enter an order quantity greater than zero"); return; }
+
+    setBusy(true);
+    try {
+      const { data: purchaseOrders } = await api.get("/purchase-orders");
+      const drafts = (Array.isArray(purchaseOrders) ? purchaseOrders : [])
+        .filter((po) => po.status === "DRAFT" && po.supplier_id === supplierId
+          && (po.store_id || "store_main") === "store_main")
+        .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+      const draft = drafts[0];
+
+      if (!draft) {
+        const { data } = await api.post("/purchase-orders", {
+          supplier_id: supplierId,
+          store_id: "store_main",
+          items: [{
+            product_id: row.product_id,
+            name: row.name,
+            qty_ordered: qty,
+            unit_cost: Number(row.unit_cost || 0),
+          }],
+        });
+        toast.success(`Draft ${data.number} created with ${row.name}`);
+        return;
+      }
+
+      const { data: fullDraft } = await api.get(`/purchase-orders/${draft.id}`);
+      const existingItems = Array.isArray(fullDraft.items) ? fullDraft.items : [];
+      const matchingItem = existingItems.find((item) => item.product_id === row.product_id);
+      const items = existingItems.map((item) => ({
+        product_id: item.product_id,
+        name: item.name,
+        qty_ordered: Number(item.qty_ordered || 0) + (item.product_id === row.product_id ? qty : 0),
+        unit_cost: Number(item.ordered_unit_cost ?? item.unit_cost ?? 0),
+      }));
+      if (!matchingItem) items.push({
+        product_id: row.product_id,
+        name: row.name,
+        qty_ordered: qty,
+        unit_cost: Number(row.unit_cost || 0),
+      });
+
+      await api.put(`/purchase-orders/${fullDraft.id}`, {
+        discount: fullDraft.discount || 0,
+        tax: fullDraft.tax || 0,
+        shipping: fullDraft.shipping || 0,
+        additional_costs: fullDraft.additional_costs || 0,
+        notes: fullDraft.notes || "",
+        supplier_id: supplierId,
+        store_id: fullDraft.store_id || "store_main",
+        expected_date: fullDraft.expected_date || null,
+        items,
+      });
+      toast.success(`${row.name} added to draft ${fullDraft.number}`);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || `Could not add ${row.name} to a draft PO`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const toggleSelected = (productId) => {
     setSelected((current) => current.includes(productId)
       ? current.filter((id) => id !== productId)
@@ -313,16 +378,25 @@ export default function ReorderSuggestions() {
           <table className="w-full min-w-[900px] text-sm">
             <thead className="text-left text-xs uppercase text-slate-500"><tr>
               {columns.map((key) => <th key={key} className={`px-4 py-2.5 ${key === "name" ? "" : "text-right"}`}>{REORDER_COLUMNS[key].label}</th>)}
-          <th className="w-10 px-2 py-2.5"><span className="sr-only">Reassign supplier</span></th>
+          <th className="w-20 px-2 py-2.5 text-center"><span className="sr-only">Add to PO or reassign supplier</span></th>
             </tr></thead>
             <tbody>
               {group.items.map((row) => (
                 <tr key={row.product_id} className="border-t border-slate-100 hover:bg-slate-50">
                   {columns.map((key) => renderCell(key, row))}
-                  <td className="w-10 px-2 py-2.5 text-center">
-                    <SupplierReassignButton suppliers={activeSuppliers} value={row.assigned_supplier_id}
-                      disabled={busy} testId={`reassign-supplier-${row.product_id}`}
-                      onChange={(id) => savePreferredSupplier({ ...row, assigned_supplier_id: id })} />
+                  <td className="w-20 px-2 py-2.5 text-center">
+                    <div className="inline-flex items-center justify-center gap-1">
+                      <button type="button" onClick={() => addItemToDraftPO(row)} disabled={busy || !group.supplier_id}
+                        aria-label={`Add ${row.name} to a draft purchase order`}
+                        title="Add to draft PO"
+                        data-testid={`add-reorder-item-po-${row.product_id}`}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md text-primary hover:bg-teal-50 focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50">
+                        <Plus className="h-4 w-4" />
+                      </button>
+                      <SupplierReassignButton suppliers={activeSuppliers} value={row.assigned_supplier_id}
+                        disabled={busy} testId={`reassign-supplier-${row.product_id}`}
+                        onChange={(id) => savePreferredSupplier({ ...row, assigned_supplier_id: id })} />
+                    </div>
                   </td>
                 </tr>
               ))}
