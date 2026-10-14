@@ -243,7 +243,7 @@ function POView({ poId, products, threshold, supName, onClose, onEdit, onChanged
             <div className="overflow-x-auto">
               <table className="w-full min-w-[760px] text-sm">
                 <thead className="text-xs uppercase text-slate-400 text-left border-b border-slate-200">
-                  <tr><th className="py-1.5">Item</th><th className="py-1.5 text-right">Ordered</th><th className="py-1.5 text-right">Received</th><th className="py-1.5 text-right">Over</th><th className="py-1.5 text-right">Cancelled</th><th className="py-1.5 text-right">Outstanding</th><th className="py-1.5 text-right">PO Cost</th><th className="py-1.5 text-right">Line Total</th></tr>
+                  <tr><th className="py-1.5">Item</th><th className="py-1.5 text-right">Ordered</th><th className="py-1.5 text-right">Received</th><th className="py-1.5 text-right">Over</th><th className="py-1.5 text-right">Cancelled</th><th className="py-1.5 text-right">BAL:</th><th className="py-1.5 text-right">PO Cost</th><th className="py-1.5 text-right">Line Total</th></tr>
                 </thead>
                 <tbody>
                   {[...po.items].sort(byProductName).map((it) => (
@@ -386,10 +386,10 @@ function ReceivePanel({ po, prodMap, levels, threshold, onCancel, onDone }) {
           <div key={it.product_id} className="border border-slate-200 rounded-lg p-3" data-testid={`recv-line-${it.product_id}`}>
             <div className="flex justify-between items-start">
               <div className="font-semibold text-slate-800">{it.name}</div>
-              <div className="text-xs text-slate-400">Ordered {it.qty_ordered} · Received {row.received} · Cancelled {row.cancelled} · <b className="text-slate-600">Outstanding {row.outstanding}</b></div>
+              <div className="text-xs text-slate-400">Ordered {it.qty_ordered} · Received {row.received} · Cancelled {row.cancelled} · <b className="text-slate-600">BAL: {row.outstanding}</b></div>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
-              <label className="block"><span className="text-[10px] font-bold uppercase text-slate-500">{row.substitution_decision === "REJECT" ? "Reject Qty" : `Receive Now (Outstanding ${row.outstanding})`}</span>
+              <label className="block"><span className="text-[10px] font-bold uppercase text-slate-500">{row.substitution_decision === "REJECT" ? "Reject Qty" : `Receive Now (BAL: ${row.outstanding})`}</span>
                 <input type="number" min={0} className="w-full mt-1 px-2 py-1.5 border rounded text-sm" value={row.qty} onChange={(e) => set(i, "qty", e.target.value)} data-testid={`recv-qty-${it.product_id}`} /></label>
               <label className="block"><span className="text-[10px] font-bold uppercase text-slate-500">PO Cost</span>
                 <div className="mt-1 px-2 py-1.5 bg-slate-50 border rounded text-sm text-slate-500">{peso(row.ordered)}</div></label>
