@@ -65,6 +65,53 @@ class ParkedTicketIn(BaseModel):
     store_id: str
     items: List[ParkedTicketLineIn]
     ticket_name: str = ""
+    ticket_id: Optional[str] = None
+
+
+
+
+async def _parked_stock_requirements(items):
+    """Expand parked sale lines into the inventory units they reserve."""
+    required = defaultdict(lambda: D(0))
+    for line in items:
+        product_id = line.get("product_id")
+        qty = D(line.get("qty", 0))
+        product = await db.products.find_one(
+            {"id": product_id, "org_id": ORG_ID}, {"_id": 0}
+        )
+        if not product:
+            continue
+        if product.get("product_type", "REGULAR") == "PROMO":
+            for component in product.get("components") or []:
+                component_product = await db.products.find_one(
+                    {"id": component.get("product_id"), "org_id": ORG_ID},
+                    {"_id": 0, "id": 1, "track_inventory": 1},
+                )
+                if component_product and component_product.get("track_inventory", True):
+                    required[component_product["id"]] += qty * D(component.get("quantity", 0))
+        elif product.get("track_inventory", True):
+            required[product["id"]] += qty
+    return [
+        {"product_id": product_id, "quantity": m(qty)}
+        for product_id, qty in sorted(required.items())
+    ]
+
+
+async def _reserved_stock_for_store(store_id, exclude_ticket_id=None):
+    """Aggregate quantities held by saved tickets, excluding the ticket being checked out."""
+    tickets = await db.parked_tickets.find(
+        {"org_id": ORG_ID, "store_id": store_id}, {"_id": 0}
+    ).to_list(5000)
+    reserved = defaultdict(lambda: D(0))
+    for ticket in tickets:
+        if exclude_ticket_id and ticket.get("id") == exclude_ticket_id:
+            continue
+        rows = ticket.get("reserved_stock")
+        if rows is None:
+            rows = await _parked_stock_requirements(ticket.get("items") or [])
+        for row in rows:
+            reserved[row["product_id"]] += D(row.get("quantity", 0))
+    return reserved
 
 
 async def get_settings():
@@ -78,6 +125,9 @@ async def list_parked_tickets(store_id: str = Query(...),
     tickets = await db.parked_tickets.find(
         {"org_id": ORG_ID, "store_id": store_id}, {"_id": 0}
     ).sort("updated_at", -1).to_list(200)
+    for ticket in tickets:
+        if ticket.get("reserved_stock") is None:
+            ticket["reserved_stock"] = await _parked_stock_requirements(ticket.get("items") or [])
     return tickets
 
 
@@ -89,6 +139,14 @@ async def save_parked_ticket(body: ParkedTicketIn,
     ticket_name = body.ticket_name.strip()
     if len(ticket_name) > 80:
         raise HTTPException(status_code=422, detail="Ticket name must be 80 characters or fewer")
+    existing = None
+    if body.ticket_id:
+        existing = await db.parked_tickets.find_one(
+            {"id": body.ticket_id, "org_id": ORG_ID, "store_id": body.store_id},
+            {"_id": 0},
+        )
+        if not existing:
+            raise HTTPException(status_code=404, detail="Saved ticket not found")
     items = []
     for line in body.items:
         if not math.isfinite(line.qty) or line.qty <= 0:
@@ -107,14 +165,27 @@ async def save_parked_ticket(body: ParkedTicketIn,
         })
     now = now_iso()
     doc = {
-        "id": uid(), "org_id": ORG_ID, "store_id": body.store_id, "items": items,
+        "id": existing["id"] if existing else uid(),
+        "org_id": ORG_ID, "store_id": body.store_id, "items": items,
+        "reserved_stock": await _parked_stock_requirements(items),
         "ticket_name": ticket_name,
-        "created_by_id": principal.get("id"), "created_by_name": principal.get("name"),
-        "created_at": now, "updated_at": now,
+        "created_by_id": existing.get("created_by_id") if existing else principal.get("id"),
+        "created_by_name": existing.get("created_by_name") if existing else principal.get("name"),
+        "created_at": existing.get("created_at") if existing else now,
+        "updated_at": now,
     }
-    await db.parked_tickets.insert_one(doc)
-    await audit(principal, "pos.ticket_parked", "parked_ticket", doc["id"],
-                after={"items": len(items)}, store_id=body.store_id)
+    if existing:
+        await db.parked_tickets.update_one(
+            {"id": doc["id"], "org_id": ORG_ID, "store_id": body.store_id},
+            {"$set": {key: value for key, value in doc.items() if key not in ("id", "org_id", "store_id")}},
+        )
+        await audit(principal, "pos.ticket_updated", "parked_ticket", doc["id"],
+                    before={"items": len(existing.get("items", []))},
+                    after={"items": len(items)}, store_id=body.store_id)
+    else:
+        await db.parked_tickets.insert_one(doc)
+        await audit(principal, "pos.ticket_parked", "parked_ticket", doc["id"],
+                    after={"items": len(items)}, store_id=body.store_id)
     doc.pop("_id", None)
     return doc
 
@@ -275,10 +346,25 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
                 inventory_products[cp["id"]] = cp
         prepared_items.append((it, p, qty, stock_specs))
 
+    if body.parked_ticket_id:
+        owned_ticket = await db.parked_tickets.find_one(
+            {"id": body.parked_ticket_id, "org_id": ORG_ID, "store_id": body.store_id},
+            {"_id": 0, "id": 1},
+        )
+        if not owned_ticket:
+            raise HTTPException(status_code=400, detail="This saved ticket is no longer available")
+    reserved_stock = await _reserved_stock_for_store(body.store_id, body.parked_ticket_id)
     allocation_pools = {}
     for product_id, required in inventory_requirements.items():
         product = inventory_products[product_id]
         available = D(await get_level(body.store_id, product_id))
+        held = reserved_stock.get(product_id, D(0))
+        available_after_holds = available - held
+        if held > 0 and required > available_after_holds:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Only {m(max(available_after_holds, D(0)))} of {product['name']} is available; the rest is reserved by saved tickets",
+            )
         if available < required and neg_policy == "PROHIBIT":
             raise HTTPException(status_code=400, detail=f"Not enough stock for {product['name']} ({m(available)} available; {m(required)} needed)")
         allocations = []
