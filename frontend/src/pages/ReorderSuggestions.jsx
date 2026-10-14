@@ -258,6 +258,17 @@ export default function ReorderSuggestions() {
       const { data: fullDraft } = await api.get(`/purchase-orders/${draft.id}`);
       const existingItems = Array.isArray(fullDraft.items) ? fullDraft.items : [];
       const matchingItem = existingItems.find((item) => item.product_id === row.product_id);
+      if (matchingItem) {
+        const currentQty = Number(matchingItem.qty_ordered || 0);
+        const updatedQty = currentQty + qty;
+        const confirmed = window.confirm(
+          `${row.name} is already on draft PO ${fullDraft.number} with quantity ${currentQty}. Do you want to add ${qty} to the existing quantity? The new quantity will be ${updatedQty}.`
+        );
+        if (!confirmed) {
+          toast.info("No changes made");
+          return;
+        }
+      }
       const items = existingItems.map((item) => ({
         product_id: item.product_id,
         name: item.name,
