@@ -19,6 +19,28 @@ import { productMargin } from "@/lib/productMargin";
 
 const PAY_METHODS = ["Cash", "GCash", "Maya", "Credit Card", "Debit Card", "Bank Transfer"];
 
+function getInventoryRequirements(lines, productsById) {
+  const requirements = {};
+  for (const line of lines) {
+    const product = productsById.get(line.product_id);
+    const quantity = Number(line.qty) || 0;
+    if (!product || quantity <= 0) continue;
+    if ((product.product_type || "REGULAR") === "PROMO") {
+      for (const component of product.components || []) {
+        const componentProduct = productsById.get(component.product_id);
+        if (componentProduct && componentProduct.track_inventory !== false) {
+          requirements[component.product_id] = (requirements[component.product_id] || 0)
+            + quantity * (Number(component.quantity) || 0);
+        }
+      }
+    } else if (product.track_inventory !== false) {
+      requirements[product.id] = (requirements[product.id] || 0) + quantity;
+    }
+  }
+  return requirements;
+}
+
+
 function suggestedCashAmounts(total) {
   const due = Math.max(0, Number(Number(total || 0).toFixed(2)));
   const exact = due;
@@ -46,6 +68,7 @@ export default function POS() {
   const [customers, setCustomers] = useState([]);
   const [settings, setSettings] = useState({});
   const [levels, setLevels] = useState({});
+  const [levelsLoaded, setLevelsLoaded] = useState(false);
   const [storeId, setStoreId] = useState("store_main");
   const [cat, setCat] = useState("all");
   const [q, setQ] = useState("");
@@ -93,7 +116,7 @@ export default function POS() {
   useEffect(() => { loadShift(); }, [storeId]); // eslint-disable-line
 
   const refreshLevels = () => api.get(`/inventory/levels?store_id=${storeId}`).then((lv) => {
-    const lm = {}; lv.data.forEach((x) => (lm[x.product_id] = x.quantity)); setLevels(lm);
+    const lm = {}; lv.data.forEach((x) => (lm[x.product_id] = x.quantity)); setLevels(lm); setLevelsLoaded(true);
   }).catch(() => {});
 
   const loadParkedTickets = useCallback(() => api.get("/pos/parked-tickets", { params: { store_id: storeId } })
@@ -110,12 +133,9 @@ export default function POS() {
     setTicketBusy(true);
     try {
       const { data } = await api.post("/pos/parked-tickets", {
-        store_id: storeId, ticket_name: ticketName.trim(),
+        store_id: storeId, ticket_name: ticketName.trim(), ticket_id: activeParkedTicketId || undefined,
         items: cart.map(({ product_id, qty }) => ({ product_id, qty })),
       });
-      if (activeParkedTicketId) {
-        await api.delete(`/pos/parked-tickets/${activeParkedTicketId}`).catch(() => {});
-      }
       setParkedTickets((old) => [data, ...old.filter((t) => t.id !== activeParkedTicketId)]);
       setCart([]); setActiveParkedTicketId(null); setMobileCartOpen(false);
       setShowTicketNameDialog(false); setTicketName("");
@@ -172,6 +192,7 @@ export default function POS() {
   }, []); // eslint-disable-line
 
   useEffect(() => {
+    setLevelsLoaded(false);
     Promise.all([
       api.get("/products?active=true&limit=10000"),
       api.get("/categories"),
@@ -180,7 +201,7 @@ export default function POS() {
       api.get(`/inventory/levels?store_id=${storeId}`),
     ]).then(([p, c, cu, s, lv]) => {
       setProducts(p.data); setCategories(c.data); setCustomers(cu.data); setSettings(s.data);
-      const lm = {}; lv.data.forEach((x) => (lm[x.product_id] = x.quantity)); setLevels(lm);
+      const lm = {}; lv.data.forEach((x) => (lm[x.product_id] = x.quantity)); setLevels(lm); setLevelsLoaded(true);
       saveCache({ products: p.data, categories: c.data, customers: cu.data, settings: s.data });
     }).catch(() => {
       // Offline fallback: load catalog from the local cache so the register keeps working
@@ -202,12 +223,44 @@ export default function POS() {
     return list.slice(0, 120);
   }, [products, cat, q]);
 
-  const addToCart = (p) => {
-    setCart((c) => {
-      const ex = c.find((i) => i.product_id === p.id);
-      if (ex) return c.map((i) => (i.product_id === p.id ? { ...i, qty: i.qty + 1 } : i));
-      return [...c, { product_id: p.id, name: p.name, unit_price: p.price, average_cost: Number(p.average_cost || 0), qty: 1, tax_mode: p.tax_mode, discount_eligible: p.discount_eligible !== false }];
+  const reservedStock = useMemo(() => {
+    const reserved = {};
+    parkedTickets.forEach((ticket) => {
+      if (ticket.id === activeParkedTicketId) return;
+      const requirements = Array.isArray(ticket.reserved_stock)
+        ? Object.fromEntries(ticket.reserved_stock.map((item) => [item.product_id, Number(item.quantity) || 0]))
+        : getInventoryRequirements(ticket.items || [], productsById);
+      Object.entries(requirements).forEach(([productId, qty]) => {
+        reserved[productId] = (reserved[productId] || 0) + qty;
+      });
     });
+    return reserved;
+  }, [parkedTickets, activeParkedTicketId, productsById]);
+
+  const warnIfStockExceeded = (nextCart, previousCart = cart) => {
+    if (!levelsLoaded) return;
+    const before = getInventoryRequirements(previousCart, productsById);
+    const after = getInventoryRequirements(nextCart, productsById);
+    const warnings = [];
+    Object.entries(after).forEach(([productId, required]) => {
+      const available = Number(levels[productId] || 0) - Number(reservedStock[productId] || 0);
+      const priorShortage = Math.max(0, (before[productId] || 0) - available);
+      const shortage = Math.max(0, required - available);
+      if (shortage > priorShortage) {
+        const product = productsById.get(productId);
+        warnings.push(`${product?.name || "Item"}: ${Math.max(0, available)} available, ${required} requested`);
+      }
+    });
+    if (warnings.length) toast.warning(`Stock balance warning — ${warnings.join("; ")}`);
+  };
+
+  const addToCart = (p) => {
+    const existing = cart.find((i) => i.product_id === p.id);
+    const nextCart = existing
+      ? cart.map((i) => (i.product_id === p.id ? { ...i, qty: i.qty + 1 } : i))
+      : [...cart, { product_id: p.id, name: p.name, unit_price: p.price, average_cost: Number(p.average_cost || 0), qty: 1, tax_mode: p.tax_mode, discount_eligible: p.discount_eligible !== false }];
+    warnIfStockExceeded(nextCart);
+    setCart(nextCart);
   };
 
   const onSearchKey = (e) => {
@@ -219,8 +272,16 @@ export default function POS() {
     }
   };
 
-  const setQty = (id, delta) => setCart((c) => c.map((i) => i.product_id === id ? { ...i, qty: Math.max(1, i.qty + delta) } : i));
-  const setQtyAbs = (id, v) => setCart((c) => c.map((i) => i.product_id === id ? { ...i, qty: Math.max(1, Number(v) || 1) } : i));
+  const setQty = (id, delta) => {
+    const nextCart = cart.map((i) => i.product_id === id ? { ...i, qty: Math.max(1, i.qty + delta) } : i);
+    warnIfStockExceeded(nextCart);
+    setCart(nextCart);
+  };
+  const setQtyAbs = (id, v) => {
+    const nextCart = cart.map((i) => i.product_id === id ? { ...i, qty: Math.max(1, Number(v) || 1) } : i);
+    warnIfStockExceeded(nextCart);
+    setCart(nextCart);
+  };
   const removeItem = (id) => setCart((c) => c.filter((i) => i.product_id !== id));
 
   const subtotal = cart.reduce((s, i) => s + i.unit_price * i.qty, 0);
