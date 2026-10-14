@@ -59,6 +59,7 @@ class UnavailableItemIn(BaseModel):
 class ParkedTicketLineIn(BaseModel):
     product_id: str
     qty: float
+    unit_price: Optional[float] = None
 
 
 class ParkedTicketIn(BaseModel):
@@ -153,13 +154,16 @@ async def save_parked_ticket(body: ParkedTicketIn,
             raise HTTPException(status_code=400, detail="Ticket quantities must be greater than zero")
         product = await db.products.find_one(
             {"id": line.product_id, "org_id": ORG_ID, "active": {"$ne": False}},
-            {"_id": 0, "id": 1, "name": 1, "price": 1, "tax_mode": 1, "discount_eligible": 1},
+            {"_id": 0, "id": 1, "name": 1, "price": 1, "open_price": 1, "tax_mode": 1, "discount_eligible": 1},
         )
         if not product:
             raise HTTPException(status_code=400, detail="A ticket item is no longer available")
+        unit_price = line.unit_price if product.get("open_price") and line.unit_price is not None else product.get("price", 0)
+        if not math.isfinite(float(unit_price)) or float(unit_price) < 0:
+            raise HTTPException(status_code=400, detail=f"Price for {product['name']} cannot be negative")
         items.append({
             "product_id": product["id"], "name": product["name"],
-            "unit_price": m(product.get("price", 0)), "qty": m(line.qty),
+            "unit_price": m(unit_price), "qty": m(line.qty),
             "tax_mode": product.get("tax_mode", "VAT"),
             "discount_eligible": product.get("discount_eligible", True),
         })
@@ -391,10 +395,12 @@ async def create_sale(body: SaleIn, principal=Depends(require_perm("pos.sell")))
         if D(it.line_discount) < 0:
             raise HTTPException(status_code=400, detail=f"Discount for {p['name']} cannot be negative")
         catalog_price = D(p.get("price", 0))
+        if p.get("open_price") and it.unit_price is None:
+            raise HTTPException(status_code=400, detail=f"Enter a selling price for {p['name']}")
         unit_price = D(it.unit_price if it.unit_price is not None else catalog_price)
-        if unit_price < 0:
-            raise HTTPException(status_code=400, detail=f"Price for {p['name']} cannot be negative")
-        if it.unit_price is not None and unit_price != catalog_price:
+        if unit_price < 0 or (p.get("open_price") and unit_price <= 0):
+            raise HTTPException(status_code=400, detail=f"Enter a selling price greater than zero for {p['name']}")
+        if it.unit_price is not None and unit_price != catalog_price and not p.get("open_price"):
             perms = principal.get("permissions", [])
             if "*" not in perms and "pos.price_override" not in perms:
                 raise HTTPException(status_code=403, detail="A manager is required to override an item price")
