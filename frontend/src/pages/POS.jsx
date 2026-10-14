@@ -331,8 +331,9 @@ export default function POS() {
               {cart.length > 0 && (
                 <button type="button" onClick={openSaveTicketDialog} disabled={ticketBusy || !online}
                   data-testid="save-ticket-toolbar"
-                  className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 text-sm font-bold text-amber-900 hover:bg-amber-100 disabled:opacity-40">
-                  <BookmarkPlus className="h-4 w-4" />{ticketBusy ? "Saving…" : "Save Ticket"}
+                  aria-label={ticketBusy ? "Saving ticket" : "Save ticket"} title={ticketBusy ? "Saving ticket…" : "Save ticket"}
+                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 disabled:opacity-40">
+                  {ticketBusy ? <RefreshCw className="h-4 w-4 animate-spin" /> : <BookmarkPlus className="h-4 w-4" />}
                 </button>
               )}
               <button type="button" onClick={() => setMobileCartOpen(true)} data-testid="open-mobile-cart"
