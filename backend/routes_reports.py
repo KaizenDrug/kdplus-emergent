@@ -124,9 +124,13 @@ async def dashboard(period: str = "today", store_id: Optional[str] = None,
                     principal=Depends(get_current_principal)):
     dashboard_sales_fields = {"_id": 0, "id": 1, "number": 1, "cashier_name": 1, "customer_name": 1,
                               "created_at": 1, "status": 1, "subtotal": 1, "total": 1, "cost_total": 1,
-                              "gross_profit": 1, "items": 1, "discount_total": 1, "vat_amount": 1, "payments": 1}
-    dashboard_refund_fields = {"_id": 0, "total": 1, "cost_restored": 1, "items": 1,
-                               "vat_refunded": 1, "created_at": 1, "payments": 1}
+                              "gross_profit": 1, "discount_total": 1, "vat_amount": 1,
+                              "items.product_id": 1, "items.name": 1, "items.qty": 1, "items.line_net": 1,
+                              "payments.method": 1, "payments.amount": 1}
+    dashboard_refund_fields = {"_id": 0, "total": 1, "cost_restored": 1,
+                               "vat_refunded": 1, "created_at": 1,
+                               "items.product_id": 1, "items.name": 1, "items.qty": 1, "items.amount": 1,
+                               "payments.method": 1, "payments.amount": 1}
     sales = await fetch_sales(period, start, end, store_id, dashboard_sales_fields)
     refunds = await fetch_refunds(period, start, end, store_id, dashboard_refund_fields)
     refund_total = sum(D(r.get("total", 0)) for r in refunds)
