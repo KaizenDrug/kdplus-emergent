@@ -73,6 +73,7 @@ export default function POS() {
   const [cat, setCat] = useState("all");
   const [q, setQ] = useState("");
   const [cart, setCart] = useState([]);
+  const [qtyDrafts, setQtyDrafts] = useState({});
   const [parkedTickets, setParkedTickets] = useState([]);
   const [showParkedTickets, setShowParkedTickets] = useState(false);
   const [ticketBusy, setTicketBusy] = useState(false);
@@ -461,7 +462,24 @@ export default function POS() {
                 <div className="flex items-center justify-between mt-2">
                   <div className="flex items-center gap-1.5">
                     <button onClick={() => setQty(i.product_id, -1)} className="w-7 h-7 rounded-md bg-white border border-slate-200 flex items-center justify-center hover:bg-slate-100"><Minus className="w-3.5 h-3.5" /></button>
-                    <input value={i.qty} onChange={(e) => setQtyAbs(i.product_id, e.target.value)} className="w-10 text-center text-sm border border-slate-200 rounded-md py-1" data-testid={`qty-${i.product_id}`} />
+                    <input type="number" min="1" step="1" inputMode="numeric"
+                      value={qtyDrafts[i.product_id] ?? i.qty}
+                      onFocus={(e) => { setQtyDrafts((current) => ({ ...current, [i.product_id]: String(i.qty) })); e.currentTarget.select(); }}
+                      onChange={(e) => setQtyDrafts((current) => ({ ...current, [i.product_id]: e.target.value }))}
+                      onBlur={(e) => {
+                        const raw = e.currentTarget.value;
+                        setQtyDrafts((current) => { const next = { ...current }; delete next[i.product_id]; return next; });
+                        if (raw.trim() && Number.isInteger(Number(raw)) && Number(raw) >= 1) setQtyAbs(i.product_id, raw);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
+                        if (e.key === "Escape") {
+                          setQtyDrafts((current) => { const next = { ...current }; delete next[i.product_id]; return next; });
+                          e.currentTarget.blur();
+                        }
+                      }}
+                      onWheel={(e) => e.currentTarget.blur()}
+                      className="w-10 text-center text-sm border border-slate-200 rounded-md py-1" data-testid={`qty-${i.product_id}`} />
                     <button onClick={() => setQty(i.product_id, 1)} className="w-7 h-7 rounded-md bg-white border border-slate-200 flex items-center justify-center hover:bg-slate-100"><Plus className="w-3.5 h-3.5" /></button>
                   </div>
                   <div className="text-right">
@@ -1015,8 +1033,8 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
                     <span className="text-xs text-slate-500">Gross margin: {margin === null ? "—" : `${margin.toFixed(1)}%`}</span>
                   </span>
                   {i.qty > 1 && eligibleCount > 0 && <input type="number" min="0" max={i.qty} step="1"
-                    value={eligibleQty[i.product_id]} onChange={(e) => setEligibleQty((x) => ({ ...x, [i.product_id]: e.target.value }))}
-                    onClick={(e) => e.stopPropagation()} data-testid={`discount-eligible-qty-${i.product_id}`}
+                    value={eligibleQty[i.product_id]} onFocus={(e) => e.currentTarget.select()} onChange={(e) => setEligibleQty((x) => ({ ...x, [i.product_id]: e.target.value }))}
+                    onClick={(e) => e.stopPropagation()} onWheel={(e) => e.currentTarget.blur()} data-testid={`discount-eligible-qty-${i.product_id}`}
                     className="w-16 px-2 py-1 border rounded text-right text-sm" title="Eligible quantity" />}
                   <span className="text-xs text-slate-500">of {i.qty}</span>
                 </label>;
