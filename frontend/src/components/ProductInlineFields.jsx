@@ -63,7 +63,7 @@ export function InlineNumber({ value, onSave, currency = false, disabled = false
     <div className={`relative ml-auto inline-flex w-28 items-center border-b ${disabled ? "border-transparent text-slate-400" : "border-slate-300 focus-within:border-primary"}`}>
       {currency && <span className="pl-1 text-sm">₱</span>}
       <input type="number" min="0" step={wholeNumber ? "1" : "0.01"} inputMode={wholeNumber ? "numeric" : "decimal"} value={draft} disabled={disabled || saving}
-        onChange={(e) => setDraft(e.target.value)} onBlur={commit}
+        onFocus={(e) => e.currentTarget.select()} onChange={(e) => setDraft(e.target.value)} onBlur={commit}
         onKeyDown={(e) => {
           if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
           if (e.key === "Escape") { cancel.current = true; setDraft(String(Number(value || 0))); e.currentTarget.blur(); }
