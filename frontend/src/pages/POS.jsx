@@ -474,6 +474,7 @@ export default function POS() {
                       onKeyDown={(e) => {
                         if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
                         if (e.key === "Escape") {
+                          e.currentTarget.value = String(i.qty);
                           setQtyDrafts((current) => { const next = { ...current }; delete next[i.product_id]; return next; });
                           e.currentTarget.blur();
                         }
