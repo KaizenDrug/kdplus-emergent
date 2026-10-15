@@ -785,6 +785,7 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
     && (!scheme.start_date || todayManila >= scheme.start_date)
     && (!scheme.end_date || todayManila <= scheme.end_date));
   const selectedScheme = discountType === "REGULAR" ? activeSchemes.find((scheme) => scheme.id === discountSchemeId) : null;
+  const discountTypeSelection = selectedScheme ? `SCHEME:${selectedScheme.id}` : discountType;
   const selectedProducts = new Set(selectedScheme?.product_ids || []);
   const schemeEligibleSubtotal = selectedScheme
     ? cart.reduce((sum, item) => {
@@ -933,17 +934,23 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label className="text-[11px] font-bold uppercase text-slate-500">Discount Type</label>
-              <Select value={discountType} onValueChange={(value) => {
-                setDiscountType(value);
-                if (value !== "REGULAR") {
-                  setDiscountSchemeId("");
-                  setEligibleQty(Object.fromEntries(cart.map((item) => [item.product_id,
-                    item.discount_eligible !== false ? item.qty : 0])));
+              <Select value={discountTypeSelection} onValueChange={(value) => {
+                if (value.startsWith("SCHEME:")) {
+                  setDiscountType("REGULAR");
+                  chooseDiscountScheme(value.slice("SCHEME:".length));
+                  return;
                 }
+                setDiscountType(value);
+                setDiscountSchemeId("");
+                setEligibleQty(Object.fromEntries(cart.map((item) => [item.product_id,
+                  item.discount_eligible !== false ? item.qty : 0])));
               }}>
                 <SelectTrigger className="mt-1" data-testid="discount-type"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="REGULAR">Regular</SelectItem>
+                  {activeSchemes.map((scheme) => <SelectItem key={scheme.id} value={`SCHEME:${scheme.id}`}>
+                    {scheme.name} ({scheme.discount_type === "PERCENT" ? `${scheme.value}%${Number(scheme.additional_percent) > 0 ? `, then ${scheme.additional_percent}%` : ""}` : peso(scheme.value)})
+                  </SelectItem>)}
                   <SelectItem value="SENIOR">Senior Citizen (VAT-exempt +20%)</SelectItem>
                   <SelectItem value="PWD">PWD (VAT-exempt +20%)</SelectItem>
                 </SelectContent>
@@ -974,20 +981,16 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
 
           {discountType === "REGULAR" && (
             <div className="space-y-3">
-              <div><label className="text-[11px] font-bold uppercase text-slate-500">Discount Scheme</label>
-                <Select value={discountSchemeId || "manual"} onValueChange={chooseDiscountScheme}>
-                  <SelectTrigger className="mt-1" data-testid="discount-scheme-select"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="manual">No scheme — manual discount</SelectItem>
-                    {activeSchemes.map((scheme) => <SelectItem key={scheme.id} value={scheme.id}>{scheme.name} ({scheme.discount_type === "PERCENT" ? `${scheme.value}%${Number(scheme.additional_percent) > 0 ? `, then ${scheme.additional_percent}%` : ""}` : peso(scheme.value)})</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                {selectedScheme && !schemeMinimumMet && <p className="text-xs text-amber-700 mt-1">Eligible items need {peso(schemeMinimum)} minimum; current eligible subtotal is {peso(schemeEligibleSubtotal)}.</p>}
-                {selectedScheme && schemeMinimumMet && schemeEligibleSubtotal <= 0 && <p className="text-xs text-amber-700 mt-1">There are no eligible products in this ticket.</p>}
-                {selectedScheme && <p className="text-xs text-slate-500 mt-1">{selectedScheme.discount_type === "PERCENT" && Number(selectedScheme.additional_percent) > 0 ? `Applies ${selectedScheme.value}% first, then ${selectedScheme.additional_percent}% to the remaining eligible amount. ` : ""}Choose which items and quantities receive this scheme discount.</p>}
-              </div>
-              {!selectedScheme && <div><label className="text-[11px] font-bold uppercase text-slate-500">Manual Order Discount (₱)</label>
-                <input type="number" min="0" step="0.01" value={orderDiscount} onChange={(e) => setOrderDiscount(e.target.value)} data-testid="order-discount" className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 text-sm" placeholder="0.00" /></div>}
+              {selectedScheme ? (
+                <div className="p-3 bg-teal-50 rounded-lg">
+                  {!schemeMinimumMet && <p className="text-xs text-amber-700">Eligible items need {peso(schemeMinimum)} minimum; current eligible subtotal is {peso(schemeEligibleSubtotal)}.</p>}
+                  {schemeMinimumMet && schemeEligibleSubtotal <= 0 && <p className="text-xs text-amber-700">There are no eligible products in this ticket.</p>}
+                  <p className="text-xs text-slate-600">{selectedScheme.discount_type === "PERCENT" && Number(selectedScheme.additional_percent) > 0 ? `Applies ${selectedScheme.value}% first, then ${selectedScheme.additional_percent}% to the remaining eligible amount. ` : ""}Choose which items and quantities receive this scheme discount.</p>
+                </div>
+              ) : (
+                <div><label className="text-[11px] font-bold uppercase text-slate-500">Manual Order Discount (₱)</label>
+                  <input type="number" min="0" step="0.01" value={orderDiscount} onChange={(e) => setOrderDiscount(e.target.value)} data-testid="order-discount" className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 text-sm" placeholder="0.00" /></div>
+              )}
             </div>
           )}
 
