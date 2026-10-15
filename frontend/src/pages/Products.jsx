@@ -636,7 +636,7 @@ function ProductDialog({ product, products, categories, suppliers, onClose, onSa
   // function that returns JSX reconciles by position and preserves focus.
   const inp = (k, label, opts = {}) => (
     <label className="block"><span className="text-[11px] font-bold uppercase text-slate-500">{label}</span>
-      <input type={opts.type || "text"} value={f[k] ?? ""} onChange={(e) => set(k, e.target.value)} placeholder={opts.ph} data-testid={`pf-${k}`}
+      <input type={opts.type || "text"} value={f[k] ?? ""} onFocus={opts.type === "number" ? (e) => e.currentTarget.select() : undefined} onChange={(e) => set(k, e.target.value)} placeholder={opts.ph} data-testid={`pf-${k}`}
         className="w-full mt-1 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" /></label>
   );
 
@@ -667,7 +667,7 @@ function ProductDialog({ product, products, categories, suppliers, onClose, onSa
                     </Select>
                   </label>
                   <label><span className="text-[10px] font-bold uppercase text-slate-500">Qty deducted</span>
-                    <input type="number" min="0.01" step="0.01" value={component.quantity} onChange={(e) => updateComponent(index, "quantity", e.target.value)} data-testid={`promo-quantity-${index}`} className="w-full mt-1 px-3 py-2 rounded-lg bg-white border border-slate-200 text-sm" />
+                    <input type="number" min="0.01" step="0.01" value={component.quantity} onFocus={(e) => e.currentTarget.select()} onChange={(e) => updateComponent(index, "quantity", e.target.value)} data-testid={`promo-quantity-${index}`} className="w-full mt-1 px-3 py-2 rounded-lg bg-white border border-slate-200 text-sm" />
                   </label>
                   <button type="button" onClick={() => removeComponent(index)} aria-label="Remove component" className="h-10 text-red-500 hover:bg-red-100 rounded-lg"><Trash2 className="w-4 h-4 mx-auto" /></button>
                 </div>
@@ -691,7 +691,7 @@ function ProductDialog({ product, products, categories, suppliers, onClose, onSa
               <SelectContent><SelectItem value="VAT">VATable (12%)</SelectItem><SelectItem value="EXEMPT">VAT-Exempt</SelectItem><SelectItem value="ZERO">Zero-Rated</SelectItem></SelectContent></Select></label>
           {f.product_type !== "PROMO" ? (
             <label className="block"><span className="text-[11px] font-bold uppercase text-slate-500">Cost (₱)</span>
-              <input type="number" value={manualCost} onChange={(e) => { setManualCost(e.target.value); setCostEdited(true); }} data-testid="pf-acquisition_cost"
+              <input type="number" value={manualCost} onFocus={(e) => e.currentTarget.select()} onChange={(e) => { setManualCost(e.target.value); setCostEdited(true); }} data-testid="pf-acquisition_cost"
                 className="w-full mt-1 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
             </label>
           ) : <div className="text-xs text-slate-500 rounded-lg bg-slate-50 p-3 self-end">Cost is calculated from the regular products.</div>}{inp("price", "Selling Price (₱)", { type: "number" })}
