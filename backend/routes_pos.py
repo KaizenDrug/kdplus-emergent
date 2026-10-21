@@ -981,12 +981,14 @@ async def cash_movement(body: CashMoveIn, principal=Depends(require_perm("pos.op
 
 
 @router.get("/cash-ledger")
-async def cash_ledger(shift_id: str, principal=Depends(require_perm("pos.view_receipts"))):
+async def cash_ledger(shift_id: str, principal=Depends(get_current_principal)):
     """Read-only, chronological cash drawer ledger for one shift.
 
     Uses the same cash-payment, change and refund rules as shift reconciliation.
     No historical sales, refunds, or cash movements are modified.
     """
+    if "*" not in principal.get("permissions", []):
+        raise HTTPException(status_code=403, detail="Only managers can view cash movement history")
     shift = await db.shifts.find_one({"id": shift_id, "org_id": ORG_ID}, {"_id": 0})
     if not shift:
         raise HTTPException(status_code=404, detail="Shift not found")
