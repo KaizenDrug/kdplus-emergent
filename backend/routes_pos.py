@@ -979,6 +979,124 @@ async def cash_movement(body: CashMoveIn, principal=Depends(require_perm("pos.op
     doc.pop("_id", None)
     return doc
 
+
+@router.get("/cash-ledger")
+async def cash_ledger(shift_id: str, principal=Depends(get_current_principal)):
+    """Read-only, chronological cash drawer ledger for one shift.
+
+    Uses the same cash-payment, change and refund rules as shift reconciliation.
+    No historical sales, refunds, or cash movements are modified.
+    """
+    if "*" not in principal.get("permissions", []):
+        raise HTTPException(status_code=403, detail="Only managers can view cash movement history")
+    shift = await db.shifts.find_one({"id": shift_id, "org_id": ORG_ID}, {"_id": 0})
+    if not shift:
+        raise HTTPException(status_code=404, detail="Shift not found")
+
+    opening = D(shift.get("opening_cash", 0))
+    totals = {"cash_sales": D(0), "cash_in": D(0), "cash_out": D(0), "cash_refunds": D(0)}
+    entries = [{
+        "id": "opening-" + shift_id,
+        "created_at": shift.get("opened_at"),
+        "type": "OPENING",
+        "cashier": shift.get("employee_name") or "",
+        "reference": "",
+        "reason": "Opening cash",
+        "amount": m(opening),
+    }]
+
+    sales_query = {"org_id": ORG_ID, "shift_id": shift_id}
+    async for sale in db.sales.find(sales_query, {"_id": 0}):
+        cash_tendered = sum(
+            (D(p.get("amount", 0)) for p in sale.get("payments", [])
+             if str(p.get("method", "")).lower() == "cash"), D(0)
+        )
+        # Cash handed back as change is not money retained in the drawer.
+        retained = max(D(0), cash_tendered - D(sale.get("change", 0)))
+        if retained <= 0:
+            continue
+        totals["cash_sales"] += retained
+        entries.append({
+            "id": "sale-" + sale["id"],
+            "created_at": sale.get("created_at"),
+            "type": "SALE",
+            "cashier": sale.get("cashier_name") or "",
+            "reference": sale.get("number") or "",
+            "reason": "Cash payment (net of change)",
+            "amount": m(retained),
+        })
+
+    refunds_query = {"org_id": ORG_ID, "shift_id": shift_id}
+    async for refund in db.refunds.find(refunds_query, {"_id": 0}):
+        payments = refund.get("payments", [])
+        if not payments:
+            # Match legacy refund treatment in close_shift.
+            cash_refund = D(refund.get("total", 0))
+        else:
+            cash_refund = sum(
+                (D(p.get("amount", 0)) for p in payments
+                 if str(p.get("method", "")).lower() == "cash"), D(0)
+            )
+        if cash_refund <= 0:
+            continue
+        totals["cash_refunds"] += cash_refund
+        entries.append({
+            "id": "refund-" + refund["id"],
+            "created_at": refund.get("created_at"),
+            "type": "REFUND",
+            "cashier": refund.get("cashier_name") or "",
+            "reference": refund.get("number") or refund.get("sale_number") or "",
+            "reason": refund.get("reason") or "Cash refund",
+            "amount": m(-cash_refund),
+        })
+
+    moves_query = {"org_id": ORG_ID, "shift_id": shift_id}
+    async for movement in db.cash_movements.find(moves_query, {"_id": 0}):
+        movement_type = movement.get("type", "")
+        if movement_type not in ("IN", "OUT", "DROP", "PETTY"):
+            continue
+        amount = D(movement.get("amount", 0))
+        if movement_type == "IN":
+            totals["cash_in"] += amount
+        else:
+            totals["cash_out"] += amount
+        entries.append({
+            "id": "movement-" + movement["id"],
+            "created_at": movement.get("created_at"),
+            "type": movement_type,
+            "cashier": movement.get("employee_name") or "",
+            "reference": "",
+            "reason": movement.get("reason") or "",
+            "amount": m(amount if movement_type == "IN" else -amount),
+        })
+
+    # Running balances are calculated in time order, then the UI may show newest first.
+    entries.sort(key=lambda e: (e["created_at"] or "",
+                                0 if e["type"] == "OPENING" else 1, e["id"]))
+    balance = D(0)
+    for entry in entries:
+        balance += D(entry["amount"])
+        entry["balance"] = m(balance)
+
+    return {
+        "shift": {
+            "id": shift["id"], "employee_name": shift.get("employee_name"),
+            "opened_at": shift.get("opened_at"), "closed_at": shift.get("closed_at"),
+            "status": shift.get("status"), "counted_cash": shift.get("counted_cash"),
+            "expected_cash_at_close": shift.get("expected_cash"),
+        },
+        "totals": {
+            "opening_cash": m(opening),
+            "cash_sales": m(totals["cash_sales"]),
+            "cash_in": m(totals["cash_in"]),
+            "cash_out": m(totals["cash_out"]),
+            "cash_refunds": m(totals["cash_refunds"]),
+            "expected_cash": m(balance),
+        },
+        "entries": entries,
+    }
+
+
 class CloseShiftIn(BaseModel):
     shift_id: str
     counted_cash: float
