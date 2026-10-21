@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { toast } from "sonner";
 import { Pencil } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import CashMovementHistory from "@/components/CashMovementHistory";
 
 export default function Shifts() {
   const { user } = useAuth();
@@ -21,6 +22,7 @@ export default function Shifts() {
   const [correctionCount, setCorrectionCount] = useState("");
   const [correctionReason, setCorrectionReason] = useState("");
   const [correctionBusy, setCorrectionBusy] = useState(false);
+  const [ledgerRefresh, setLedgerRefresh] = useState(0);
 
   const load = useCallback(() => {
     api.get(`/pos/shifts/current?store_id=${store}&register_id=reg_1`).then((r) => setCurrent(r.data));
@@ -29,8 +31,8 @@ export default function Shifts() {
   useEffect(() => { load(); }, [load]);
 
   const open = async () => { await api.post("/pos/shifts/open", { store_id: store, register_id: "reg_1", opening_cash: Number(opening) || 0 }); toast.success("Shift opened"); setOpening(""); load(); };
-  const close = async () => { if (counted === "") { toast.error("Enter counted cash"); return; } await api.post("/pos/shifts/close", { shift_id: current.id, counted_cash: Number(counted) }); toast.success("Shift closed"); setCounted(""); load(); };
-  const cashMove = async () => { if (!move.amount) return; await api.post("/pos/cash-movements", { shift_id: current.id, store_id: store, type: move.type, amount: Number(move.amount), reason: move.reason }); toast.success("Cash movement recorded"); setMove({ type: "IN", amount: "", reason: "" }); };
+  const close = async () => { if (counted === "") { toast.error("Enter counted cash"); return; } await api.post("/pos/shifts/close", { shift_id: current.id, counted_cash: Number(counted) }); toast.success("Shift closed"); setCounted(""); load(); setLedgerRefresh((n) => n + 1); };
+  const cashMove = async () => { if (!move.amount) return; await api.post("/pos/cash-movements", { shift_id: current.id, store_id: store, type: move.type, amount: Number(move.amount), reason: move.reason }); toast.success("Cash movement recorded"); setMove({ type: "IN", amount: "", reason: "" }); setLedgerRefresh((n) => n + 1); };
 
   const beginCorrection = (shift) => {
     setCorrecting(shift);
@@ -50,6 +52,7 @@ export default function Shifts() {
       setShifts((rows) => rows.map((row) => row.id === data.id ? data : row));
       setCorrecting(null);
       toast.success("Closed shift count corrected and logged");
+      setLedgerRefresh((n) => n + 1);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Could not correct the closed shift");
     } finally { setCorrectionBusy(false); }
@@ -89,6 +92,8 @@ export default function Shifts() {
           </Card>
         </div>
       )}
+
+      <CashMovementHistory currentShift={current} shifts={shifts} refreshKey={ledgerRefresh} />
 
       <h3 className="font-heading font-bold text-slate-800 mb-3">Shift History</h3>
       <Card className="overflow-x-auto">
