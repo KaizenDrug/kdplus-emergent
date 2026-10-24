@@ -2,6 +2,7 @@ import { useSearchParams } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import InventoryColumns, { DEFAULT_COLUMNS, INVENTORY_COLUMNS, normalizeColumns } from "@/components/InventoryColumns";
 import ProductSearchSelect from "@/components/ProductSearchSelect";
+import AddInventoryItemToPO from "@/components/AddInventoryItemToPO";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import api, { peso, fmtDay, fmtDate } from "@/lib/api";
 import { PageHeader, Card, StatusBadge, Empty, StatCard } from "@/components/kit";
@@ -9,7 +10,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { PackagePlus, SlidersHorizontal, CalendarClock, AlertTriangle, PackageX, Search, X, Trash2 } from "lucide-react";
+import { PackagePlus, SlidersHorizontal, CalendarClock, AlertTriangle, PackageX, Search, X, Trash2, Plus } from "lucide-react";
 import { toast } from "sonner";
 import SortableHeader from "@/components/SortableHeader";
 import { matchesSearchTerms, sortTableRows } from "@/lib/utils";
@@ -25,6 +26,8 @@ export default function Inventory() {
   const [lotProduct, setLotProduct] = useState(null);
   const [columnsOpen, setColumnsOpen] = useState(false);
   const admin = ["owner", "admin"].includes(user?.role);
+  const canManagePO = (user?.permissions || []).includes("*");
+  const [addingToPO, setAddingToPO] = useState(null);
   const canViewCost = (user?.permissions || []).some((p) => ["*", "reports.view"].includes(p));
   const preferenceKey = `kdplus-inventory-columns:${user?.kind || "user"}:${user?.id}`;
   const [columns, setColumns] = useState(DEFAULT_COLUMNS);
@@ -211,7 +214,15 @@ export default function Inventory() {
                       if (key === "status") value = <StatusBadge value={l.status} label={l.status === "OK" ? "In Stock" : l.status === "LOW" ? "Low" : "Out"} />;
                       return <td key={key} className={`px-4 py-2.5 ${INVENTORY_COLUMNS[key].numeric ? "text-right" : ""}`}>{value}</td>;
                     })}
-                    <td className="px-4 py-2.5 text-right">{!l.virtual_promo_stock && <button type="button" onClick={() => setAdjust(l.product_id)}
+                    <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                      {canManagePO && !l.virtual_promo_stock && <button type="button"
+                        onClick={() => setAddingToPO(productById[l.product_id] || { id: l.product_id, name: l.name, sku: l.sku, reorder_qty: l.reorder_qty, average_cost: l.average_cost, supplier_id: l.supplier_id })}
+                        aria-label={`Add ${l.name} to an existing draft purchase order`} title="Add to draft PO"
+                        data-testid={`inventory-add-po-${l.product_id}`}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md text-primary hover:bg-teal-50 focus:outline-none focus:ring-2 focus:ring-ring">
+                        <Plus className="h-4 w-4" />
+                      </button>}
+                      {!l.virtual_promo_stock && <button type="button" onClick={() => setAdjust(l.product_id)}
                       className="text-xs font-semibold text-primary hover:underline" data-testid={`adjust-product-${l.product_id}`}>Adjust</button>} {(lotsByProduct[l.product_id] || []).length > 0 && <button type="button" onClick={() => setLotProduct(l)} className="ml-3 text-xs font-semibold text-primary hover:underline">Batches</button>}</td>
                   </tr>
                 ))}
@@ -242,7 +253,7 @@ export default function Inventory() {
                     <SortableHeader column="days_remaining" label="Days Left" sort={expirySort} onSort={setExpirySort} numeric />
                     <SortableHeader column="quantity" label="Qty" sort={expirySort} onSort={setExpirySort} numeric />
                     <SortableHeader column="stock_value" label="Value" sort={expirySort} onSort={setExpirySort} numeric />
-                    <SortableHeader column="bucket" label="Bucket" sort={expirySort} onSort={setExpirySort} />{admin && <th className="px-4 py-3">Edit</th>}</tr></thead>
+                    <SortableHeader column="bucket" label="Bucket" sort={expirySort} onSort={setExpirySort} />{(admin || canManagePO) && <th className="px-4 py-3">Actions</th>}</tr></thead>
                   <tbody>
                     {sortedExpiry.map((l) => (
                       <tr key={l.id} className="border-t border-slate-100 hover:bg-slate-50">
@@ -252,7 +263,17 @@ export default function Inventory() {
                         <td className={`px-4 py-2.5 text-right font-semibold ${l.days_remaining < 0 ? "text-red-600" : l.days_remaining <= 60 ? "text-amber-600" : "text-slate-600"}`}>{l.days_remaining}</td>
                         <td className="px-4 py-2.5 text-right">{l.quantity}</td>
                         <td className="px-4 py-2.5 text-right">{canViewCost ? peso(l.stock_value) : "—"}</td>
-                        <td className="px-4 py-2.5"><StatusBadge value={l.bucket} /></td>{admin && <td className="px-4 py-2.5"><button onClick={() => setLotProduct({ product_id: l.product_id, name: l.product_name })} className="text-primary font-semibold">Edit batch</button></td>}
+                        <td className="px-4 py-2.5"><StatusBadge value={l.bucket} /></td>
+                        {(admin || canManagePO) && <td className="px-4 py-2.5 whitespace-nowrap">
+                          {canManagePO && productById[l.product_id]?.product_type !== "PROMO" && <button type="button"
+                            onClick={() => setAddingToPO(productById[l.product_id] || { id: l.product_id, name: l.product_name, sku: l.sku })}
+                            aria-label={`Add ${l.product_name} to an existing draft purchase order`} title="Add to draft PO"
+                            data-testid={`expiry-add-po-${l.product_id}`}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-primary hover:bg-teal-50 focus:outline-none focus:ring-2 focus:ring-ring">
+                            <Plus className="h-4 w-4" />
+                          </button>}
+                          {admin && <button type="button" onClick={() => setLotProduct({ product_id: l.product_id, name: l.product_name })} className="ml-2 text-primary font-semibold">Edit batch</button>}
+                        </td>}
                       </tr>
                     ))}
                   </tbody>
@@ -266,6 +287,8 @@ export default function Inventory() {
         <TabsContent value="movements"><LedgerTab store={store} products={products} search={search} /></TabsContent>
       </Tabs>
 
+      {addingToPO && <AddInventoryItemToPO product={addingToPO} store={store} suppliers={suppliers}
+        onClose={() => setAddingToPO(null)} />}
       {columnsOpen && <InventoryColumns columns={columns} defaults={defaultColumns} canViewCost={canViewCost} admin={admin} onClose={() => setColumnsOpen(false)} onSave={saveColumns} onDefaultSaved={setDefaultColumns} />}
       {lotProduct && <LotDialog product={lotProduct} lots={lotsByProduct[lotProduct.product_id] || []} admin={admin} onClose={() => setLotProduct(null)} onSaved={() => { loadLevels(); loadExpiry(); loadLots(); }} />}
       {receive && <ReceiveDialog draft={receiveDraft} onDraftSaved={() => { setReceive(false); loadDrafts(); }} store={store} suppliers={suppliers} products={products.filter((p) => (p.product_type || "REGULAR") === "REGULAR")} onClose={() => setReceive(false)} onSaved={() => { setReceive(false); loadDrafts(); loadLevels(); loadExpiry(); loadLots(); toast.success("Stock received"); }} />}
