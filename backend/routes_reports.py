@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, time, timezone
 from collections import defaultdict
 
 from core import db, ORG_ID, m, D, MANILA, get_current_principal, require_perm
+from reorder_context import match_key
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
@@ -381,13 +382,32 @@ async def reorder_suggestions(days_window: int = 30, lead_time_days: int = 7,
             net_qty = D(i["qty"]) - D(i.get("refunded_qty", 0))
             sold[i["product_id"]] += net_qty
 
-    # incoming from open POs
-    open_pos = await db.purchase_orders.find(
-        {"org_id": ORG_ID, "status": {"$in": ["DRAFT", "SENT", "PARTIALLY_RECEIVED"]}}, {"_id": 0}).to_list(2000)
+    # Draft POs are planned orders, not guaranteed incoming stock.
+    po_query = {"org_id": ORG_ID, "status": {"$in": ["DRAFT", "SENT", "PARTIALLY_RECEIVED"]}}
+    if store_id:
+        po_query["store_id"] = store_id
+    open_pos = await db.purchase_orders.find(po_query, {"_id": 0}).to_list(2000)
     incoming = defaultdict(lambda: D(0))
+    open_po_lines = defaultdict(list)
     for po in open_pos:
-        for it in po["items"]:
-            incoming[it["product_id"]] += D(it["qty_ordered"]) - D(it.get("qty_received", 0))
+        for it in po.get("items", []):
+            pid = it.get("product_id")
+            if not pid:
+                continue
+            outstanding = max(D(0), D(it.get("qty_ordered", 0))
+                              - D(it.get("qty_received", 0)) - D(it.get("qty_cancelled", 0)))
+            if outstanding <= 0:
+                continue
+            open_po_lines[pid].append({
+                "id": po.get("id"), "number": po.get("number"),
+                "status": po.get("status"), "supplier_id": po.get("supplier_id"),
+                "store_id": po.get("store_id"), "expected_date": po.get("expected_date"),
+                "qty_ordered": m(D(it.get("qty_ordered", 0))),
+                "qty_received": m(D(it.get("qty_received", 0))),
+                "qty_outstanding": m(outstanding),
+            })
+            if po.get("status") in ("SENT", "PARTIALLY_RECEIVED"):
+                incoming[pid] += outstanding
 
     # current stock (company-wide or per store)
     lq = {"org_id": ORG_ID}
