@@ -307,6 +307,7 @@ export default function ReorderSuggestions() {
       unit_cost: Number(i.unit_cost || 0),
     }));
     if (!items.length) { toast.error("Nothing to order for this supplier"); return; }
+    if (!confirmReorderWarnings(group.items.filter((row) => Number(row.suggested_qty) > 0))) return;
     setBusy(true);
     try {
       const { data } = await api.post("/purchase-orders", {
@@ -315,6 +316,7 @@ export default function ReorderSuggestions() {
         items,
       });
       toast.success(`Draft ${data.number} created for ${group.name}`);
+      load();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed");
     } finally { setBusy(false); }
@@ -325,6 +327,7 @@ export default function ReorderSuggestions() {
     const qty = Number(row.suggested_qty);
     if (!supplierId) { toast.error("Assign a supplier before adding this item to a PO"); return; }
     if (!Number.isFinite(qty) || qty <= 0) { toast.error("Enter an order quantity greater than zero"); return; }
+    if (!confirmReorderWarnings([row])) return;
 
     setBusy(true);
     try {
@@ -347,6 +350,7 @@ export default function ReorderSuggestions() {
           }],
         });
         toast.success(`Draft ${data.number} created with ${row.name}`);
+        load();
         return;
       }
 
@@ -389,6 +393,7 @@ export default function ReorderSuggestions() {
         items,
       });
       toast.success(`${row.name} added to draft ${fullDraft.number}`);
+      load();
     } catch (e) {
       toast.error(e.response?.data?.detail || `Could not add ${row.name} to a draft PO`);
     } finally {
@@ -414,7 +419,7 @@ export default function ReorderSuggestions() {
         <div className="flex items-start gap-2">
           <input type="checkbox" className="mt-1" checked={selected.includes(row.product_id)}
             onChange={() => toggleSelected(row.product_id)} aria-label={`Select ${row.name}`} />
-          <div>{row.name}<div className="text-xs text-slate-400">{row.sku}</div></div>
+          <div>{row.name}<div className="text-xs text-slate-400">{row.sku}</div><ReorderIndicators row={row} /></div>
         </div>
       </td>
     );
@@ -442,7 +447,7 @@ export default function ReorderSuggestions() {
 
   return (
     <div>
-      <PageHeader title="Reorder Suggestions" subtitle="Smart restock using sales velocity, lead time, current stock & incoming POs">
+      <PageHeader title="Reorder Suggestions" subtitle="Smart restock using sales velocity, stock, sent POs and existing draft orders">
         <Button variant="outline" onClick={() => setColumnsOpen(true)} data-testid="reorder-customize-columns">
           <SlidersHorizontal className="w-4 h-4 mr-1" />Customize Columns
         </Button>
