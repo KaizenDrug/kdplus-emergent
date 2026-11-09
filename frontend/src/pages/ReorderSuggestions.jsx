@@ -104,6 +104,80 @@ function SupplierReassignButton({ suppliers, value, onChange, disabled, testId }
   );
 }
 
+function ReorderIndicators({ row }) {
+  const purchaseOrders = row.existing_pos || [];
+  const alternatives = row.alternative_stock || [];
+  if (!purchaseOrders.length && !alternatives.length) return null;
+
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs font-normal">
+      {purchaseOrders.length > 0 && (
+        <Popover>
+          <PopoverTrigger asChild>
+            <button type="button" data-testid={`reorder-on-po-${row.product_id}`}
+              aria-label={`View existing purchase orders for ${row.name}`}
+              className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 font-semibold text-blue-800 hover:bg-blue-100">
+              On PO · {purchaseOrders.length}
+            </button>
+          </PopoverTrigger>
+          <PopoverContent className="max-h-72 w-[340px] overflow-y-auto p-3" align="start">
+            <div className="mb-2 font-semibold">Existing purchase orders</div>
+            {purchaseOrders.map((po, index) => (
+              <div key={`${po.id || po.number}-${index}`} className="border-t py-2 text-xs">
+                <div className="font-semibold">{po.number || "Purchase order"} · {po.status?.replaceAll("_", " ")}</div>
+                <div>{po.supplier_name || "Supplier not set"}</div>
+                <div>Outstanding: <strong>{num(po.qty_outstanding)}</strong> {row.uom || "units"}
+                  {" · "}Ordered: {num(po.qty_ordered)} · Received: {num(po.qty_received)}</div>
+                {po.expected_date && <div>Expected: {String(po.expected_date).slice(0, 10)}</div>}
+                {po.status === "DRAFT" && <div className="text-amber-700">Draft only — not yet sent.</div>}
+              </div>
+            ))}
+          </PopoverContent>
+        </Popover>
+      )}
+      {alternatives.length > 0 && (
+        <Popover>
+          <PopoverTrigger asChild>
+            <button type="button" data-testid={`reorder-generic-stock-${row.product_id}`}
+              aria-label={`View same-generic stock for ${row.name}`}
+              className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 font-semibold text-amber-800 hover:bg-amber-100">
+              Same generic stock · {alternatives.length}
+            </button>
+          </PopoverTrigger>
+          <PopoverContent className="max-h-72 w-[360px] overflow-y-auto p-3" align="start">
+            <div className="mb-2 font-semibold">Other products with matching generic, strength and dosage form</div>
+            {alternatives.map((item) => (
+              <div key={item.product_id} className="border-t py-2 text-xs">
+                <div className="font-semibold">{item.name}</div>
+                <div className="text-slate-500">{item.sku || "No SKU"}{item.brand ? ` · ${item.brand}` : ""}</div>
+                <div>On hand: <strong>{num(item.quantity)} {item.uom || "units"}</strong></div>
+              </div>
+            ))}
+            <div className="border-t pt-2 text-xs text-amber-800">
+              Advisory only. Verify formulation, release type, route, expiry and suitability before treating products as alternatives.
+            </div>
+          </PopoverContent>
+        </Popover>
+      )}
+    </div>
+  );
+}
+
+function confirmReorderWarnings(items) {
+  const flagged = items.filter((row) =>
+    (row.existing_pos || []).length > 0 || (row.alternative_stock || []).length > 0
+  );
+  if (!flagged.length) return true;
+  const details = flagged.slice(0, 5).map((row) => {
+    const onPO = (row.existing_pos || []).length;
+    const sameGeneric = (row.alternative_stock || []).length;
+    return `• ${row.name}: ${onPO} open PO(s), ${sameGeneric} other stocked SKU(s)`;
+  }).join("\n");
+  return window.confirm(
+    `Review before purchasing: ${flagged.length} selected item(s) already have open POs or same-generic stock.\n\n${details}${flagged.length > 5 ? "\n…" : ""}\n\nProceed with the purchase order anyway?`
+  );
+}
+
 export default function ReorderSuggestions() {
   const [rows, setRows] = useState([]);
   const [sort, setSort] = useState({ key: "name", direction: "asc" });
@@ -233,6 +307,7 @@ export default function ReorderSuggestions() {
       unit_cost: Number(i.unit_cost || 0),
     }));
     if (!items.length) { toast.error("Nothing to order for this supplier"); return; }
+    if (!confirmReorderWarnings(group.items.filter((row) => Number(row.suggested_qty) > 0))) return;
     setBusy(true);
     try {
       const { data } = await api.post("/purchase-orders", {
@@ -241,6 +316,7 @@ export default function ReorderSuggestions() {
         items,
       });
       toast.success(`Draft ${data.number} created for ${group.name}`);
+      load();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed");
     } finally { setBusy(false); }
@@ -251,6 +327,7 @@ export default function ReorderSuggestions() {
     const qty = Number(row.suggested_qty);
     if (!supplierId) { toast.error("Assign a supplier before adding this item to a PO"); return; }
     if (!Number.isFinite(qty) || qty <= 0) { toast.error("Enter an order quantity greater than zero"); return; }
+    if (!confirmReorderWarnings([row])) return;
 
     setBusy(true);
     try {
@@ -273,6 +350,7 @@ export default function ReorderSuggestions() {
           }],
         });
         toast.success(`Draft ${data.number} created with ${row.name}`);
+        load();
         return;
       }
 
@@ -315,6 +393,7 @@ export default function ReorderSuggestions() {
         items,
       });
       toast.success(`${row.name} added to draft ${fullDraft.number}`);
+      load();
     } catch (e) {
       toast.error(e.response?.data?.detail || `Could not add ${row.name} to a draft PO`);
     } finally {
@@ -340,7 +419,7 @@ export default function ReorderSuggestions() {
         <div className="flex items-start gap-2">
           <input type="checkbox" className="mt-1" checked={selected.includes(row.product_id)}
             onChange={() => toggleSelected(row.product_id)} aria-label={`Select ${row.name}`} />
-          <div>{row.name}<div className="text-xs text-slate-400">{row.sku}</div></div>
+          <div>{row.name}<div className="text-xs text-slate-400">{row.sku}</div><ReorderIndicators row={row} /></div>
         </div>
       </td>
     );
@@ -368,7 +447,7 @@ export default function ReorderSuggestions() {
 
   return (
     <div>
-      <PageHeader title="Reorder Suggestions" subtitle="Smart restock using sales velocity, lead time, current stock & incoming POs">
+      <PageHeader title="Reorder Suggestions" subtitle="Smart restock using sales velocity, stock, sent POs and existing draft orders">
         <Button variant="outline" onClick={() => setColumnsOpen(true)} data-testid="reorder-customize-columns">
           <SlidersHorizontal className="w-4 h-4 mr-1" />Customize Columns
         </Button>

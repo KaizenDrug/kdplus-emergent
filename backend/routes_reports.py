@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, time, timezone
 from collections import defaultdict
 
 from core import db, ORG_ID, m, D, MANILA, get_current_principal, require_perm
+from reorder_context import match_key, outstanding_quantity
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
@@ -381,13 +382,31 @@ async def reorder_suggestions(days_window: int = 30, lead_time_days: int = 7,
             net_qty = D(i["qty"]) - D(i.get("refunded_qty", 0))
             sold[i["product_id"]] += net_qty
 
-    # incoming from open POs
-    open_pos = await db.purchase_orders.find(
-        {"org_id": ORG_ID, "status": {"$in": ["DRAFT", "SENT", "PARTIALLY_RECEIVED"]}}, {"_id": 0}).to_list(2000)
+    # Draft POs are planned orders, not guaranteed incoming stock.
+    po_query = {"org_id": ORG_ID, "status": {"$in": ["DRAFT", "SENT", "PARTIALLY_RECEIVED"]}}
+    if store_id:
+        po_query["store_id"] = store_id
+    open_pos = await db.purchase_orders.find(po_query, {"_id": 0}).to_list(2000)
     incoming = defaultdict(lambda: D(0))
+    open_po_lines = defaultdict(list)
     for po in open_pos:
-        for it in po["items"]:
-            incoming[it["product_id"]] += D(it["qty_ordered"]) - D(it.get("qty_received", 0))
+        for it in po.get("items", []):
+            pid = it.get("product_id")
+            if not pid:
+                continue
+            outstanding = outstanding_quantity(it)
+            if outstanding <= 0:
+                continue
+            open_po_lines[pid].append({
+                "id": po.get("id"), "number": po.get("number"),
+                "status": po.get("status"), "supplier_id": po.get("supplier_id"),
+                "store_id": po.get("store_id"), "expected_date": po.get("expected_date"),
+                "qty_ordered": m(D(it.get("qty_ordered", 0))),
+                "qty_received": m(D(it.get("qty_received", 0))),
+                "qty_outstanding": m(outstanding),
+            })
+            if po.get("status") in ("SENT", "PARTIALLY_RECEIVED"):
+                incoming[pid] += outstanding
 
     # current stock (company-wide or per store)
     lq = {"org_id": ORG_ID}
@@ -400,6 +419,21 @@ async def reorder_suggestions(days_window: int = 30, lead_time_days: int = 7,
 
     products = await db.products.find({"org_id": ORG_ID, "active": True, "track_inventory": True}, {"_id": 0}).to_list(5000)
     sup_map = {s["id"]: s["company"] for s in await db.suppliers.find({"org_id": ORG_ID}, {"_id": 0}).to_list(500)}
+    # Other catalog SKUs with the same generic, strength and form are advisory.
+    # Do not merge their stock or silently treat them as substitutes.
+    stock_by_generic = defaultdict(list)
+    for product in products:
+        key = match_key(product)
+        available = float(stock.get(product["id"], 0))
+        if key and available > 0:
+            stock_by_generic[key].append({
+                "product_id": product["id"], "name": product["name"],
+                "sku": product.get("sku"), "brand": product.get("brand"),
+                "quantity": m(D(available)), "uom": product.get("uom", "piece"),
+            })
+    for alternatives in stock_by_generic.values():
+        alternatives.sort(key=lambda item: (-float(item["quantity"]), item["name"]))
+
     rows = []
     for p in products:
         sid = p.get("preferred_supplier_id") or p.get("supplier_id")
@@ -411,14 +445,20 @@ async def reorder_suggestions(days_window: int = 30, lead_time_days: int = 7,
         safety = D(p.get("reorder_level", 0))
         expected_demand = avg_daily * D(lead_time_days)
         suggested = expected_demand + safety - cur - inc
-        needs = suggested > 0 or cur <= D(p.get("reorder_level", 0))
+        po_lines = open_po_lines.get(p["id"], [])
+        needs = suggested > 0 or cur <= safety or bool(po_lines)
         if not needs:
             continue
         if suggested > 0:
             qty = ceil(float(suggested))
+        elif inc > 0 or cur > safety:
+            # Already covered by sent POs, or shown only to flag an open PO.
+            qty = 0
         else:
-            # low stock but demand-neutral — suggest a standard reorder pack
             qty = int(p.get("reorder_qty", 0) or 0)
+        key = match_key(p)
+        alternatives = [item for item in stock_by_generic.get(key, [])
+                        if item["product_id"] != p["id"]] if key else []
         days_of_stock = float(cur / avg_daily) if avg_daily > 0 else None
         rows.append({"product_id": p["id"], "name": p["name"], "sku": p.get("sku"),
                      "supplier_id": sid, "supplier_name": sup_map.get(sid, "— No supplier —"),
@@ -430,6 +470,10 @@ async def reorder_suggestions(days_window: int = 30, lead_time_days: int = 7,
                      "suggested_qty": qty, "unit_cost": p.get("average_cost", 0),
                      "latest_cost": p.get("latest_cost", 0), "price": p.get("price", 0),
                      "uom": p.get("uom", "piece"),
+                     "existing_pos": [{**line, "supplier_name": sup_map.get(line["supplier_id"], "—")}
+                                      for line in po_lines],
+                     "alternative_stock": alternatives,
+                     "alternative_stock_count": len(alternatives),
                      "est_cost": m(D(qty) * D(p.get("average_cost", 0)))})
     rows.sort(key=lambda r: (r["supplier_name"], -(r["suggested_qty"] or 0)))
     return {"rows": rows, "params": {"days_window": days_window, "lead_time_days": lead_time_days}}
