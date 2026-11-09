@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, time, timezone
 from collections import defaultdict
 
 from core import db, ORG_ID, m, D, MANILA, get_current_principal, require_perm
-from reorder_context import match_key
+from reorder_context import match_key, outstanding_quantity
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
@@ -394,8 +394,7 @@ async def reorder_suggestions(days_window: int = 30, lead_time_days: int = 7,
             pid = it.get("product_id")
             if not pid:
                 continue
-            outstanding = max(D(0), D(it.get("qty_ordered", 0))
-                              - D(it.get("qty_received", 0)) - D(it.get("qty_cancelled", 0)))
+            outstanding = outstanding_quantity(it)
             if outstanding <= 0:
                 continue
             open_po_lines[pid].append({
