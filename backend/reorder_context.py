@@ -4,6 +4,7 @@ A match is an inventory clue, NOT an automatic therapeutic substitution.
 Missing catalog fields never produce a match.
 """
 import re
+from decimal import Decimal
 
 
 FORM_ALIASES = {
@@ -34,3 +35,10 @@ def match_key(product):
     if not generic or not strength or not form:
         return None
     return generic, strength, form
+
+
+def outstanding_quantity(item):
+    """Outstanding PO units after receipts and cancellations; never negative."""
+    def amount(field):
+        return Decimal(str(item.get(field) or 0))
+    return max(Decimal(0), amount("qty_ordered") - amount("qty_received") - amount("qty_cancelled"))
