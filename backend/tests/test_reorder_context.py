@@ -1,5 +1,5 @@
 """Pure unit tests for conservative same-generic reorder indicators."""
-from reorder_context import match_key
+from reorder_context import match_key, outstanding_quantity
 
 
 def test_normalizes_common_catalog_spacing_and_forms():
@@ -25,3 +25,9 @@ def test_preserves_combination_identity():
     a = {"generic_name": "Amoxicillin + Clavulanic acid", "strength": "500mg/125mg", "dosage_form": "tablet"}
     b = {"generic_name": "Amoxicillin/Clavulanic acid", "strength": "500mg/125mg", "dosage_form": "tablet"}
     assert match_key(a) != match_key(b)  # Ambiguous separators are not auto-equated.
+
+
+def test_outstanding_po_quantity_respects_receipts_and_cancellations():
+    assert outstanding_quantity({"qty_ordered": 20, "qty_received": 5, "qty_cancelled": 3}) == 12
+    assert outstanding_quantity({"qty_ordered": 10, "qty_received": 12}) == 0
+    assert outstanding_quantity({"qty_ordered": 10, "qty_received": 10}) == 0
