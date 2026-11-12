@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState, useRef } from "react"
 import { useNavigate } from "react-router-dom";
 import {
   Search, Plus, Minus, Trash2, X, ShoppingCart, Wifi, ArrowLeft, Printer, UserPlus, Barcode,
-  RefreshCw, CloudOff, AlertCircle, Receipt, ClipboardPlus, BookmarkPlus, FolderOpen,
+  RefreshCw, CloudOff, AlertCircle, Receipt, ClipboardPlus, BookmarkPlus, FolderOpen, CheckCircle2,
 } from "lucide-react";
 import api, { peso, fmtDate } from "@/lib/api";
 import { getCache, saveCache, enqueueSale, queueCount, syncQueue } from "@/lib/offline";
@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import BrandLogo from "@/components/BrandLogo";
 import { matchesSearchTerms } from "@/lib/utils";
 import { openCashDrawerForSale, printThermalReceipt, printThermalTicket } from "@/lib/receiptPrint";
+import { getPaymentConfirmation } from "@/lib/paymentConfirmation";
 import { ACTIVE_STORES } from "@/lib/stores";
 import { productMargin } from "@/lib/productMargin";
 
@@ -1102,6 +1103,10 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
 function ReceiptDialog({ sale, settings, onClose }) {
   const biz = settings?.business || {};
   const autoPrintStarted = useRef(false);
+  const [showReceiptDetails, setShowReceiptDetails] = useState(false);
+  const { total, amountPaid, cashReceived, otherPaid, change, hasCash, hasOther } = getPaymentConfirmation(sale);
+  const isOffline = Boolean(sale._offline);
+
   const print = (openDrawer = false) => {
     if (!printThermalReceipt(sale, settings, [], { openDrawer })) toast.error("Could not prepare the receipt for printing");
   };
@@ -1111,10 +1116,79 @@ function ReceiptDialog({ sale, settings, onClose }) {
       print(true);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <Dialog open={true} onOpenChange={onClose}>
-      <DialogContent className="max-w-sm">
-        <DialogHeader><DialogTitle>Receipt {sale.number}</DialogTitle></DialogHeader>
+      <DialogContent className="max-w-md max-h-[90dvh] overflow-y-auto" data-testid="sale-confirmation-dialog">
+        <DialogHeader>
+          <div className="flex flex-col items-center gap-1 text-center">
+            <div className={isOffline
+              ? "mb-1 flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-700"
+              : "mb-1 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"}>
+              {isOffline ? <CloudOff className="h-7 w-7" /> : <CheckCircle2 className="h-7 w-7" />}
+            </div>
+            <DialogTitle className="text-xl">{isOffline ? "Sale Queued Offline" : "Sale Completed"}</DialogTitle>
+            <p className="text-xs text-slate-500" data-testid="sale-confirmation-number">{sale.number}</p>
+            {isOffline && <p className="text-xs font-medium text-amber-700">Saved locally. This sale will sync when online.</p>}
+          </div>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm text-slate-600">Total Amount</span>
+              <span className="text-lg font-bold tabular-nums text-slate-900" data-testid="sale-confirmation-total">{peso(total)}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3 border-t border-slate-200 pt-3">
+              <span className="text-sm font-semibold text-slate-700">{hasCash && !hasOther ? "Cash Received" : "Amount Paid"}</span>
+              <span className="text-2xl font-extrabold tabular-nums text-slate-900" data-testid="sale-confirmation-paid">
+                {peso(hasCash && !hasOther ? cashReceived : amountPaid)}
+              </span>
+            </div>
+            {hasCash && hasOther && (
+              <div className="space-y-1 border-t border-slate-200 pt-2 text-xs text-slate-600" data-testid="sale-confirmation-split">
+                <div className="flex justify-between"><span>Cash Received</span><span>{peso(cashReceived)}</span></div>
+                <div className="flex justify-between"><span>Other Payments</span><span>{peso(otherPaid)}</span></div>
+              </div>
+            )}
+          </div>
+
+          <div className={hasCash
+            ? "rounded-xl border-2 border-emerald-200 bg-emerald-50 px-4 py-5 text-center"
+            : "rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-5 text-center"}
+            aria-live="polite">
+            <div className={hasCash
+              ? "text-sm font-extrabold uppercase tracking-wider text-emerald-800"
+              : "text-sm font-extrabold uppercase tracking-wider text-slate-600"}>
+              {hasCash ? "Change to Give" : change > 0 ? "Overpayment Recorded" : "No Cash Change"}
+            </div>
+            <div className={hasCash
+              ? "mt-2 text-5xl font-extrabold tracking-tight tabular-nums text-emerald-800 sm:text-6xl"
+              : "mt-2 text-5xl font-extrabold tracking-tight tabular-nums text-slate-700 sm:text-6xl"}
+              data-testid="sale-confirmation-change">
+              {peso(change)}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <Button type="button" onClick={() => print(false)} data-testid="receipt-print"
+              className="h-12 bg-primary text-base font-bold hover:bg-teal-800">
+              <Printer className="mr-2 h-5 w-5" />Print Receipt
+            </Button>
+            <Button type="button" variant="outline" onClick={onClose} data-testid="receipt-close"
+              className="h-12 text-base font-semibold">
+              New Sale
+            </Button>
+          </div>
+
+          <button type="button" onClick={() => setShowReceiptDetails((visible) => !visible)}
+            data-testid="receipt-details-toggle"
+            aria-expanded={showReceiptDetails}
+            className="w-full py-1 text-center text-sm font-medium text-primary hover:underline">
+            {showReceiptDetails ? "Hide Receipt Details" : "View Receipt Details"}
+          </button>
+          {showReceiptDetails && (
+            <div className="max-h-64 overflow-y-auto rounded-lg border border-slate-200 bg-white p-3" data-testid="receipt-details">
         <div id="receipt-body" className="font-mono text-xs text-slate-800 space-y-0.5">
           <div className="text-center font-bold text-sm">{biz.receipt_header || "KDPLUS Pharmacy"}</div>
           <div className="text-center text-[10px]">{biz.address}</div>
@@ -1138,10 +1212,10 @@ function ReceiptDialog({ sale, settings, onClose }) {
           <div className="border-t border-dashed border-slate-300 my-1" />
           <div className="text-center text-[10px]">{biz.receipt_footer}</div>
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} data-testid="receipt-close">New Sale</Button>
-          <Button onClick={() => print(false)} className="bg-primary hover:bg-teal-800" data-testid="receipt-print"><Printer className="w-4 h-4 mr-1" />Print</Button>
-        </DialogFooter>
+
+            </div>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );
