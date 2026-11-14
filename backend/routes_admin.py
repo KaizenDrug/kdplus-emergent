@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Annotated, Optional, List
 import re
 
 from core import (db, ORG_ID, uid, now_iso, hash_secret, verify_secret, get_current_principal,
@@ -209,7 +209,7 @@ def _prescription_image_value(image):
     return image
 
 @router.get("/prescriptions")
-async def list_prescriptions(q: Optional[str] = Query(default=None, max_length=120),
+async def list_prescriptions(q: Annotated[Optional[str], Query(max_length=120)] = None,
                              date_from: Optional[str] = None, date_to: Optional[str] = None,
                              principal=Depends(require_perm("pharmacy.prescription"))):
     query = {"org_id": ORG_ID}
@@ -243,7 +243,7 @@ async def _save_prescription(body, principal, prescription_id=None):
     data["prescriber"] = (data.get("prescriber") or "").strip()
     if not data["patient_name"] or not data["prescriber"]:
         raise HTTPException(status_code=422, detail="Patient name and prescribing physician are required")
-    items = [item.model_dump() for item in data["items"]]
+    items = data["items"]
     for item in items:
         item["product_name"] = item["product_name"].strip()
         if not item["product_name"]:
@@ -253,7 +253,6 @@ async def _save_prescription(body, principal, prescription_id=None):
     reference = (data.get("reference") or "").strip() or f"RX-{uid()[:8].upper()}"
     data["reference"] = reference
     data["prescription_date"] = data.get("prescription_date") or now_iso()[:10]
-    data["items"] = items
     data["status"] = _prescription_status(items)
     data["dispensing_date"] = data.get("dispensing_date") or (now_iso()[:10] if data["status"] != "UNFILLED" else None)
     # Keep legacy single-item fields populated for older reports/integrations.
