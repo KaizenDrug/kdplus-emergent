@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional, List
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from collections import defaultdict
 import math
 import re
@@ -9,8 +9,34 @@ import re
 from core import (db, ORG_ID, uid, now_iso, m, D, MANILA,
                   get_current_principal, require_perm, audit, next_number, notify)
 from inventory_lib import record_movement, allocate_fefo, consume_lots, get_level
+from favorite_products import favorites_pipeline
 
 router = APIRouter(prefix="/api/pos", tags=["pos"])
+
+@router.get("/favorites")
+async def get_favorites(
+    store_id: str = Query(..., min_length=1, max_length=100),
+    days: int = Query(30, ge=7, le=90),
+    limit: int = Query(60, ge=1, le=100),
+    principal=Depends(require_perm("pos.sell")),
+):
+    """Best-selling products by net units in the selected store and time window.
+
+    No patient or cashier details are returned. Refund quantities are already
+    tracked on sale lines; cancelled sales do not contribute to the ranking.
+    """
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    pipeline = favorites_pipeline(ORG_ID, store_id, since, limit)
+    rows = await db.sales.aggregate(pipeline).to_list(length=limit)
+    return {
+        "store_id": store_id,
+        "period_days": days,
+        "items": [
+            {"product_id": row["_id"], "qty_sold": m(row["qty_sold"])}
+            for row in rows
+        ],
+    }
+
 
 
 # ---------------- Schemas ----------------

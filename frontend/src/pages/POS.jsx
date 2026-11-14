@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState, useRef } from "react"
 import { useNavigate } from "react-router-dom";
 import {
   Search, Plus, Minus, Trash2, X, ShoppingCart, Wifi, ArrowLeft, Printer, UserPlus, Barcode,
-  RefreshCw, CloudOff, AlertCircle, Receipt, ClipboardPlus, BookmarkPlus, FolderOpen,
+  RefreshCw, CloudOff, AlertCircle, Receipt, ClipboardPlus, BookmarkPlus, FolderOpen, Star,
 } from "lucide-react";
 import api, { peso, fmtDate } from "@/lib/api";
 import { getCache, saveCache, enqueueSale, queueCount, syncQueue } from "@/lib/offline";
@@ -16,6 +16,7 @@ import { matchesSearchTerms } from "@/lib/utils";
 import { openCashDrawerForSale, printThermalReceipt, printThermalTicket } from "@/lib/receiptPrint";
 import { ACTIVE_STORES } from "@/lib/stores";
 import { productMargin } from "@/lib/productMargin";
+import { selectFavoriteProducts } from "@/lib/favoriteProducts";
 
 const PAY_METHODS = ["Cash", "GCash", "Maya", "Credit Card", "Debit Card", "Bank Transfer"];
 
@@ -71,6 +72,9 @@ export default function POS() {
   const [levelsLoaded, setLevelsLoaded] = useState(false);
   const [storeId, setStoreId] = useState("store_main");
   const [cat, setCat] = useState("all");
+  const [favoriteDays, setFavoriteDays] = useState(30);
+  const [favoriteResult, setFavoriteResult] = useState(null);
+  const [favoritesVersion, setFavoritesVersion] = useState(0);
   const [q, setQ] = useState("");
   const [cart, setCart] = useState([]);
   const [qtyDrafts, setQtyDrafts] = useState({});
@@ -181,7 +185,7 @@ export default function POS() {
       const res = await syncQueue(api);
       setPending(res.pending);
       setSyncStatus(res.failed > 0 ? "error" : "idle");
-      if (res.synced > 0) { toast.success(`${res.synced} offline sale(s) synced`); refreshLevels(); }
+      if (res.synced > 0) { toast.success(`${res.synced} offline sale(s) synced`); refreshLevels(); setFavoritesVersion((version) => version + 1); }
       if (res.failed > 0) toast.error(`${res.failed} sale(s) failed to sync — will retry`);
     } catch { setSyncStatus("error"); }
   };
@@ -217,14 +221,53 @@ export default function POS() {
     });
   }, [storeId]);
 
+  const favoriteKey = `${storeId}:${favoriteDays}`;
+
+  // Cache best sellers per store and period for temporary offline access.
+  useEffect(() => {
+    let active = true;
+    const cachedRows = getCache().favorites?.[favoriteKey];
+    setFavoriteResult({ key: favoriteKey, rows: cachedRows, loading: online, error: !online });
+    if (!online) return;
+
+    api.get("/pos/favorites", { params: { store_id: storeId, days: favoriteDays, limit: 60 } })
+      .then(({ data }) => {
+        if (!active) return;
+        const rows = Array.isArray(data?.items) ? data.items : [];
+        setFavoriteResult({ key: favoriteKey, rows });
+        const cached = getCache().favorites || {};
+        try {
+          saveCache({ favorites: { ...cached, [favoriteKey]: rows } });
+        } catch {
+          // The online ranking remains usable when browser storage is full.
+        }
+      })
+      .catch(() => {
+        if (!active) return;
+        setFavoriteResult({ key: favoriteKey, rows: cachedRows, error: true });
+      });
+    return () => { active = false; };
+  }, [storeId, favoriteDays, favoriteKey, favoritesVersion, online]);
+
+  const currentFavorites = favoriteResult?.key === favoriteKey ? favoriteResult : null;
+  const favoriteRows = currentFavorites?.rows;
+  const favoritesLoading = !currentFavorites || currentFavorites.loading;
+  const favoritesError = currentFavorites?.error;
+
+  const favoriteProducts = useMemo(
+    () => selectFavoriteProducts(products, favoriteRows),
+    [products, favoriteRows]
+  );
+
   const filtered = useMemo(() => {
-    let list = products;
-    if (cat !== "all") list = list.filter((p) => p.category_id === cat);
+    // Searching or scanning still searches the whole catalog in Favorites.
+    let list = cat === "favorites" && !q.trim() ? favoriteProducts : products;
+    if (cat !== "all" && cat !== "favorites") list = list.filter((p) => p.category_id === cat);
     if (q) {
       list = list.filter((p) => matchesSearchTerms(q, [p.name, p.generic_name, p.brand, p.sku, p.barcode, p.manufacturer]));
     }
     return list.slice(0, 120);
-  }, [products, cat, q]);
+  }, [products, favoriteProducts, cat, q]);
 
   const reservedStock = useMemo(() => {
     const reserved = {};
@@ -355,6 +398,10 @@ export default function POS() {
         <div className="w-44 bg-white border-r border-slate-200 overflow-y-auto py-2 shrink-0 hidden 2xl:block">
           <button onClick={() => setCat("all")} data-testid="cat-all"
             className={`w-full text-left px-4 py-2.5 text-sm font-medium ${cat === "all" ? "bg-primary/10 text-primary border-r-2 border-primary" : "text-slate-600 hover:bg-slate-50"}`}>All Items</button>
+          <button onClick={() => setCat("favorites")} data-testid="cat-favorites"
+            className={`w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm font-semibold ${cat === "favorites" ? "bg-amber-50 text-amber-800 border-r-2 border-amber-500" : "text-slate-700 hover:bg-amber-50"}`}>
+            <Star className="w-4 h-4" />Favorites
+          </button>
           {categories.map((c) => (
             <button key={c.id} onClick={() => setCat(c.id)} data-testid={`cat-${c.shelf_code}`}
               className={`w-full text-left px-4 py-2.5 text-sm font-medium ${cat === c.id ? "bg-primary/10 text-primary border-r-2 border-primary" : "text-slate-600 hover:bg-slate-50"}`}>
@@ -373,6 +420,7 @@ export default function POS() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Items</SelectItem>
+                  <SelectItem value="favorites">⭐ Favorites (Best Sellers)</SelectItem>
                   {categories.map((c) => (
                     <SelectItem key={c.id} value={c.id}>
                       {c.shelf_code ? `${c.shelf_code} · ` : ""}{c.name.split(" / ")[0]}
@@ -411,6 +459,26 @@ export default function POS() {
             </div>
           </div>
           <div className="flex-1 overflow-y-auto p-3">
+            {cat === "favorites" && !q.trim() && (
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3" data-testid="favorites-toolbar">
+                <div>
+                  <div className="flex items-center gap-2 font-bold text-amber-900"><Star className="h-4 w-4" />Favorites · Best Sellers</div>
+                  <div className="mt-1 text-xs text-amber-800">Most purchased products by units sold, after refunds, at this store.</div>
+                  {favoritesError && <div className="mt-1 text-xs font-semibold text-amber-900">
+                    Unable to refresh. Showing saved favorites if available.
+                  </div>}
+                </div>
+                <div className="flex items-center gap-1 rounded-lg border border-amber-200 bg-white p-1" aria-label="Best sellers period">
+                  {[7, 30, 90].map((days) => (
+                    <button type="button" key={days} onClick={() => setFavoriteDays(days)}
+                      data-testid={`favorites-days-${days}`} aria-pressed={favoriteDays === days}
+                      className={`rounded-md px-3 py-1.5 text-xs font-bold ${favoriteDays === days ? "bg-primary text-white" : "text-slate-600 hover:bg-slate-100"}`}>
+                      {days} days
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3">
               {filtered.map((p) => {
                 const stk = levels[p.id] ?? 0;
@@ -425,6 +493,7 @@ export default function POS() {
                     </div>
                     <div className="text-base font-semibold text-slate-800 leading-snug mt-2 line-clamp-3 min-h-[4rem] break-words">{p.name}</div>
                     <div className="text-sm text-slate-400 mt-1 min-h-5">{p.strength}</div>
+                    {cat === "favorites" && !q.trim() && <div className="mt-1 text-xs font-semibold text-amber-700">Sold {p.favorite_qty_sold} units in {favoriteDays} days</div>}
                     <div className="flex flex-wrap items-end justify-between gap-x-2 gap-y-1 mt-1.5">
                       <span className="text-primary text-lg font-bold">{p.open_price ? "Open price" : peso(p.price)}</span>
                       <span data-testid={`product-margin-${p.id}`}
@@ -437,7 +506,7 @@ export default function POS() {
                 );
               })}
             </div>
-            {!filtered.length && <div className="text-center py-16 text-slate-400">No products match. Use “Record unavailable” to save the customer's request.</div>}
+            {!filtered.length && <div className="text-center py-16 text-slate-400">{cat === "favorites" && !q.trim() ? (favoritesLoading ? "Loading best sellers…" : favoritesError && !favoriteRows ? "No saved favorites for this store and period." : `No best sellers in the last ${favoriteDays} days for active products at this store.`) : "No products match. Use “Record unavailable” to save the customer's request."}</div>}
           </div>
         </div>
 
@@ -533,7 +602,7 @@ export default function POS() {
               setParkedTickets((old) => old.filter((t) => t.id !== activeParkedTicketId));
               setActiveParkedTicketId(null);
             }
-            setLastSale(sale); setCart([]); setQ(""); setCheckout(false); setMobileCartOpen(false); refreshLevels();
+            setLastSale(sale); setCart([]); setQ(""); setCheckout(false); setMobileCartOpen(false); refreshLevels(); setFavoritesVersion((version) => version + 1);
             if (!settings?.printing?.auto_print_receipt) openCashDrawerForSale(sale, settings);
             toast.success(sale._offline ? `Sale queued offline (${sale.number})` : `Sale ${sale.number} completed`);
           }}
