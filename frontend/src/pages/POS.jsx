@@ -73,9 +73,7 @@ export default function POS() {
   const [storeId, setStoreId] = useState("store_main");
   const [cat, setCat] = useState("all");
   const [favoriteDays, setFavoriteDays] = useState(30);
-  const [favoriteRows, setFavoriteRows] = useState([]);
-  const [favoritesLoading, setFavoritesLoading] = useState(false);
-  const [favoritesError, setFavoritesError] = useState(false);
+  const [favoriteResult, setFavoriteResult] = useState(null);
   const [favoritesVersion, setFavoritesVersion] = useState(0);
   const [q, setQ] = useState("");
   const [cart, setCart] = useState([]);
@@ -223,29 +221,38 @@ export default function POS() {
     });
   }, [storeId]);
 
+  const favoriteKey = `${storeId}:${favoriteDays}`;
+
   // Cache best sellers per store and period for temporary offline access.
   useEffect(() => {
     let active = true;
-    const cacheKey = `${storeId}:${favoriteDays}`;
-    setFavoriteRows([]);
-    setFavoritesLoading(true);
-    setFavoritesError(false);
+    const cachedRows = getCache().favorites?.[favoriteKey];
+    setFavoriteResult({ key: favoriteKey, rows: cachedRows, loading: online, error: !online });
+    if (!online) return;
+
     api.get("/pos/favorites", { params: { store_id: storeId, days: favoriteDays, limit: 60 } })
       .then(({ data }) => {
         if (!active) return;
         const rows = Array.isArray(data?.items) ? data.items : [];
-        setFavoriteRows(rows);
+        setFavoriteResult({ key: favoriteKey, rows });
         const cached = getCache().favorites || {};
-        saveCache({ favorites: { ...cached, [cacheKey]: rows } });
+        try {
+          saveCache({ favorites: { ...cached, [favoriteKey]: rows } });
+        } catch {
+          // The online ranking remains usable when browser storage is full.
+        }
       })
       .catch(() => {
         if (!active) return;
-        setFavoritesError(true);
-        setFavoriteRows(getCache().favorites?.[cacheKey] || []);
-      })
-      .finally(() => { if (active) setFavoritesLoading(false); });
+        setFavoriteResult({ key: favoriteKey, rows: cachedRows, error: true });
+      });
     return () => { active = false; };
-  }, [storeId, favoriteDays, favoritesVersion]);
+  }, [storeId, favoriteDays, favoriteKey, favoritesVersion, online]);
+
+  const currentFavorites = favoriteResult?.key === favoriteKey ? favoriteResult : null;
+  const favoriteRows = currentFavorites?.rows;
+  const favoritesLoading = !currentFavorites || currentFavorites.loading;
+  const favoritesError = currentFavorites?.error;
 
   const favoriteProducts = useMemo(
     () => selectFavoriteProducts(products, favoriteRows),
@@ -499,7 +506,7 @@ export default function POS() {
                 );
               })}
             </div>
-            {!filtered.length && <div className="text-center py-16 text-slate-400">{cat === "favorites" && !q.trim() ? (favoritesLoading ? "Loading best sellers…" : favoritesError ? "Favorites are unavailable offline until this period has been loaded online." : `No completed sales in the last ${favoriteDays} days for active products at this store.`) : "No products match. Use “Record unavailable” to save the customer's request."}</div>}
+            {!filtered.length && <div className="text-center py-16 text-slate-400">{cat === "favorites" && !q.trim() ? (favoritesLoading ? "Loading best sellers…" : favoritesError && !favoriteRows ? "No saved favorites for this store and period." : `No best sellers in the last ${favoriteDays} days for active products at this store.`) : "No products match. Use “Record unavailable” to save the customer's request."}</div>}
           </div>
         </div>
 
