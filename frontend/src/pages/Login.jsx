@@ -4,6 +4,7 @@ import { useAuth, apiError } from "@/context/AuthContext";
 import { Mail, Lock, Delete } from "lucide-react";
 import { toast } from "sonner";
 import BrandLogo from "@/components/BrandLogo";
+import { appendPinDigit, deletePinDigit, isCompletePin } from "@/lib/pinEntry";
 
 const BG = "https://images.unsplash.com/photo-1745455782861-43334c2d036f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA3MDR8MHwxfHNlYXJjaHwzfHxwaGFybWFjeSUyMGludGVyaW9yJTIwbW9kZXJuJTIwYnJpZ2h0fGVufDB8fHx8MTc4ODQ3OTQzOHww&ixlib=rb-4.1.0&q=85";
 
@@ -30,7 +31,7 @@ export default function Login() {
   };
 
   const submitPin = async (value) => {
-    if (!/^\\d{4}$/.test(value) || pinSubmitting.current) return;
+    if (!isCompletePin(value) || pinSubmitting.current) return;
     // A ref guard prevents double requests from a rapid keypad tap or Enter.
     pinSubmitting.current = true;
     setBusy(true);
@@ -48,16 +49,16 @@ export default function Login() {
 
   const tapPin = (digit) => {
     if (pinSubmitting.current) return;
-    setPin((current) => current.length < 4 ? current + digit : current);
+    setPin((current) => appendPinDigit(current, digit));
   };
 
   const backspacePin = () => {
-    if (!pinSubmitting.current) setPin((current) => current.slice(0, -1));
+    if (!pinSubmitting.current) setPin((current) => deletePinDigit(current));
   };
 
   // The fourth digit signs in automatically, regardless of keyboard or keypad.
   useEffect(() => {
-    if (tab === "pin" && pin.length === 4) submitPin(pin);
+    if (tab === "pin" && isCompletePin(pin)) submitPin(pin);
   }, [pin, tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
