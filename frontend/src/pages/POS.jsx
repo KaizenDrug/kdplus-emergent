@@ -863,6 +863,7 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
   const removePayment = (idx) => setPayments((p) => p.filter((_, i) => i !== idx));
   const fillExact = () => setPayments([{ method: payments[0].method, amount: total.toFixed(2) }]);
   const selectSuggestedCash = (amount) => {
+    if (submittingRef.current) return;
     // Pass the selected amount directly to submit: React state updates are
     // asynchronous and reading payments here could use the previous value.
     const selectedPayments = [{ method: "Cash", amount: Number(amount).toFixed(2) }];
