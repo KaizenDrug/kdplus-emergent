@@ -23,7 +23,22 @@ const DialogOverlay = React.forwardRef(({ className, ...props }, ref) => (
 ))
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 
-const DialogContent = React.forwardRef(({ className, children, onInteractOutside, ...props }, ref) => (
+// Tab / Shift+Tab are handled natively by Radix's focus trap.
+// Enter only activates an explicitly opted-in, non-destructive default action.
+// Buttons, dropdowns, checkboxes and multiline inputs keep native behavior.
+export function activateDialogDefault(event) {
+  if (event.key !== "Enter" || event.defaultPrevented || event.isComposing ||
+      event.altKey || event.ctrlKey || event.metaKey || event.repeat) return false;
+  const target = event.target;
+  if (target?.closest?.("button, a, select, textarea, [role='combobox'], [role='listbox'], [role='menu'], [role='option'], [role='checkbox'], [role='radio'], [contenteditable='true'], input[type='checkbox'], input[type='radio']")) return false;
+  const action = event.currentTarget?.querySelector?.('[data-dialog-default="true"]');
+  if (!action || action.disabled || action.getAttribute("aria-disabled") === "true") return false;
+  event.preventDefault();
+  action.click();
+  return true;
+}
+
+const DialogContent = React.forwardRef(({ className, children, onInteractOutside, onKeyDown, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
@@ -33,6 +48,10 @@ const DialogContent = React.forwardRef(({ className, children, onInteractOutside
         className
       )}
       {...props}
+      onKeyDown={(event) => {
+        onKeyDown?.(event);
+        if (!event.defaultPrevented) activateDialogDefault(event);
+      }}
       onInteractOutside={(event) => {
         // Keep entered form data when the backdrop is clicked or tapped.
         event.preventDefault()
