@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth, apiError } from "@/context/AuthContext";
 import { Mail, Lock, Delete } from "lucide-react";
@@ -15,6 +15,7 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
+  const pinSubmitting = useRef(false);
 
   React.useEffect(() => {
     if (user) navigate(user.role === "cashier" ? "/pos" : "/");
@@ -29,19 +30,53 @@ export default function Login() {
   };
 
   const submitPin = async (value) => {
+    if (!/^\\d{4}$/.test(value) || pinSubmitting.current) return;
+    // A ref guard prevents double requests from a rapid keypad tap or Enter.
+    pinSubmitting.current = true;
     setBusy(true);
     try {
       const u = await pinLogin(value);
       toast.success(u.role === "cashier" ? "POS session started" : "Signed in");
-    } catch (e) { toast.error(apiError(e.response?.data?.detail) || "Invalid PIN"); setPin(""); }
-    finally { setBusy(false); }
+    } catch (e) {
+      toast.error(apiError(e.response?.data?.detail) || "Invalid PIN");
+      setPin("");
+    } finally {
+      pinSubmitting.current = false;
+      setBusy(false);
+    }
   };
 
-  const tapPin = (d) => {
-    const nv = (pin + d).slice(0, 6);
-    setPin(nv);
-    if (nv.length >= 4 && d !== "") {}
+  const tapPin = (digit) => {
+    if (pinSubmitting.current) return;
+    setPin((current) => current.length < 4 ? current + digit : current);
   };
+
+  const backspacePin = () => {
+    if (!pinSubmitting.current) setPin((current) => current.slice(0, -1));
+  };
+
+  // The fourth digit signs in automatically, regardless of keyboard or keypad.
+  useEffect(() => {
+    if (tab === "pin" && pin.length === 4) submitPin(pin);
+  }, [pin, tab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (tab !== "pin") return;
+    const onKeyDown = (event) => {
+      if (event.altKey || event.ctrlKey || event.metaKey || event.isComposing || event.repeat) return;
+      const target = event.target;
+      if (target instanceof Element && target.closest("input, textarea, select, [contenteditable='true']")) return;
+      if (/^[0-9]$/.test(event.key)) {
+        event.preventDefault();
+        tapPin(event.key);
+      } else if (event.key === "Backspace") {
+        event.preventDefault();
+        backspacePin();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="min-h-screen flex">
@@ -67,11 +102,11 @@ export default function Login() {
           </div>
 
           <div className="flex gap-1 p-1 bg-slate-100 rounded-xl mb-6">
-            <button onClick={() => setTab("email")} data-testid="tab-email"
+            <button onClick={() => { setTab("email"); setPin(""); }} data-testid="tab-email"
               className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-colors ${tab === "email" ? "bg-white shadow-sm text-slate-900" : "text-slate-500"}`}>
               Manager Login
             </button>
-            <button onClick={() => setTab("pin")} data-testid="tab-pin"
+            <button onClick={() => { setTab("pin"); setPin(""); }} data-testid="tab-pin"
               className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-colors ${tab === "pin" ? "bg-white shadow-sm text-slate-900" : "text-slate-500"}`}>
               Cashier PIN
             </button>
@@ -110,21 +145,21 @@ export default function Login() {
               <div className="text-center mb-5">
                 <div className="text-sm text-slate-500">Enter your 4-digit PIN</div>
                 <div className="flex justify-center gap-2 mt-3" data-testid="pin-display">
-                  {[0, 1, 2, 3, 4, 5].slice(0, Math.max(4, pin.length)).map((i) => (
+                  {[0, 1, 2, 3].map((i) => (
                     <div key={i} className={`w-3.5 h-3.5 rounded-full ${i < pin.length ? "bg-primary" : "bg-slate-200"}`} />
                   ))}
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-3 max-w-[280px] mx-auto">
                 {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((d) => (
-                  <button key={d} onClick={() => tapPin(String(d))} data-testid={`pin-${d}`}
+                  <button key={d} type="button" disabled={busy} onClick={() => tapPin(String(d))} data-testid={`pin-${d}`}
                     className="h-16 rounded-xl bg-white border border-slate-200 text-2xl font-semibold text-slate-800 hover:bg-slate-50 active:scale-95 transition-transform">{d}</button>
                 ))}
-                <button onClick={() => setPin(pin.slice(0, -1))} data-testid="pin-back"
+                <button type="button" onClick={backspacePin} disabled={busy} data-testid="pin-back"
                   className="h-16 rounded-xl bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 active:scale-95 transition-transform"><Delete className="w-5 h-5" /></button>
-                <button onClick={() => tapPin("0")} data-testid="pin-0"
+                <button type="button" onClick={() => tapPin("0")} disabled={busy} data-testid="pin-0"
                   className="h-16 rounded-xl bg-white border border-slate-200 text-2xl font-semibold text-slate-800 hover:bg-slate-50 active:scale-95 transition-transform">0</button>
-                <button onClick={() => submitPin(pin)} disabled={busy || pin.length < 4} data-testid="pin-enter"
+                <button type="button" onClick={() => submitPin(pin)} disabled={busy || pin.length < 4} data-testid="pin-enter"
                   className="h-16 rounded-xl bg-primary text-white font-semibold hover:bg-teal-800 active:scale-95 transition-transform disabled:opacity-50">Enter</button>
               </div>
             </div>
