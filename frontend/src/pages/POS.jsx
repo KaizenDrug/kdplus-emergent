@@ -16,6 +16,7 @@ import { matchesSearchTerms } from "@/lib/utils";
 import { openCashDrawerForSale, printThermalReceipt, printThermalTicket } from "@/lib/receiptPrint";
 import { ACTIVE_STORES } from "@/lib/stores";
 import { productMargin } from "@/lib/productMargin";
+import { validateTender } from "@/lib/paymentShortcuts";
 
 const PAY_METHODS = ["Cash", "GCash", "Maya", "Credit Card", "Debit Card", "Bank Transfer"];
 
@@ -910,16 +911,9 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
     if ((discountType === "SENIOR" || discountType === "PWD") && (!idNumber.trim() || !spName.trim())) {
       toast.error("Enter the Senior/PWD ID number and cardholder name"); return;
     }
-    const amounts = paymentOverride.map((payment) => Number(payment.amount));
-    if (!paymentOverride.length || amounts.some((amount) => !Number.isFinite(amount) || amount < 0)) {
-      toast.error("Enter a valid non-negative payment amount"); return;
-    }
-    const submittedPaid = amounts.reduce((sum, amount) => sum + amount, 0);
-    if (submittedPaid + 0.001 < total) { toast.error("Insufficient payment"); return; }
-    const cashPaid = paymentOverride.reduce((sum, payment) => sum + (payment.method === "Cash" ? Number(payment.amount) || 0 : 0), 0);
-    if (submittedPaid - total > cashPaid + 0.001) {
-      toast.error("Only cash payments can generate change"); return;
-    }
+    const tender = validateTender(paymentOverride, total);
+    if (!tender.ok) { toast.error(tender.error); return; }
+    const submittedPaid = tender.paid;
     submittingRef.current = true;
     setBusy(true);
     const client_txn_id = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
@@ -950,7 +944,7 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
       subtotal: gross, vat_exempt_amount: vatExempt, spwd_discount: spDisc, vat_amount: vatAmt,
       discount_total: discountType === "REGULAR" ? (selectedScheme ? schemeDiscount : Number(orderDiscount) || 0) + spDisc : spDisc,
       discount_scheme_name: selectedScheme?.name || null,
-      total, payments: validPayments, change: Math.max(0, submittedPaid - total), _offline: true,
+      total, payments: validPayments, change: tender.change, _offline: true,
     };
     try {
       if (!navigator.onLine) throw { __offline: true };
