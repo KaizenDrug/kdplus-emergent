@@ -795,6 +795,7 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
   const [eligibleQty, setEligibleQty] = useState(() => Object.fromEntries(
     cart.map((i) => [i.product_id, i.discount_eligible !== false ? i.qty : 0])));
   const [busy, setBusy] = useState(false);
+  const submittingRef = useRef(false);
 
   const vatRate = (settings?.tax?.vat_rate || 12) / 100;
   const spPct = (settings?.senior_pwd?.discount_pct || 20) / 100;
@@ -855,7 +856,13 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
   const updPayment = (idx, key, val) => setPayments((p) => p.map((x, i) => (i === idx ? { ...x, [key]: val } : x)));
   const removePayment = (idx) => setPayments((p) => p.filter((_, i) => i !== idx));
   const fillExact = () => setPayments([{ method: payments[0].method, amount: total.toFixed(2) }]);
-  const fillCashAmount = (amount) => setPayments([{ method: "Cash", amount: Number(amount).toFixed(2) }]);
+  const selectSuggestedCash = (amount) => {
+    // Pass the selected amount directly to submit: React state updates are
+    // asynchronous and reading payments here could use the previous value.
+    const selectedPayments = [{ method: "Cash", amount: Number(amount).toFixed(2) }];
+    setPayments(selectedPayments);
+    submit(selectedPayments);
+  };
   const chooseDiscountScheme = (value) => {
     const nextId = value === "manual" ? "" : value;
     const nextScheme = activeSchemes.find((scheme) => scheme.id === nextId);
@@ -886,7 +893,8 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
     if (nextId) setOrderDiscount("");
   };
 
-  const submit = async () => {
+  const submit = async (paymentOverride = payments) => {
+    if (submittingRef.current) return;
     if (cart.some((item) => item.open_price && (!Number.isFinite(Number(item.unit_price)) || Number(item.unit_price) <= 0))) {
       toast.error("Enter a selling price greater than zero for every open-price item");
       return;
@@ -897,10 +905,20 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
     if ((discountType === "SENIOR" || discountType === "PWD") && (!idNumber.trim() || !spName.trim())) {
       toast.error("Enter the Senior/PWD ID number and cardholder name"); return;
     }
-    if (paid + 0.001 < total) { toast.error("Insufficient payment"); return; }
+    const amounts = paymentOverride.map((payment) => Number(payment.amount));
+    if (!paymentOverride.length || amounts.some((amount) => !Number.isFinite(amount) || amount < 0)) {
+      toast.error("Enter a valid non-negative payment amount"); return;
+    }
+    const submittedPaid = amounts.reduce((sum, amount) => sum + amount, 0);
+    if (submittedPaid + 0.001 < total) { toast.error("Insufficient payment"); return; }
+    const cashPaid = paymentOverride.reduce((sum, payment) => sum + (payment.method === "Cash" ? Number(payment.amount) || 0 : 0), 0);
+    if (submittedPaid - total > cashPaid + 0.001) {
+      toast.error("Only cash payments can generate change"); return;
+    }
+    submittingRef.current = true;
     setBusy(true);
     const client_txn_id = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
-    const validPayments = payments.filter((p) => Number(p.amount) > 0).map((p) => ({ method: p.method, amount: Number(p.amount), reference: "" }));
+    const validPayments = paymentOverride.filter((p) => Number(p.amount) > 0).map((p) => ({ method: p.method, amount: Number(p.amount), reference: "" }));
     const body = {
       store_id: storeId, register_id: "reg_1", shift_id: shiftId,
       parked_ticket_id: parkedTicketId || null,
@@ -927,7 +945,7 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
       subtotal: gross, vat_exempt_amount: vatExempt, spwd_discount: spDisc, vat_amount: vatAmt,
       discount_total: discountType === "REGULAR" ? (selectedScheme ? schemeDiscount : Number(orderDiscount) || 0) + spDisc : spDisc,
       discount_scheme_name: selectedScheme?.name || null,
-      total, payments: validPayments, change: change > 0 ? change : 0, _offline: true,
+      total, payments: validPayments, change: Math.max(0, submittedPaid - total), _offline: true,
     };
     try {
       if (!navigator.onLine) throw { __offline: true };
@@ -942,7 +960,7 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
       } else {
         toast.error(e.response?.data?.detail || "Sale failed");
       }
-    } finally { setBusy(false); }
+    } finally { submittingRef.current = false; setBusy(false); }
   };
 
   return (
@@ -1064,6 +1082,12 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
                   <SelectContent>{PAY_METHODS.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
                 </Select>
                 <input type="text" inputMode="decimal" value={p.amount} onChange={(e) => updPayment(idx, "amount", e.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.isComposing && !event.repeat) {
+                      event.preventDefault();
+                      submit();
+                    }
+                  }}
                   onFocus={(e) => e.currentTarget.select()} onClick={(e) => e.currentTarget.select()}
                   data-testid={`pay-amount-${idx}`} placeholder="0.00" className="flex-1 px-3 py-2 rounded-lg border border-slate-200 text-sm" />
                 {payments.length > 1 && <button onClick={() => removePayment(idx)} className="text-slate-400 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>}
@@ -1075,7 +1099,7 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
                 <div className="grid grid-cols-5 gap-1.5">
                   {cashSuggestions.map((amount, index) => {
                     const selected = Math.abs((Number(payments[0].amount) || 0) - amount) < 0.001;
-                    return <button type="button" key={amount} onClick={() => fillCashAmount(amount)}
+                    return <button type="button" key={amount} onClick={() => selectSuggestedCash(amount)}
                       data-testid={`cash-suggestion-${index}`}
                       className={`rounded-lg border px-1.5 py-2 text-xs font-semibold transition-colors ${selected
                         ? "border-primary bg-primary text-white"
@@ -1092,7 +1116,7 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={submit} disabled={busy} data-testid="confirm-payment" className="bg-primary hover:bg-teal-800">{busy ? "Processing…" : `Complete Sale`}</Button>
+          <Button onClick={() => submit()} disabled={busy} data-testid="confirm-payment" className="bg-primary hover:bg-teal-800">{busy ? "Processing…" : `Complete Sale`}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
