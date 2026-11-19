@@ -557,7 +557,7 @@ export default function POS() {
             data-testid="saved-ticket-name" />
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowTicketNameDialog(false)} disabled={ticketBusy}>Cancel</Button>
-            <Button onClick={saveTicket} disabled={ticketBusy || !cart.length || !online} data-testid="confirm-save-ticket">
+            <Button onClick={saveTicket} disabled={ticketBusy || !cart.length || !online} data-testid="confirm-save-ticket" data-dialog-default="true">
               {ticketBusy ? "Saving…" : "Save Ticket"}
             </Button>
           </DialogFooter>
@@ -603,7 +603,7 @@ function ParkedTicketsDialog({ tickets, busy, hasCurrentCart, onResume, onPrint,
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onRefresh} disabled={busy}>Refresh</Button>
-          <Button onClick={onClose}>Done</Button>
+          <Button onClick={onClose} data-dialog-default="true">Done</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -655,7 +655,7 @@ function UnavailableItemDialog({ initialName, storeId, online, onClose, onSaved 
               className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 text-sm resize-none" /></label>
         </div>
         <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={save} disabled={busy || !online} data-testid="save-unavailable-item" className="bg-primary hover:bg-teal-800">
+          <Button onClick={save} disabled={busy || !online} data-testid="save-unavailable-item" data-dialog-default="true" className="bg-primary hover:bg-teal-800">
             {busy ? "Saving…" : "Save Request"}
           </Button></DialogFooter>
       </DialogContent>
@@ -666,14 +666,17 @@ function UnavailableItemDialog({ initialName, storeId, online, onClose, onSaved 
 function ShiftStartOverlay({ online, storeId, onOpened }) {
   const [cash, setCash] = useState("0");
   const [busy, setBusy] = useState(false);
+  const startingRef = useRef(false);
   const start = async () => {
+    if (startingRef.current) return;
     const oc = Number(cash);
     if (cash === "" || !isFinite(oc) || oc < 0) { toast.error("Opening cash must be 0 or a positive amount"); return; }
+    startingRef.current = true;
     setBusy(true);
     try {
       const { data } = await api.post("/pos/shifts/open", { store_id: storeId, register_id: "reg_1", opening_cash: oc });
       toast.success("Shift opened"); onOpened(data);
-    } catch (e) { toast.error(e.response?.data?.detail || "Could not open shift"); } finally { setBusy(false); }
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not open shift"); } finally { startingRef.current = false; setBusy(false); }
   };
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" data-testid="shift-start-overlay">
@@ -687,7 +690,9 @@ function ShiftStartOverlay({ online, storeId, onOpened }) {
         ) : (
           <>
             <label className="block mt-4"><span className="text-[11px] font-bold uppercase text-slate-500">Opening Cash (₱)</span>
-              <input type="number" min={0} step="0.01" value={cash} onChange={(e) => setCash(e.target.value)} data-testid="opening-cash-input" autoFocus
+              <input type="number" min={0} step="0.01" value={cash} onChange={(e) => setCash(e.target.value)}
+                onKeyDown={(event) => { if (event.key === "Enter" && !event.isComposing && !event.repeat) { event.preventDefault(); start(); } }}
+                data-testid="opening-cash-input" autoFocus
                 className="w-full mt-1 px-3 py-2.5 rounded-lg bg-slate-50 border border-slate-200 text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-primary/30" /></label>
             <button onClick={start} disabled={busy} data-testid="start-shift-btn"
               className="w-full mt-5 py-3 rounded-xl bg-primary text-white font-bold hover:bg-teal-800 disabled:opacity-50">{busy ? "Opening…" : "Start Shift"}</button>
@@ -773,7 +778,7 @@ function ShiftCloseDialog({ shift, pending, onClose, onClosed }) {
             </div>
             <DialogFooter className="mt-3 gap-2">
               <Button variant="outline" onClick={printSummary} data-testid="print-shift-summary"><Printer className="w-4 h-4 mr-1" />Print Summary</Button>
-              <Button onClick={onClosed} className="bg-primary hover:bg-teal-800" data-testid="shift-done-btn">Done</Button>
+              <Button onClick={onClosed} className="bg-primary hover:bg-teal-800" data-testid="shift-done-btn" data-dialog-default="true">Done</Button>
             </DialogFooter>
           </div>
         )}
@@ -964,7 +969,9 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
   };
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
+    <Dialog open={open} onOpenChange={(nextOpen) => {
+      if (!nextOpen && !submittingRef.current) onClose();
+    }}>
       <DialogContent className="max-w-lg">
         <DialogHeader><DialogTitle>Payment</DialogTitle></DialogHeader>
         <div className="space-y-4 max-h-[65vh] overflow-y-auto pr-1">
@@ -1115,7 +1122,7 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
           <Button onClick={() => submit()} disabled={busy} data-testid="confirm-payment" className="bg-primary hover:bg-teal-800">{busy ? "Processing…" : `Complete Sale`}</Button>
         </DialogFooter>
       </DialogContent>
@@ -1163,7 +1170,7 @@ function ReceiptDialog({ sale, settings, onClose }) {
           <div className="text-center text-[10px]">{biz.receipt_footer}</div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose} data-testid="receipt-close">New Sale</Button>
+          <Button variant="outline" onClick={onClose} data-testid="receipt-close" data-dialog-default="true">New Sale</Button>
           <Button onClick={() => print(false)} className="bg-primary hover:bg-teal-800" data-testid="receipt-print"><Printer className="w-4 h-4 mr-1" />Print</Button>
         </DialogFooter>
       </DialogContent>
