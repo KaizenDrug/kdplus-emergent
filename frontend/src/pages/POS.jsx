@@ -1120,7 +1120,8 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
                 </Select>
                 <input ref={idx === 0 ? paymentAmountRef : undefined} type="text" inputMode="decimal" value={p.amount} onChange={(e) => updPayment(idx, "amount", e.target.value)}
                   onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.isComposing && !event.repeat) {
+                    if (event.key === "Enter" && !event.isComposing && !event.repeat &&
+                      !event.altKey && !event.ctrlKey && !event.metaKey) {
                       event.preventDefault();
                       submit();
                     }
