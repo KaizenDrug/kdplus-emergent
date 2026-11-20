@@ -17,6 +17,7 @@ import { openCashDrawerForSale, printThermalReceipt, printThermalTicket } from "
 import { ACTIVE_STORES } from "@/lib/stores";
 import { productMargin } from "@/lib/productMargin";
 import { validateTender } from "@/lib/paymentShortcuts";
+import { shouldOpenChargeShortcut } from "@/lib/chargeShortcut";
 
 const PAY_METHODS = ["Cash", "GCash", "Maya", "Credit Card", "Debit Card", "Bank Transfer"];
 
@@ -292,6 +293,30 @@ export default function POS() {
   const removeItem = (id) => setCart((c) => c.filter((i) => i.product_id !== id));
 
   const subtotal = cart.reduce((s, i) => s + (Number(i.unit_price) || 0) * i.qty, 0);
+  const hasUnpricedItem = cart.some((item) => item.open_price && !(Number(item.unit_price) > 0));
+  const canCharge = cart.length > 0 && !!shift && !shiftLoading && !hasUnpricedItem;
+  const chargeBlocked = checkout || showTicketNameDialog || showParkedTickets ||
+    showUnavailable || showClose || !!lastSale || ticketBusy;
+
+  const openCheckout = useCallback(() => {
+    if (!canCharge || chargeBlocked) return;
+    setCheckout(true);
+    setMobileCartOpen(false);
+  }, [canCharge, chargeBlocked]);
+
+  useEffect(() => {
+    const onChargeKey = (event) => {
+      if (!shouldOpenChargeShortcut(event, { canCharge, blocked: chargeBlocked })) return;
+      // Respect any popup owned by Radix or another component, including
+      // dropdowns whose open state isn't managed directly by this page.
+      if (document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]')) return;
+      event.preventDefault();
+      openCheckout();
+    };
+    window.addEventListener("keydown", onChargeKey);
+    return () => window.removeEventListener("keydown", onChargeKey);
+  }, [canCharge, chargeBlocked, openCheckout]);
+
   const printCurrentTicket = () => {
     const ticket = {
       id: `CURRENT-${Date.now()}`, created_at: new Date().toISOString(), created_by_name: user?.name,
@@ -512,11 +537,13 @@ export default function POS() {
               data-testid="save-ticket" className="w-full mb-2 py-2.5 rounded-xl border border-amber-300 bg-amber-50 text-amber-900 font-semibold hover:bg-amber-100 disabled:opacity-40">
               <BookmarkPlus className="w-4 h-4 inline mr-1" />{ticketBusy ? "Saving…" : "Save Ticket"}
             </button>
-            <button onClick={() => { setCheckout(true); setMobileCartOpen(false); }}
-              disabled={!cart.length || !shift || cart.some((item) => item.open_price && !(Number(item.unit_price) > 0))}
-              data-testid="checkout-btn"
+            <button type="button" onClick={openCheckout}
+              disabled={!canCharge || chargeBlocked}
+              data-testid="checkout-btn" aria-keyshortcuts="F9" title="Charge current ticket (F9)"
               className="w-full py-3.5 rounded-xl bg-primary text-white font-bold text-lg hover:bg-teal-800 transition-colors active:scale-[0.99] disabled:opacity-40">
-              {!shift ? "Start Shift to Charge" : cart.some((item) => item.open_price && !(Number(item.unit_price) > 0)) ? "Enter item price" : `Charge ${peso(subtotal)}`}
+              {!shift ? "Start Shift to Charge" : hasUnpricedItem ? "Enter item price" : (
+                <>Charge {peso(subtotal)} <kbd className="ml-2 rounded border border-white/40 px-1.5 py-0.5 text-xs font-semibold align-middle">F9</kbd></>
+              )}
             </button>
           </div>
         </div>
@@ -802,6 +829,7 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
     cart.map((i) => [i.product_id, i.discount_eligible !== false ? i.qty : 0])));
   const [busy, setBusy] = useState(false);
   const submittingRef = useRef(false);
+  const paymentAmountRef = useRef(null);
 
   const vatRate = (settings?.tax?.vat_rate || 12) / 100;
   const spPct = (settings?.senior_pwd?.discount_pct || 20) / 100;
@@ -967,7 +995,14 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
     <Dialog open={open} onOpenChange={(nextOpen) => {
       if (!nextOpen && !submittingRef.current) onClose();
     }}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg"
+        onOpenAutoFocus={(event) => {
+          // The payment amount is the cashier's first keyboard target.
+          // Enter here submits the validated sale via the existing handler.
+          event.preventDefault();
+          paymentAmountRef.current?.focus();
+          paymentAmountRef.current?.select();
+        }}>
         <DialogHeader><DialogTitle>Payment</DialogTitle></DialogHeader>
         <div className="space-y-4 max-h-[65vh] overflow-y-auto pr-1">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -1083,7 +1118,7 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
                   <SelectTrigger className="w-36" data-testid={`pay-method-${idx}`}><SelectValue /></SelectTrigger>
                   <SelectContent>{PAY_METHODS.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
                 </Select>
-                <input type="text" inputMode="decimal" value={p.amount} onChange={(e) => updPayment(idx, "amount", e.target.value)}
+                <input ref={idx === 0 ? paymentAmountRef : undefined} type="text" inputMode="decimal" value={p.amount} onChange={(e) => updPayment(idx, "amount", e.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" && !event.isComposing && !event.repeat) {
                       event.preventDefault();
@@ -1118,7 +1153,11 @@ function CheckoutDialog({ open, onClose, cart, storeId, shiftId, customers, sett
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
-          <Button onClick={() => submit()} disabled={busy} data-testid="confirm-payment" className="bg-primary hover:bg-teal-800">{busy ? "Processing…" : `Complete Sale`}</Button>
+          <Button onClick={() => submit()} disabled={busy} data-testid="confirm-payment"
+            data-dialog-default="true" title="Complete Sale (Enter)"
+            className="bg-primary hover:bg-teal-800">
+            {busy ? "Processing…" : <>Complete Sale <span className="ml-1.5 text-xs opacity-80" aria-hidden="true">↵ Enter</span></>}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
