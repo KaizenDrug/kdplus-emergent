@@ -157,7 +157,7 @@ export default function Inventory() {
       </Card>}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-4">
         {[
-          ["all", "Inventory Value", canViewCost ? peso(totalValue) : "All items", PackagePlus, "primary"],
+          ["all", "Inventory Value at Avg. Cost", canViewCost ? peso(totalValue) : "All items", PackagePlus, "primary"],
           ["low", "Low Stock", low, AlertTriangle, "warning"],
           ["out", "Out of Stock", out, PackageX, "critical"],
           ["expiring", "Expiring ≤90d", expiry ? ["0-30", "31-60", "61-90"].reduce((n, b) => n + expiry.summary[b].count, 0) : 0, CalendarClock, "warning"],
@@ -241,6 +241,9 @@ export default function Inventory() {
                     <div className="text-[11px] font-bold uppercase text-slate-400">{b === "EXPIRED" ? "Expired" : `${b} days`}</div>
                     <div className={`text-2xl font-extrabold mt-1 ${b === "EXPIRED" || b === "0-30" ? "text-red-600" : b === "31-60" ? "text-amber-600" : "text-slate-800"}`}>{expiry.summary[b].count}</div>
                     <div className="text-xs text-slate-400">{canViewCost ? peso(expiry.summary[b].value) : ""}</div>
+                    {expiry.lots.some((lot) => lot.bucket === b && lot.lot_quantity_exceeds_on_hand) && (
+                      <div className="text-xs text-amber-700">Lot quantities need review</div>
+                    )}
                   </Card>
                 ))}
               </div>
@@ -252,12 +255,16 @@ export default function Inventory() {
                     <SortableHeader column="expiry_date" label="Expiry" sort={expirySort} onSort={setExpirySort} />
                     <SortableHeader column="days_remaining" label="Days Left" sort={expirySort} onSort={setExpirySort} numeric />
                     <SortableHeader column="quantity" label="Qty" sort={expirySort} onSort={setExpirySort} numeric />
-                    <SortableHeader column="stock_value" label="Value" sort={expirySort} onSort={setExpirySort} numeric />
+                    <SortableHeader column="stock_value" label="Value at Avg. Cost" sort={expirySort} onSort={setExpirySort} numeric />
                     <SortableHeader column="bucket" label="Bucket" sort={expirySort} onSort={setExpirySort} />{(admin || canManagePO) && <th className="px-4 py-3">Actions</th>}</tr></thead>
                   <tbody>
                     {sortedExpiry.map((l) => (
                       <tr key={l.id} className="border-t border-slate-100 hover:bg-slate-50">
-                        <td className="px-4 py-2.5 font-medium text-slate-800">{l.product_name}</td>
+                        <td className="px-4 py-2.5 font-medium text-slate-800">{l.product_name}
+                          {l.lot_quantity_exceeds_on_hand && (
+                            <div className="text-xs text-amber-700">Total lot quantity exceeds on-hand stock</div>
+                          )}
+                        </td>
                         <td className="px-4 py-2.5 font-mono text-xs">{l.lot_number}</td>
                         <td className="px-4 py-2.5">{fmtDay(l.expiry_date)}</td>
                         <td className={`px-4 py-2.5 text-right font-semibold ${l.days_remaining < 0 ? "text-red-600" : l.days_remaining <= 60 ? "text-amber-600" : "text-slate-600"}`}>{l.days_remaining}</td>

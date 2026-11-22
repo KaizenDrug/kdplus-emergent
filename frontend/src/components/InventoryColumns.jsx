@@ -5,7 +5,7 @@ export const INVENTORY_COLUMNS = Object.fromEntries([
   ["name", "Product Name"], ["sku", "SKU"], ["barcode", "Barcode"],
   ["category_id", "Category"], ["shelf_code", "Shelf Location"],
   ["quantity", "On Hand", true], ["average_cost", "Unit Cost", true],
-  ["stock_value", "Inventory Value", true], ["reorder_level", "Reorder Level", true],
+  ["stock_value", "Value at Avg. Cost", true], ["reorder_level", "Reorder Level", true],
   ["status", "Status"], ["lot_number", "Batch/Lot Number"], ["expiry_date", "Expiry Date"],
   ["supplier_id", "Supplier"], ["last_received", "Last Received Date"],
   ["latest_cost", "Last Cost", true], ["generic_name", "Generic Name"],

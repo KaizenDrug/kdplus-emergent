@@ -1,6 +1,18 @@
 from fastapi import HTTPException
-from core import db, ORG_ID, uid, now_iso, m, D, audit
-from datetime import datetime, timezone
+from core import db, ORG_ID, uid, now_iso, m, D, audit, MANILA
+from datetime import date, datetime
+
+
+def parse_lot_expiry(value):
+    """Read ISO dates and month-first dates retained by legacy CSV imports."""
+    if not isinstance(value, str):
+        return None
+    for fmt in ("%Y-%m-%d", "%m/%d/%y", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(value.strip(), fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 def _normalize_barcode(value):
@@ -92,22 +104,21 @@ async def active_lots(store_id, product_id):
         {"org_id": ORG_ID, "store_id": store_id, "product_id": product_id,
          "status": "ACTIVE", "quantity": {"$gt": 0}}, {"_id": 0}).to_list(1000)
     # FEFO: nearest expiry first; lots without expiry go last
-    def key(l):
-        return l.get("expiry_date") or "9999-12-31"
-    return sorted(lots, key=key)
+    return sorted(lots, key=lambda lot: parse_lot_expiry(lot.get("expiry_date")) or date.max)
 
 
 async def allocate_fefo(store_id, product_id, qty, allow_expired=False):
     """Allocate qty across lots FEFO. Returns (allocations, weighted_cost, shortfall)."""
     need = D(qty)
     lots = await active_lots(store_id, product_id)
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(MANILA).date()
     allocations = []
     total_cost = D(0)
     for lot in lots:
         if need <= 0:
             break
-        if not allow_expired and lot.get("expiry_date") and lot["expiry_date"] < today:
+        expiry = parse_lot_expiry(lot.get("expiry_date"))
+        if not allow_expired and expiry is not None and expiry < today:
             continue
         avail = D(lot["quantity"])
         take = min(avail, need)
