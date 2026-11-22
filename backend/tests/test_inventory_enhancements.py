@@ -105,3 +105,34 @@ async def test_two_new_forms_save_with_unique_current_skus(database):
     assert first['sku'] == 'SKU11046'
     assert second['sku'] == 'SKU11047'
     assert 'auto_sku' not in first
+
+@pytest.mark.asyncio
+async def test_legacy_csv_expiry_is_used_for_fefo_and_lot_value(database):
+    await seed_lots(database)
+    today = datetime.now(core.MANILA).date()
+    earlier = (today + timedelta(days=7)).strftime("%m/%d/%y")
+    await database.products.update_one({'id': 'soon'}, {'$set': {'average_cost': 4}})
+    await database.inventory_lots.insert_many([
+        {'id': lot_id, 'org_id': core.ORG_ID, 'product_id': 'soon', 'store_id': 'store_main',
+         'quantity': 1, 'status': 'ACTIVE', 'lot_number': lot_id, 'expiry_date': expiry, 'unit_cost': 20}
+        for lot_id, expiry in [
+            ('legacy', earlier), ('placeholder', '-'),
+            ('past', (today - timedelta(days=2)).strftime("%m/%d/%Y")),
+        ]
+    ])
+    allocations, unit_cost, shortfall = await inventory_lib.allocate_fefo('store_main', 'soon', 7)
+    assert [lot['lot_id'] for lot in allocations] == ['legacy', 'soon', 'placeholder']
+    assert unit_cost == 12.86 and shortfall == 0
+
+    result = await inventory.expiry_report('store_main', {})
+    legacy = next(lot for lot in result['lots'] if lot['id'] == 'legacy')
+    assert legacy['expiry_date'] == (today + timedelta(days=7)).isoformat()
+    assert legacy['lot_quantity_exceeds_on_hand'] is True
+    assert next(lot for lot in result['lots'] if lot['id'] == 'expired')['lot_quantity_exceeds_on_hand'] is False
+    assert result['summary']['0-30'] == {'count': 1, 'value': 20}
+    assert result['summary']['EXPIRED'] == {'count': 2, 'value': 40}
+    rows = await inventory.inventory_levels('store_main', principal={})
+    assert next(row for row in rows if row['product_id'] == 'soon')['stock_value'] == 20
+    dashboard = await reports.dashboard(principal={})
+    assert dashboard['kpi']['expiring'] == 2
+    assert dashboard['kpi']['expired'] == 2

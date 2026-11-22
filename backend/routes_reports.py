@@ -3,6 +3,7 @@ import csv
 import io
 from typing import Optional
 from datetime import datetime, timedelta, time, timezone
+from inventory_lib import parse_lot_expiry
 from collections import defaultdict
 
 from core import db, ORG_ID, m, D, MANILA, get_current_principal, require_perm
@@ -237,10 +238,10 @@ async def dashboard(period: str = "today", store_id: Optional[str] = None,
         product = pmap.get(l["product_id"], {})
         if not product.get("active", False) or (l["store_id"], l["product_id"]) not in positive_levels:
             continue
-        try:
-            d = (datetime.strptime(l["expiry_date"], "%Y-%m-%d").date() - today).days
-        except Exception:
+        expiry = parse_lot_expiry(l.get("expiry_date"))
+        if expiry is None:
             continue
+        d = (expiry - today).days
         if d < 0:
             expired += 1
         elif d <= 90:

@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from typing import Optional, List
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from core import (db, ORG_ID, uid, now_iso, m, D, MANILA,
                   get_current_principal, require_perm, audit, next_number, notify)
-from inventory_lib import record_movement, get_level, set_missing_barcodes
+from inventory_lib import record_movement, get_level, set_missing_barcodes, parse_lot_expiry
 
 router = APIRouter(prefix="/api", tags=["inventory"])
 
@@ -82,6 +82,11 @@ async def inventory_movements(product_id: Optional[str] = None, store_id: Option
 @router.get("/inventory/lots")
 async def list_lots(product_id: Optional[str] = None, store_id: Optional[str] = None,
                     status: Optional[str] = "ACTIVE", principal=Depends(get_current_principal)):
+    lots, _ = await _lots_with_on_hand(product_id, store_id, status)
+    return lots
+
+
+async def _lots_with_on_hand(product_id, store_id, status):
     q = {"org_id": ORG_ID}
     if product_id:
         q["product_id"] = product_id
@@ -93,16 +98,22 @@ async def list_lots(product_id: Optional[str] = None, store_id: Optional[str] = 
     pmap = {p["id"]: p for p in products}
     q["product_id"] = product_id if product_id in pmap else {"$in": list(pmap)}
     if product_id and product_id not in pmap:
-        return []
+        return [], {}
     q["quantity"] = {"$gt": 0}
     levels_q = {"org_id": ORG_ID}
     if store_id:
         levels_q["store_id"] = store_id
     levels = await db.inventory_levels.find(levels_q, {"_id": 0}).to_list(20000)
-    positive = {(l["store_id"], l["product_id"]) for l in levels if float(l.get("quantity", 0)) > 0}
+    on_hand = {}
+    for level in levels:
+        key = (level["store_id"], level["product_id"])
+        on_hand[key] = on_hand.get(key, D(0)) + D(level["quantity"])
     lots = await db.inventory_lots.find(q, {"_id": 0}).to_list(20000)
-    return [{**l, "product_name": pmap[l["product_id"]]["name"], "sku": pmap[l["product_id"]].get("sku")}
-            for l in lots if (l["store_id"], l["product_id"]) in positive]
+    visible = [
+        {**lot, "product_name": pmap[lot["product_id"]]["name"], "sku": pmap[lot["product_id"]].get("sku")}
+        for lot in lots if on_hand.get((lot["store_id"], lot["product_id"]), D(0)) > 0
+    ]
+    return visible, on_hand
 
 
 class LotEditIn(BaseModel):
@@ -318,7 +329,7 @@ async def adjust_stock(body: AdjustIn, principal=Depends(require_perm("inventory
                  "product_id": ln.product_id, "quantity": {"$gt": 0}},
                 {"_id": 0},
             ).to_list(10000)
-            lots.sort(key=lambda lot: lot.get("expiry_date") or "9999-12-31")
+            lots.sort(key=lambda lot: parse_lot_expiry(lot.get("expiry_date")) or date.max)
             for lot in lots:
                 if remaining <= 0:
                     break
@@ -366,19 +377,21 @@ async def adjustment_reasons(principal=Depends(get_current_principal)):
 # ---------------- Expiry monitoring ----------------
 @router.get("/inventory/expiry")
 async def expiry_report(store_id: Optional[str] = None, principal=Depends(get_current_principal)):
-    lots = await list_lots(store_id=store_id, product_id=None, status="ACTIVE", principal=principal)
-    pmap = {p["id"]: p for p in await db.products.find({"org_id": ORG_ID, "active": True}, {"_id": 0}).to_list(10000)}
+    lots, on_hand = await _lots_with_on_hand(None, store_id, "ACTIVE")
+    lot_totals = {}
+    for lot in lots:
+        key = (lot["store_id"], lot["product_id"])
+        lot_totals[key] = lot_totals.get(key, D(0)) + D(lot["quantity"])
     today = datetime.now(MANILA).date()
     buckets = {"EXPIRED": [], "0-30": [], "31-60": [], "61-90": [], "91-180": []}
     out = []
     for l in lots:
-        try:
-            exp = datetime.strptime(l["expiry_date"], "%Y-%m-%d").date()
-        except Exception:
+        exp = parse_lot_expiry(l.get("expiry_date"))
+        if exp is None:
             continue
         days = (exp - today).days
-        p = pmap.get(l["product_id"], {})
-        row = {**l, "product_name": p.get("name"), "sku": p.get("sku"),
+        key = (l["store_id"], l["product_id"])
+        row = {**l, "expiry_date": exp.isoformat(), "lot_quantity_exceeds_on_hand": lot_totals[key] > on_hand[key],
                "supplier_id": l.get("supplier_id"), "days_remaining": days,
                "stock_value": m(D(l["quantity"]) * D(l.get("unit_cost", 0)))}
         if days < 0:
