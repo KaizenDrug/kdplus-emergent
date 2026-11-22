@@ -1,3 +1,5 @@
+import ReceiptCost from "@/components/ReceiptCost";
+import { useAuth } from "@/context/AuthContext";
 import ProductSearchSelect from "@/components/ProductSearchSelect";
 import React, { useCallback, useEffect, useState, useMemo, useRef } from "react";
 import api, { peso, fmtDay, apiError } from "@/lib/api";
@@ -202,6 +204,10 @@ function POForm({ po, products, suppliers, onClose, onSaved }) {
 }
 
 function POView({ poId, products, threshold, supName, onClose, onEdit, onChanged }) {
+  const { user } = useAuth();
+  const canCorrectReceiptCost = ["owner", "admin"].includes(user?.role);
+  const saveCorrection = (id, correction) => setReceipts((previous) => previous.map((receipt) =>
+    receipt.id === id ? { ...receipt, cost_corrections: [...(receipt.cost_corrections || []), correction] } : receipt));
   const [po, setPo] = useState(null);
   const [receipts, setReceipts] = useState([]);
   const [levels, setLevels] = useState({});
@@ -268,7 +274,7 @@ function POView({ poId, products, threshold, supName, onClose, onEdit, onChanged
                 <div className="overflow-x-auto border border-slate-200 rounded-lg">
                   <table className="w-full text-xs">
                     <thead className="bg-slate-50 text-left uppercase text-slate-400">
-                      <tr><th className="px-2 py-1.5">Date</th><th className="px-2 py-1.5">Product</th><th className="px-2 py-1.5">Decision</th><th className="px-2 py-1.5 text-right">Qty</th><th className="px-2 py-1.5 text-right">PO Cost</th><th className="px-2 py-1.5 text-right">Actual</th><th className="px-2 py-1.5 text-right">Variance</th><th className="px-2 py-1.5">Lot / Expiry</th><th className="px-2 py-1.5">By</th></tr>
+                      <tr><th className="px-2 py-1.5">Date</th><th className="px-2 py-1.5">Product</th><th className="px-2 py-1.5">Decision</th><th className="px-2 py-1.5 text-right">Qty</th><th className="px-2 py-1.5 text-right">PO Cost</th><th className="px-2 py-1.5 text-right">Actual Cost</th><th className="px-2 py-1.5 text-right">Posted Variance</th><th className="px-2 py-1.5">Lot / Expiry</th><th className="px-2 py-1.5">By</th></tr>
                     </thead>
                     <tbody>
                       {receipts.map((r) => (
@@ -278,7 +284,10 @@ function POView({ poId, products, threshold, supName, onClose, onEdit, onChanged
                           <td className={`px-2 py-1.5 font-semibold ${r.substitution_status === "REJECTED" ? "text-red-600" : r.substitution_status === "ACCEPTED" ? "text-emerald-700" : "text-slate-400"}`}>{r.substitution_status || "Received"}</td>
                           <td className="px-2 py-1.5 text-right">{r.substitution_status === "REJECTED" ? <span className="text-red-600">{r.qty_rejected} rejected</span> : <>{r.qty_received}{Number(r.qty_over_received) > 0 && <div className="text-[10px] font-semibold text-amber-700">+{r.qty_over_received} over PO</div>}</>}</td>
                           <td className="px-2 py-1.5 text-right text-slate-500">{r.substitution_status === "REJECTED" ? "—" : peso(r.ordered_unit_cost)}</td>
-                          <td className="px-2 py-1.5 text-right font-semibold">{r.substitution_status === "REJECTED" ? "—" : peso(r.actual_unit_cost)}</td>
+                          <td className="px-2 py-1.5 text-right font-semibold">{r.substitution_status === "REJECTED" ? "—" : (
+                            <ReceiptCost receipt={r} source="po" originalCost={r.actual_unit_cost}
+                              canCorrect={canCorrectReceiptCost && r.qty_received > 0} onSaved={(entry) => saveCorrection(r.id, entry)} />
+                          )}</td>
                           <td className={`px-2 py-1.5 text-right ${r.variance_amount > 0 ? "text-red-600" : r.variance_amount < 0 ? "text-emerald-600" : "text-slate-400"}`}>
                             {r.substitution_status === "REJECTED" ? "—" : <>{r.variance_amount > 0 ? "+" : ""}{peso(r.variance_amount)} ({r.variance_percent > 0 ? "+" : ""}{r.variance_percent}%)</>}
                             {r.variance_reason ? <div className="text-[10px] text-slate-400">{r.variance_reason}</div> : null}

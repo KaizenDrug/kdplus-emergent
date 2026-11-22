@@ -81,7 +81,8 @@ async def get_level(store_id: str, product_id: str) -> float:
 
 
 async def record_movement(store_id, product_id, mtype, qty_change, unit_cost=0,
-                          lot_id=None, reference=None, ref_id=None, principal=None, note=""):
+                          lot_id=None, reference=None, ref_id=None, principal=None, note="",
+                          receipt_number=None):
     """Update inventory level and append an immutable ledger entry. Returns new qty."""
     before = await get_level(store_id, product_id)
     after = m(D(before) + D(qty_change))
@@ -89,13 +90,16 @@ async def record_movement(store_id, product_id, mtype, qty_change, unit_cost=0,
         {"org_id": ORG_ID, "store_id": store_id, "product_id": product_id},
         {"$set": {"quantity": after, "updated_at": now_iso()},
          "$setOnInsert": {"id": uid()}}, upsert=True)
-    await db.inventory_movements.insert_one({
+    movement = {
         "id": uid(), "org_id": ORG_ID, "store_id": store_id, "product_id": product_id,
         "lot_id": lot_id, "type": mtype, "qty_before": before, "qty_change": m(qty_change),
         "qty_after": after, "unit_cost": m(unit_cost), "reference": reference, "ref_id": ref_id,
         "user_id": (principal or {}).get("id"), "user_name": (principal or {}).get("name"),
         "note": note, "created_at": now_iso(),
-    })
+    }
+    if receipt_number is not None:
+        movement["receipt_number"] = receipt_number
+    await db.inventory_movements.insert_one(movement)
     return after
 
 
