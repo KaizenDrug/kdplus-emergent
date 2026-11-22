@@ -146,7 +146,7 @@ export default function Inventory() {
         <h2 className="font-semibold">Saved stock receipts</h2>
         {drafts.map((draft) => <div key={draft.id} className="flex flex-wrap items-center justify-between gap-2 border-t pt-2">
           <div><span className="font-medium">{suppliers.find((s) => s.id === draft.supplier_id)?.company || "Supplier not selected"}</span>
-            <div className="text-sm text-slate-500">{draft.lines.length} line(s) Â· {fmtDate(draft.updated_at)}</div></div>
+            <div className="text-sm text-slate-500">{draft.lines.length} line(s) · {fmtDate(draft.updated_at)}</div></div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => { setReceiveDraft(draft); setReceive(true); }}>Resume</Button>
             <Button variant="destructive" onClick={() => deleteDraft(draft)} aria-label="Delete saved stock receipt" title="Delete saved stock receipt" data-testid={`delete-receive-draft-${draft.id}`}>
@@ -160,7 +160,7 @@ export default function Inventory() {
           ["all", "Inventory Value at Avg. Cost", canViewCost ? peso(totalValue) : "All items", PackagePlus, "primary"],
           ["low", "Low Stock", low, AlertTriangle, "warning"],
           ["out", "Out of Stock", out, PackageX, "critical"],
-          ["expiring", "Expiring â‰¤90d", expiry ? ["0-30", "31-60", "61-90"].reduce((n, b) => n + expiry.summary[b].count, 0) : 0, CalendarClock, "warning"],
+          ["expiring", "Expiring ≤90d", expiry ? ["0-30", "31-60", "61-90"].reduce((n, b) => n + expiry.summary[b].count, 0) : 0, CalendarClock, "warning"],
           ["expired", "Expired", expiry?.summary.EXPIRED.count || 0, CalendarClock, "critical"],
         ].map(([key, label, value, icon, tone]) => (
           <button type="button" key={key} onClick={() => chooseFilter(key)} aria-pressed={filter === key}
@@ -178,7 +178,7 @@ export default function Inventory() {
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input value={search} onChange={(e) => setSearch(e.target.value)} data-testid="inventory-search"
-            placeholder="Search product, generic name, SKU, barcode, shelf, or lotâ€¦"
+            placeholder="Search product, generic name, SKU, barcode, shelf, or lot…"
             className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
           {search && <button type="button" onClick={() => setSearch("")} aria-label="Clear inventory search"
             className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-700"><X className="h-4 w-4" /></button>}
@@ -204,13 +204,13 @@ export default function Inventory() {
                     {visibleColumns.map((key) => {
                       const product = productById[l.product_id] || {};
                       const batches = lotsByProduct[l.product_id] || [];
-                      let value = l[key] ?? product[key] ?? "â€”";
-                      if (key === "name") value = <>{l.name}<div className="text-xs text-slate-400">{l.sku}{l.virtual_promo_stock ? " Â· from components" : ""}</div></>;
-                      if (key === "category_id") value = categories.find((c) => c.id === product.category_id)?.name || "â€”";
-                      if (key === "supplier_id") value = suppliers.find((v) => v.id === product.supplier_id)?.company || "â€”";
-                      if (["average_cost", "stock_value", "latest_cost"].includes(key)) value = peso(value === "â€”" ? 0 : value);
-                      if (key === "last_received") value = batches.length ? fmtDate(batches.map((v) => v.received_at || v.created_at || "").sort().at(-1)) : "â€”";
-                      if (["expiry_date", "lot_number"].includes(key)) value = batches.length ? batches.map((lot) => <div key={lot.id} className="whitespace-nowrap">{key === "expiry_date" ? (lot.expiry_date ? fmtDay(lot.expiry_date) : "No expiry recorded") : lot.lot_number} <span className="text-xs text-slate-400">({lot.quantity} pcs)</span></div>) : "â€”";
+                      let value = l[key] ?? product[key] ?? "—";
+                      if (key === "name") value = <>{l.name}<div className="text-xs text-slate-400">{l.sku}{l.virtual_promo_stock ? " · from components" : ""}</div></>;
+                      if (key === "category_id") value = categories.find((c) => c.id === product.category_id)?.name || "—";
+                      if (key === "supplier_id") value = suppliers.find((v) => v.id === product.supplier_id)?.company || "—";
+                      if (["average_cost", "stock_value", "latest_cost"].includes(key)) value = peso(value === "—" ? 0 : value);
+                      if (key === "last_received") value = batches.length ? fmtDate(batches.map((v) => v.received_at || v.created_at || "").sort().at(-1)) : "—";
+                      if (["expiry_date", "lot_number"].includes(key)) value = batches.length ? batches.map((lot) => <div key={lot.id} className="whitespace-nowrap">{key === "expiry_date" ? (lot.expiry_date ? fmtDay(lot.expiry_date) : "No expiry recorded") : lot.lot_number} <span className="text-xs text-slate-400">({lot.quantity} pcs)</span></div>) : "—";
                       if (key === "status") value = <StatusBadge value={l.status} label={l.status === "OK" ? "In Stock" : l.status === "LOW" ? "Low" : "Out"} />;
                       return <td key={key} className={`px-4 py-2.5 ${INVENTORY_COLUMNS[key].numeric ? "text-right" : ""}`}>{value}</td>;
                     })}
@@ -269,7 +269,7 @@ export default function Inventory() {
                         <td className="px-4 py-2.5">{fmtDay(l.expiry_date)}</td>
                         <td className={`px-4 py-2.5 text-right font-semibold ${l.days_remaining < 0 ? "text-red-600" : l.days_remaining <= 60 ? "text-amber-600" : "text-slate-600"}`}>{l.days_remaining}</td>
                         <td className="px-4 py-2.5 text-right">{l.quantity}</td>
-                        <td className="px-4 py-2.5 text-right">{canViewCost ? peso(l.stock_value) : "â€”"}</td>
+                        <td className="px-4 py-2.5 text-right">{canViewCost ? peso(l.stock_value) : "—"}</td>
                         <td className="px-4 py-2.5"><StatusBadge value={l.bucket} /></td>
                         {(admin || canManagePO) && <td className="px-4 py-2.5 whitespace-nowrap">
                           {canManagePO && productById[l.product_id]?.product_type !== "PROMO" && <button type="button"
@@ -323,9 +323,9 @@ function LotDialog({ product, lots, admin, onClose, onSaved }) {
   };
   return <Dialog open onOpenChange={() => { if (!busy) onClose(); }}>
     <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto">
-      <DialogHeader><DialogTitle>{product.name} â€” Batches</DialogTitle></DialogHeader>
+      <DialogHeader><DialogTitle>{product.name} — Batches</DialogTitle></DialogHeader>
       {lots.map((lot) => <div key={lot.id} className="border rounded-lg p-3 flex flex-wrap justify-between gap-3">
-        <div><b>{lot.lot_number}</b><div>Expiry: {lot.expiry_date ? fmtDay(lot.expiry_date) : "Not recorded"} Â· Qty: {lot.quantity}</div></div>
+        <div><b>{lot.lot_number}</b><div>Expiry: {lot.expiry_date ? fmtDay(lot.expiry_date) : "Not recorded"} · Qty: {lot.quantity}</div></div>
         {admin && <Button variant="outline" disabled={busy} onClick={() => { setEditing({ ...lot }); setConfirming(false); }}>Edit</Button>}
       </div>)}
       {editing && <div className="border rounded-lg p-3 space-y-3">
@@ -333,7 +333,7 @@ function LotDialog({ product, lots, admin, onClose, onSaved }) {
         <label className="block">Expiry date<input disabled={busy || confirming} type="date" className="block border rounded p-2 w-full min-w-[190px]" value={editing.expiry_date || ""} onChange={(e) => setEditing({ ...editing, expiry_date: e.target.value })} /></label>
         <label className="block">Batch quantity<input disabled={busy || confirming} type="number" min="0" step="1" className="block border rounded p-2 w-full" value={editing.quantity} onChange={(e) => setEditing({ ...editing, quantity: e.target.value })} /></label>
         {confirming && <p className="text-sm text-amber-800">Confirm this correction? Batch quantity changes also update total stock on hand. All changes are recorded in Audit Log.</p>}
-        <div className="flex gap-2"><Button disabled={busy} variant="outline" onClick={() => { setEditing(null); setConfirming(false); }}>Cancel Edit</Button><Button disabled={busy} onClick={() => confirming ? save() : setConfirming(true)}>{busy ? "Savingâ€¦" : confirming ? "Confirm & Save" : "Review Changes"}</Button></div>
+        <div className="flex gap-2"><Button disabled={busy} variant="outline" onClick={() => { setEditing(null); setConfirming(false); }}>Cancel Edit</Button><Button disabled={busy} onClick={() => confirming ? save() : setConfirming(true)}>{busy ? "Saving…" : confirming ? "Confirm & Save" : "Review Changes"}</Button></div>
       </div>}
       <DialogFooter><Button disabled={busy} variant="outline" onClick={onClose}>Done</Button></DialogFooter>
     </DialogContent>
@@ -375,7 +375,7 @@ function LedgerTab({ store, products, search }) {
               <td className={`px-4 py-2.5 text-right font-semibold ${m.qty_change < 0 ? "text-red-600" : "text-emerald-600"}`}>{m.qty_change > 0 ? "+" : ""}{m.qty_change}</td>
               <td className="px-4 py-2.5 text-right">{m.qty_after}</td>
               <td className="px-4 py-2.5 text-xs font-mono text-slate-400">{m.reference}</td>
-              <td className="px-4 py-2.5 text-slate-500">{m.user_name || "â€”"}</td>
+              <td className="px-4 py-2.5 text-slate-500">{m.user_name || "—"}</td>
             </tr>
           ))}
         </tbody>
@@ -453,7 +453,7 @@ function ReceiveDialog({ store, suppliers, products, onClose, onSaved, draft, on
           ))}
           {supplierId && <button onClick={() => setLines((l) => [...l, { product_id: "", barcode: "", quantity: "", unit_cost: "", lot_number: "", expiry_date: "" }])} className="text-sm text-accent hover:underline" data-testid="recv-add-line">+ Add item</button>}
         </div>
-        <DialogFooter><Button variant="outline" disabled={busy} onClick={onClose}>Cancel</Button><Button variant="outline" onClick={saveDraft} disabled={busy} data-testid="save-receive-draft">Save Draft</Button><Button onClick={save} disabled={busy || !supplierId} data-testid="save-receive" className="bg-primary hover:bg-teal-800">{busy ? "Savingâ€¦" : "Receive"}</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" disabled={busy} onClick={onClose}>Cancel</Button><Button variant="outline" onClick={saveDraft} disabled={busy} data-testid="save-receive-draft">Save Draft</Button><Button onClick={save} disabled={busy || !supplierId} data-testid="save-receive" className="bg-primary hover:bg-teal-800">{busy ? "Saving…" : "Receive"}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   );
@@ -490,7 +490,7 @@ function AdjustDialog({ store, products, levels, initialProductId, onClose, onSa
     setBusy(true);
     try {
       const { data } = await api.post("/inventory/adjust", { store_id: store, reason, notes, lines: valid });
-      const summary = data.lines?.map((l) => `${l.name}: ${l.quantity_before} â†’ ${l.quantity_after}`).join("; ");
+      const summary = data.lines?.map((l) => `${l.name}: ${l.quantity_before} → ${l.quantity_after}`).join("; ");
       toast.success(summary || "Stock adjustment posted");
       onSaved();
     }
@@ -512,7 +512,7 @@ function AdjustDialog({ store, products, levels, initialProductId, onClose, onSa
           {lines.map((l, i) => (
             <div key={i} className="grid grid-cols-12 gap-2 rounded-lg border border-slate-100 p-2 sm:border-0 sm:p-0">
               <div className="col-span-12 sm:col-span-6"><ProductSearchSelect products={products} value={l.product_id} onChange={(v) => selectProduct(i, v)} testId={`adj-prod-${i}`} /></div>
-              <div className="col-span-5 sm:col-span-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-right text-sm font-semibold text-slate-600" data-testid={`adj-current-${i}`}><span className="mr-2 text-[10px] uppercase text-slate-400 sm:hidden">Current</span>{l.product_id ? l.current_quantity : "â€”"}</div>
+              <div className="col-span-5 sm:col-span-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-right text-sm font-semibold text-slate-600" data-testid={`adj-current-${i}`}><span className="mr-2 text-[10px] uppercase text-slate-400 sm:hidden">Current</span>{l.product_id ? l.current_quantity : "—"}</div>
               <input className="col-span-7 sm:col-span-3 rounded-lg border px-2 py-2 text-right text-sm font-semibold" placeholder="New on-hand" type="number" min="0" step="1"
                 value={l.new_quantity} onChange={(e) => upd(i, "new_quantity", e.target.value)} data-testid={`adj-qty-${i}`} />
             </div>
@@ -520,7 +520,7 @@ function AdjustDialog({ store, products, levels, initialProductId, onClose, onSa
           <p className="text-xs text-slate-500">Enter the final physical quantity you want shown as stock on hand. KDPLUS will calculate and record the adjustment.</p>
           <button onClick={() => setLines((l) => [...l, { product_id: "", current_quantity: "", new_quantity: "" }])} className="text-sm text-accent hover:underline">+ Add line</button>
         </div>
-        <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={busy} data-testid="save-adjust" className="bg-primary hover:bg-teal-800">{busy ? "Savingâ€¦" : "Post Adjustment"}</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={busy} data-testid="save-adjust" className="bg-primary hover:bg-teal-800">{busy ? "Saving…" : "Post Adjustment"}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   );
