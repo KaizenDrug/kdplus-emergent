@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from typing import Optional, List
+from receipt_costs import router as receipt_cost_router
 from datetime import date, datetime, timedelta
 
 from core import (db, ORG_ID, uid, now_iso, m, D, MANILA,
@@ -8,6 +9,7 @@ from core import (db, ORG_ID, uid, now_iso, m, D, MANILA,
 from inventory_lib import record_movement, get_level, set_missing_barcodes, parse_lot_expiry
 
 router = APIRouter(prefix="/api", tags=["inventory"])
+router.include_router(receipt_cost_router)
 
 
 # ---------------- Stores & Registers ----------------
@@ -75,7 +77,7 @@ async def inventory_movements(product_id: Optional[str] = None, store_id: Option
         q["store_id"] = store_id
     if type:
         q["type"] = type
-    return await db.inventory_movements.find(q, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return await db.inventory_movements.find(q, {"_id": 0, "cost_corrections": 0}).sort("created_at", -1).to_list(limit)
 
 
 # ---------------- Lots ----------------
@@ -248,7 +250,7 @@ async def receive_stock(body: ReceiveIn, principal=Depends(require_perm("invento
             "average_cost": avg, "latest_cost": m(ln.unit_cost), "updated_at": now_iso()}})
         await record_movement(body.store_id, ln.product_id, "PURCHASE_RECEIPT", ln.quantity,
                               unit_cost=ln.unit_cost, lot_id=lot_id, reference=body.reference or number,
-                              ref_id=body.po_id, principal=principal)
+                              ref_id=body.po_id, principal=principal, receipt_number=number)
     await audit(principal, "goods.received", "receipt", number, after={"lines": len(body.lines)}, store_id=body.store_id)
     if body.draft_id:
         await db.receive_drafts.delete_one({"org_id": ORG_ID, "id": body.draft_id, "store_id": body.store_id})

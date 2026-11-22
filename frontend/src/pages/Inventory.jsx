@@ -1,6 +1,7 @@
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import InventoryColumns, { DEFAULT_COLUMNS, INVENTORY_COLUMNS, normalizeColumns } from "@/components/InventoryColumns";
+import ManualReceivingHistory from "@/components/ManualReceivingHistory";
 import ProductSearchSelect from "@/components/ProductSearchSelect";
 import AddInventoryItemToPO from "@/components/AddInventoryItemToPO";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -190,6 +191,7 @@ export default function Inventory() {
           <TabsTrigger value="levels" data-testid="tab-levels">Stock Levels</TabsTrigger>
           <TabsTrigger value="expiry" data-testid="tab-expiry">Expiry Monitor</TabsTrigger>
           <TabsTrigger value="movements" data-testid="tab-movements">Ledger</TabsTrigger>
+          {admin && <TabsTrigger value="receipts">Manual Receipt History</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="levels">
@@ -292,6 +294,7 @@ export default function Inventory() {
         </TabsContent>
 
         <TabsContent value="movements"><LedgerTab store={store} products={products} search={search} /></TabsContent>
+        {admin && <TabsContent value="receipts"><ManualReceivingHistory key={store} store={store} products={products} /></TabsContent>}
       </Tabs>
 
       {addingToPO && <AddInventoryItemToPO product={addingToPO} store={store} suppliers={suppliers}

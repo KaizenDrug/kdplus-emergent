@@ -121,7 +121,13 @@ async def get_po(pid: str, principal=Depends(get_current_principal)):
 
 @router.get("/purchase-orders/{pid}/receipts")
 async def po_receipts(pid: str, principal=Depends(get_current_principal)):
-    return await db.po_receipts.find({"org_id": ORG_ID, "po_id": pid}, {"_id": 0}).sort("received_at", 1).to_list(1000)
+    rows = await db.po_receipts.find({"org_id": ORG_ID, "po_id": pid}, {"_id": 0}).sort("received_at", 1).to_list(1000)
+    if principal.get("role") not in ("owner", "admin"):
+        for row in rows:
+            history = row.pop("cost_corrections", [])
+            if history:
+                row["corrected_unit_cost"] = history[-1]["corrected_unit_cost"]
+    return rows
 
 
 # ---------------- Create ----------------
