@@ -255,7 +255,7 @@ export default function Inventory() {
                     <SortableHeader column="expiry_date" label="Expiry" sort={expirySort} onSort={setExpirySort} />
                     <SortableHeader column="days_remaining" label="Days Left" sort={expirySort} onSort={setExpirySort} numeric />
                     <SortableHeader column="quantity" label="Qty" sort={expirySort} onSort={setExpirySort} numeric />
-                    <SortableHeader column="stock_value" label="Value at Lot Cost" sort={expirySort} onSort={setExpirySort} numeric />
+                    <SortableHeader column="stock_value" label="Value at Avg. Cost" sort={expirySort} onSort={setExpirySort} numeric />
                     <SortableHeader column="bucket" label="Bucket" sort={expirySort} onSort={setExpirySort} />{(admin || canManagePO) && <th className="px-4 py-3">Actions</th>}</tr></thead>
                   <tbody>
                     {sortedExpiry.map((l) => (

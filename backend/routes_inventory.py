@@ -82,7 +82,7 @@ async def inventory_movements(product_id: Optional[str] = None, store_id: Option
 @router.get("/inventory/lots")
 async def list_lots(product_id: Optional[str] = None, store_id: Optional[str] = None,
                     status: Optional[str] = "ACTIVE", principal=Depends(get_current_principal)):
-    lots, _ = await _lots_with_on_hand(product_id, store_id, status)
+    lots, _, _ = await _lots_with_on_hand(product_id, store_id, status)
     return lots
 
 
@@ -98,7 +98,7 @@ async def _lots_with_on_hand(product_id, store_id, status):
     pmap = {p["id"]: p for p in products}
     q["product_id"] = product_id if product_id in pmap else {"$in": list(pmap)}
     if product_id and product_id not in pmap:
-        return [], {}
+        return [], {}, {}
     q["quantity"] = {"$gt": 0}
     levels_q = {"org_id": ORG_ID}
     if store_id:
@@ -113,7 +113,7 @@ async def _lots_with_on_hand(product_id, store_id, status):
         {**lot, "product_name": pmap[lot["product_id"]]["name"], "sku": pmap[lot["product_id"]].get("sku")}
         for lot in lots if on_hand.get((lot["store_id"], lot["product_id"]), D(0)) > 0
     ]
-    return visible, on_hand
+    return visible, on_hand, pmap
 
 
 class LotEditIn(BaseModel):
@@ -377,7 +377,7 @@ async def adjustment_reasons(principal=Depends(get_current_principal)):
 # ---------------- Expiry monitoring ----------------
 @router.get("/inventory/expiry")
 async def expiry_report(store_id: Optional[str] = None, principal=Depends(get_current_principal)):
-    lots, on_hand = await _lots_with_on_hand(None, store_id, "ACTIVE")
+    lots, on_hand, products = await _lots_with_on_hand(None, store_id, "ACTIVE")
     lot_totals = {}
     for lot in lots:
         key = (lot["store_id"], lot["product_id"])
@@ -391,9 +391,10 @@ async def expiry_report(store_id: Optional[str] = None, principal=Depends(get_cu
             continue
         days = (exp - today).days
         key = (l["store_id"], l["product_id"])
+        average_cost = products[l["product_id"]].get("average_cost", 0)
         row = {**l, "expiry_date": exp.isoformat(), "lot_quantity_exceeds_on_hand": lot_totals[key] > on_hand[key],
                "supplier_id": l.get("supplier_id"), "days_remaining": days,
-               "stock_value": m(D(l["quantity"]) * D(l.get("unit_cost", 0)))}
+               "stock_value": m(D(l["quantity"]) * D(average_cost))}
         if days < 0:
             bucket = "EXPIRED"
         elif days <= 30:
