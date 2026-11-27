@@ -501,7 +501,14 @@ export default function POS() {
             ))}
           </div>
           <div className="p-4 border-t border-slate-200 bg-white">
-            <div className="flex justify-between text-sm mb-1"><span className="text-slate-500">Subtotal</span><span className="font-semibold" data-testid="cart-subtotal">{peso(subtotal)}</span></div>
+            <div className="mb-3 rounded-xl border border-teal-100 bg-teal-50 px-3 py-3">
+              <div className="text-base font-semibold text-slate-600">Subtotal</div>
+              <div className="min-w-0" style={{ containerType: "inline-size" }}>
+                <div className="mt-1 text-right text-4xl font-extrabold leading-tight tracking-tight tabular-nums text-teal-800 whitespace-nowrap"
+                  style={{ fontSize: `min(2.5rem, ${Math.min(16, 145 / peso(subtotal).length)}cqw)` }}
+                  data-testid="cart-subtotal">{peso(subtotal)}</div>
+              </div>
+            </div>
             <div className="flex justify-between text-sm mb-3"><span className="text-slate-500">Items</span><span className="font-semibold">{cart.reduce((s, i) => s + i.qty, 0)}</span></div>
             <button type="button" onClick={printCurrentTicket} disabled={!cart.length}
               data-testid="print-current-ticket" className="w-full mb-2 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-semibold hover:bg-slate-50 disabled:opacity-40">
